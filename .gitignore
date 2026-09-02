@@ -1,0 +1,14 @@
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor and IDE directories
+.idea/
+.vscode/
+*.swp
+
+# Local working artifacts, not repository content.
+# The plan under docs/plans/ names identifiers belonging to another
+# repository; publishing it would reintroduce exactly what the published
+# SKILL.md strips out.
+docs/

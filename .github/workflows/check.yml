@@ -1,0 +1,49 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host copies stay in parity
+        run: sh scripts/check-parity.sh
+
+      - name: The parity check can still fail
+        run: sh scripts/test-check-parity.sh
+
+      # Supplementary gate only, and a partial one: probed against this
+      # skill, `claude plugin validate --strict` catches a missing
+      # `description` and a missing or empty frontmatter block, but passes a
+      # SKILL.md with no `name:`, with a name that does not match its
+      # directory, or with malformed frontmatter YAML. check-parity.sh covers
+      # those and is the gate that always runs -- `claude` is absent from a
+      # stock runner, so this step usually skips.
+      #
+      # The validator only scans one level below a directory literally named
+      # `skills`. Pointed at this repository's own skills/ it would find
+      # claude/ and codex/, validate nothing, and report success -- so each
+      # host tree is staged into its own temporary skills/ first.
+      - name: Validate each host tree against Claude Code
+        run: |
+          if ! command -v claude >/dev/null 2>&1; then
+            echo "::notice::claude is not on PATH; skipping plugin validate"
+            exit 0
+          fi
+          status=0
+          for host in claude codex; do
+            tmp=$(mktemp -d)
+            mkdir -p "$tmp/skills"
+            cp -R "skills/$host/." "$tmp/skills/"
+            echo "Validating skills/$host staged at $tmp/skills"
+            claude plugin validate "$tmp/skills" --strict || status=1
+            # Removed on both paths: a failing host must not leave its staged
+            # tree behind, and both hosts get validated before the job exits so
+            # one run reports every failure rather than only the first.
+            rm -rf "$tmp"
+          done
+          exit "$status"
