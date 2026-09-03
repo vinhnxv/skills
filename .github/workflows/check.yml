@@ -8,7 +8,7 @@ jobs:
   parity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Host copies stay in parity
         run: sh scripts/check-parity.sh
@@ -47,3 +47,46 @@ jobs:
             rm -rf "$tmp"
           done
           exit "$status"
+
+  install:
+    # The README's install command is the first thing a stranger runs, and it
+    # is the one piece of this repository that executes on their machine, not
+    # ours. `--strip-components` and member selection behave the same on GNU
+    # tar and bsdtar in principle; this proves it on both rather than assuming.
+    # A `git archive --prefix=skills-main/` stand-in reproduces exactly what
+    # GitHub serves for the main branch, so the check needs no network and no
+    # published commit.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The documented install command works on this platform
+        run: |
+          set -eu
+          tar --version | head -1
+          git archive --format=tar.gz --prefix=skills-main/ HEAD > "$RUNNER_TEMP/main.tar.gz"
+          home="$RUNNER_TEMP/fakehome"
+          rm -rf "$home"; mkdir -p "$home"
+
+          # Verbatim from README.md, with the archive standing in for the curl.
+          HOME="$home" sh -c 'mkdir -p ~/.claude/skills && tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/backlog-loop' < "$RUNNER_TEMP/main.tar.gz"
+          HOME="$home" sh -c 'mkdir -p ~/.codex/skills  && tar -xz -C ~/.codex/skills  --strip-components=3 skills-main/skills/codex/backlog-loop'  < "$RUNNER_TEMP/main.tar.gz"
+
+          diff -r "$home/.claude/skills/backlog-loop" skills/claude/backlog-loop
+          diff -r "$home/.codex/skills/backlog-loop"  skills/codex/backlog-loop
+          echo "install produced byte-identical trees for both hosts"
+
+      - name: A missing target directory fails loudly instead of mis-installing
+        run: |
+          set -eu
+          git archive --format=tar.gz --prefix=skills-main/ HEAD > "$RUNNER_TEMP/main.tar.gz"
+          status=0
+          tar -xzf "$RUNNER_TEMP/main.tar.gz" -C "$RUNNER_TEMP/absent" \
+              --strip-components=3 skills-main/skills/claude/backlog-loop 2>/dev/null || status=$?
+          [ "$status" -ne 0 ] || { echo "tar silently accepted a missing -C directory"; exit 1; }
+          echo "tar into a missing directory exits $status, as the README states"
+

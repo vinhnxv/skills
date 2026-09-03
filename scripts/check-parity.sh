@@ -246,10 +246,45 @@ while IFS= read -r skill; do
          in_policy && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ {
              match($0, /^[[:space:]]+/); indent = RLENGTH
              if (depth < 0) depth = indent
-             if (indent == depth && $0 ~ /^[[:space:]]+allow_implicit_invocation:[[:space:]]*false[[:space:]]*$/) found = 1
+             if (indent == depth && $0 ~ /^[[:space:]]+allow_implicit_invocation:/) found = 1
          }
          END { exit found ? 0 : 1 }' "$codex_yaml" ||
-        fail "$skill: skills/codex/$skill/agents/openai.yaml must set 'allow_implicit_invocation: false' as a direct child of the top-level 'policy:' block"
+        fail "$skill: skills/codex/$skill/agents/openai.yaml must declare 'allow_implicit_invocation' as a direct child of the top-level 'policy:' block"
+
+    # 10a. No key may be declared twice in openai.yaml, at the top level or
+    #      inside the policy block. YAML resolution of a duplicate is
+    #      implementation-defined, so a second `allow_implicit_invocation: true`
+    #      below the first can be the one Codex reads while check 10 -- which
+    #      stops at its first match -- reports the file correct.
+    dup=$(awk '/^[A-Za-z_][A-Za-z0-9_-]*:/ { sub(/:.*/, ""); print "top:" $0 }' "$codex_yaml" |
+          LC_ALL=C sort | uniq -d | sed 's/^top://' | tr '\n' ' ')
+    [ -z "$dup" ] ||
+        fail "$skill: skills/codex/$skill/agents/openai.yaml declares duplicate top-level key(s): $dup"
+
+    dup=$(awk '/^policy:[[:space:]]*$/ { in_policy = 1; next }
+               /^[^[:space:]#]/ { in_policy = 0 }
+               in_policy && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ {
+                   line = $0; sub(/:.*/, "", line); gsub(/^[[:space:]]+/, "", line); print line
+               }' "$codex_yaml" | LC_ALL=C sort | uniq -d | tr '\n' ' ')
+    [ -z "$dup" ] ||
+        fail "$skill: skills/codex/$skill/agents/openai.yaml declares duplicate key(s) inside 'policy:': $dup"
+
+    # 10b. Check 10 owns where the key sits; this owns what it says. Splitting
+    #      them is what lets a wrong position and a wrong value report their own
+    #      cause instead of one masking the other. Only the bare scalar false
+    #      passes: a quoted "false" is a string, and an anchor or alias is not
+    #      the boolean Codex reads.
+    flag=$(awk '/^policy:[[:space:]]*$/ { in_policy = 1; depth = -1; next }
+                /^[^[:space:]#]/ { in_policy = 0 }
+                in_policy && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ {
+                    match($0, /^[[:space:]]+/); indent = RLENGTH
+                    if (depth < 0) depth = indent
+                    if (indent == depth && $0 ~ /^[[:space:]]+allow_implicit_invocation:/) {
+                        sub(/^[[:space:]]*allow_implicit_invocation:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit
+                    }
+                }' "$codex_yaml")
+    [ "$flag" = "false" ] ||
+        fail "$skill: skills/codex/$skill/agents/openai.yaml sets 'allow_implicit_invocation: $flag'; it must be the bare scalar false"
 
     count=$((count + 1))
 done <<SKILL_LIST_END

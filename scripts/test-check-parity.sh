@@ -205,7 +205,7 @@ metadata:\
     t=$(fresh_tree)
     sed_inplace 's/allow_implicit_invocation: false/allow_implicit_invocation: true/' \
         "$t/skills/codex/backlog-loop/agents/openai.yaml"
-    expect_fail "allow_implicit_invocation flipped to true" "$t" "direct child"
+    expect_fail "allow_implicit_invocation flipped to true" "$t" "bare scalar false"
 
     t=$(fresh_tree)
     cat > "$t/skills/codex/backlog-loop/agents/openai.yaml" <<'YAML'
@@ -214,7 +214,7 @@ policy:
 defaults:
   allow_implicit_invocation: false
 YAML
-    expect_fail "a decoy false outside the policy block" "$t" "direct child"
+    expect_fail "a decoy false outside the policy block" "$t" "bare scalar false"
 
     t=$(fresh_tree)
     cat > "$t/skills/codex/backlog-loop/agents/openai.yaml" <<'YAML'
@@ -244,6 +244,30 @@ description: A second, conflicting description.' "$t"
     t=$(fresh_tree)
     both_copies 's/^description: .*/description: [not, a, string]/' "$t"
     expect_fail "required value is a YAML sequence, not a scalar" "$t" "non-scalar"
+
+    # Check 10 stops at its first match, so a second, contradicting value
+    # below it is invisible to it -- and is what a YAML loader may resolve.
+    t=$(fresh_tree)
+    cat > "$t/skills/codex/backlog-loop/agents/openai.yaml" <<'YAML'
+policy:
+  allow_implicit_invocation: false
+  allow_implicit_invocation: true
+YAML
+    expect_fail "allow_implicit_invocation declared twice inside policy" "$t" "duplicate key(s) inside 'policy:'"
+
+    t=$(fresh_tree)
+    cat > "$t/skills/codex/backlog-loop/agents/openai.yaml" <<'YAML'
+policy:
+  allow_implicit_invocation: false
+policy:
+  allow_implicit_invocation: true
+YAML
+    expect_fail "policy block declared twice" "$t" "duplicate top-level key"
+
+    t=$(fresh_tree)
+    printf 'policy:\n  allow_implicit_invocation: "false"\n' \
+        > "$t/skills/codex/backlog-loop/agents/openai.yaml"
+    expect_fail "allow_implicit_invocation quoted instead of scalar false" "$t" "bare scalar false"
 
     t=$(fresh_tree)
     for host in claude codex; do mv "$t/skills/$host/backlog-loop" "$t/skills/$host/two words"; done
