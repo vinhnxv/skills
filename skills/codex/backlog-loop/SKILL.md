@@ -3,7 +3,7 @@ name: backlog-loop
 description: Clear a repository's Beads backlog autonomously in budget-sized batches by driving the current compound-engineering:lfg stages through their supported child-skill seams, with CI-aware merge gates. Explicit invocation only; run before the matching long-running goal.
 ---
 
-Clear this repo's issue backlog autonomously, one batch at a time, until the tracker has no actionable non-epic issue. Never ask the user anything; when a choice arises take your recommended option and record it.
+Clear this repo's issue backlog autonomously, one batch at a time, until CENSUS below shows no issue left in a category this loop is responsible for. An empty `bd ready` list is never that proof. Never ask the user anything; when a choice arises take your recommended option and record it.
 
 A batch is 1..N sibling issues sized against a complexity budget, so one LFG-compatible pipeline is neither a wasted trip for one 15-minute chore nor an unreviewable multi-hour PR. One batch = one plan = one branch = one PR = one merge.
 
@@ -28,7 +28,7 @@ Choose a unique `<run-id>` first (an ISO UTC timestamp is enough): the process-h
 - Process hygiene (REQ): record `<cores>` from `sysctl -n hw.ncpu`, or `nproc` where that is the platform's command. Every gate, test, build, or app command this loop runs is launched non-interactively (`CI=1`, watch and UI modes off), inside its own process group, and under a hard deadline `<gate-timeout>=20m`: `perl -e 'setpgrp(0,0); exec @ARGV' -- timeout -k 30s <gate-timeout> <command>`. Where `timeout` is absent, keep the process group and enforce the deadline by killing that group. Export `BACKLOG_LOOP_RUN=<run-id>` into every such command so ownership stays provable after a runner dies. Append every launched leader PID to `<owned-pgids>`, the set the step 1 machine guard resets each iteration. Never leave a watcher, dev server, or REPL alive past the command that needed it; a command that returns while its group still exists is a reap target, not a success.
 - Constraints: read the repo's CLAUDE.md/AGENTS.md non-negotiables; else its documented conventions.
 - Worktree safety: inventory `git status --short` before any branch move and save every pre-existing dirty path as `<excluded-paths>`. Carry the list as context through planning, simplification, and review-fix commits; when non-empty, pass the documented `exclude:<comma-separated-paths>` carrier to `ce-commit-push-pr`. Do not pass that carrier to a child that does not document it: `ce-work` inventories pre-work WIP itself and must block on collisions. Verify excluded paths remain uncommitted before every push. Never reset, clean, stash, or use a tree-wide checkout to make the tree look clean. If planned work collides with an excluded path, stop the batch rather than absorbing or discarding it.
-- Owner-decision issues: find by content (body asks for a product or design call), not by hardcoded id.
+- Owner-decision issues: find by content (body asks for a product or design call), not by hardcoded id. Run this scan ONLY over issues CENSUS classified as neither `human-gate` nor `label-defect`; `## HUMAN GATES` owns why, and the order is not optional.
 
 ## CLEAN-TREE GATE RUN
 
@@ -70,6 +70,8 @@ State lives in the tracker. Re-read `bd ready` every iteration; never work from 
 - Marker present: an earlier run of this procedure claimed it and did not finish. Recover it through THE RUN LEDGER below.
 - Marker absent: externally owned. Never steal it. If no ready work exists and one of these remains, stop and report that the backlog is not clear.
 
+That split is an ownership test and CENSUS extends it into a full accounting of every non-closed issue. Read CENSUS before deciding that anything is finished.
+
 ## THE RUN LEDGER
 
 Every fact a resumed run needs lives in tracker metadata on the batch's own members, because that is the only store that survives the process dying between two commands. Write these with `bd update <id> --set-metadata` for every member, at the moment the phase is reached and before the action the next phase depends on:
@@ -86,6 +88,11 @@ Every fact a resumed run needs lives in tracker metadata on the batch's own memb
 | `backlog_loop_head` | pipeline step 6 | `<batch-head-sha>`, the gated commit |
 | `backlog_loop_pr` | pipeline step 7 | the PR URL |
 | `backlog_loop_merge` | step 6 | `<merge-sha>`, once the PR reports `MERGED` |
+| `backlog_loop_cause` | every `blocked` write, and CENSUS backfill | `transient` or `needs-person` |
+| `backlog_loop_attempts` | every `blocked` write | count of blocks this issue has taken, incremented never reset |
+| `backlog_loop_census` | CENSUS | `<census-run>` |
+| `backlog_loop_quarantine` | CENSUS gate repair | the census token and time that freed the issue |
+| `backlog_loop_edge_removed` | CENSUS gate repair | the restorable record of a removed edge |
 
 LIVENESS, before any recovery. A marker proves an earlier run claimed the issue; it does not prove that run stopped. Read `backlog_loop_heartbeat`: less than 30 minutes old, or any live process carries that run's `BACKLOG_LOOP_RUN` token -> another invocation is still working. STOP and report it. Do not reap, reclaim, retire a PR, or claim anything. Two overlapping scheduled invocations would otherwise each treat the other as wreckage, kill its running gates, close its PR, and rebuild its work while it is still moving toward its own merge.
 
@@ -102,7 +109,71 @@ Reclaim means `bd update <id> --status=open --assignee="" --unset-metadata backl
 
 Before any of that, and only after LIVENESS has proved the old run is gone, reap its escaped processes by its `<old-run-id>` token exactly as step 8 does; a killed runner leaves its children behind, and they will contend with this run's gates. Remove its `backlog_loop_worktrees` directory and run `git worktree prune`, so an interrupted run's worktrees and their installed dependencies do not accumulate on disk until a later gate cannot create one.
 
-Two things are deliberately NOT in the ledger. The consecutive-blocked and consecutive-merge-failure counters reset on a new invocation: they bound one run's thrash, and a human choosing to start the loop again is a new decision, not a continuation. `<owned-pgids>` is in-memory by design, which is why every command also carries the run token - the token is what makes a dead run's processes findable when its PID list is gone. A failed or blocked attempted batch is marked `blocked`, so it cannot be selected again silently. CI is batch-scoped and re-resolved from the exact current trunk SHA every iteration; it may change in either direction.
+Two things are deliberately NOT in the ledger. The consecutive-blocked and consecutive-merge-failure counters reset on a new invocation: they bound one run's thrash, and a human choosing to start the loop again is a new decision, not a continuation. `<owned-pgids>` is in-memory by design, which is why every command also carries the run token - the token is what makes a dead run's processes findable when its PID list is gone. A failed or blocked attempted batch is marked `blocked`, so it cannot be selected again silently. `backlog_loop_attempts` is the deliberate exception to that reset rule: it bounds one ISSUE across its whole life rather than one run's thrash, so a scheduled loop cannot rebuild the same failure forever. CI is batch-scoped and re-resolved from the exact current trunk SHA every iteration; it may change in either direction.
+
+## CENSUS
+
+One classification pass over the whole tracker, written once and read by both entry points, so a diagnostic run and a loop run can never report different truths about the same backlog. The loop runs it at the termination decision; the companion census prompt runs it alone. An empty `bd ready` list has at least six causes and only one of them is "finished", so nothing below infers termination from that list.
+
+Choose a `<census-run>` token the same way as `<run-id>`. It is a separate key from the claim marker because "claimed by this run" is itself a category below; reusing one key would make the categories overlap.
+
+ENUMERATE. `bd list --all --limit 0 --include-gates --json`, then discard `status=closed` and `issue_type=epic` rows. Every flag is load-bearing: without `--limit 0` the query returns at most 50 rows, without `--include-gates` it omits native gate issues entirely, and without `--all` it omits `pinned` issues, because `--pinned` filters a different attribute and does not surface them. `--all` also returns the repository's whole closed history, which is why discarding closed rows is part of the query and not an afterthought. Do NOT pass `--include-infra` or `--include-templates`: agent, role, message, and template beads are not work, have no category below, and would make the exhaustiveness claim false. Say so on the census header line, so an operator reading a count knows what it counted.
+
+Reconcile against `bd ready --explain --json` for blocker identities ONLY. That explanation covers dependency-blocked OPEN issues and nothing else: a `blocked` issue carrying no dependency edge -- the exact shape of every block this loop writes -- appears in neither of its buckets. Every other category is read from the issue's own stored status.
+
+CLASSIFY. Every enumerated issue gets exactly one category. Walk this precedence top-down and stop at the first match, so an issue satisfying several is filed once and the same issue is filed the same way on every run:
+
+| # | category | test |
+|---|---|---|
+| 1 | `human-gate` | carries the `human-gate` label, or `issue_type` is `gate` |
+| 2 | `label-defect` | title begins `[HUMAN]` but neither of the above holds |
+| 3 | `claimed-other-run` | `backlog_loop_run` present with a value other than `<run-id>`, and that run is LIVE by THE RUN LEDGER's liveness test |
+| 4 | `external-wip` | `status=in_progress` and no `backlog_loop_run` |
+| 5 | `claimed-this-run` | `backlog_loop_run` equals `<run-id>` |
+| 6 | `self-blocked-needs-person` | `status=blocked`, `backlog_loop_run` present, `backlog_loop_cause=needs-person` |
+| 7 | `self-blocked-transient` | `status=blocked`, `backlog_loop_run` present, `backlog_loop_cause=transient` |
+| 8 | `dep-blocked` | an unmet dependency, or `status=blocked` with no `backlog_loop_run` |
+| 9 | `hooked` | `status=hooked` |
+| 10 | `pinned` | `status=pinned` |
+| 11 | `deferred` | `status=deferred` |
+| 12 | `ready` | everything left |
+
+Rows 1 and 2 sit above everything because a gate must never be claimed whatever else is true of it, and a mislabeled gate must not fall through to `ready` and get built. Rows 6 and 7 sit above 8 because an issue this loop blocked can also carry a dependency edge, and the loop's own wreckage is the actionable half of that pair.
+
+Two different rules govern the marker, and confusing them is what wedges the loop. `## STATE`'s rule -- split by the PRESENCE of `backlog_loop_run`, never its value -- decides ownership: present means this procedure's own work, recoverable through THE RUN LEDGER; absent means externally owned and never to be stolen. Rows 3 and 5 are not an ownership question but a liveness one, and they are the ONLY place the marker's value is read, always together with `backlog_loop_heartbeat` under the liveness test. A stale marker with a dead heartbeat therefore still classifies as this procedure's own wreckage, exactly as `## STATE` requires.
+
+BACKFILL, once per issue. A `blocked` issue carrying `backlog_loop_run` but no `backlog_loop_cause` predates this section: it was written by an earlier form of the procedure that recorded only a note. Read its existing note text once, classify it with the same reason patterns step 6 and step 7 use, and write `backlog_loop_cause` plus `backlog_loop_attempts=1`. This is the one place the procedure reads its own prose to decide a class, and it is bounded: an issue that has a cause key is never re-read, so the exception cannot spread. A note matching no pattern backfills as `needs-person`.
+
+EMIT, always, in both modes. One line per enumerated issue, in this exact shape, so a fixture suite and an operator read the same output:
+
+```
+census <id> | <category> | <cause>
+```
+
+`<cause>` names why the issue sits where it does -- the blocking issue's id for `dep-blocked`, the run id for `claimed-other-run`, the recorded cause for the two self-blocked rows, `none` for `ready`. Print the header line first: the census token, the counts per category, and the flags the enumeration ran under.
+
+LOOP-RESPONSIBLE SET. Exactly four categories are the loop's to clear: `ready`, `claimed-this-run`, `self-blocked-transient`, and a `dep-blocked` issue whose blocker is itself in one of those. Everything else is somebody's or something else's. The backlog is clear when no issue sits in that set -- never because `bd ready` came back empty.
+
+Walking `dep-blocked` transitively meets the cycles this procedure reports and never repairs, so the walk carries a visited set, counts each issue at most once, and treats a repeat visit as the end of that branch plus a reported cycle. Read edges from the `dependencies` array already present in the enumeration output; do not issue a query per issue.
+
+WRITE GATE. Both mutation passes below are skipped entirely, with no partial application, when any of these holds: the run is a diagnostic run; any other run of this procedure holds a live heartbeat; or the repair ceiling has been reached. A skipped pass still classifies, still emits, and still reports every action it would have taken.
+
+Repairs are idempotent, not ledger-phased. The ledger's premise is that recovery facts live on a batch's own members, and a census has no members, so there is no natural key to phase against. Every repair below instead re-reads current state and does nothing when it is already applied, which makes recovery "run the census again" and leaves no partial-completion state to reason about.
+
+REOPEN PASS. For each `self-blocked-transient` issue, in ascending id order:
+
+- `backlog_loop_attempts` at or above `<attempt-ceiling>=3` -> rewrite `backlog_loop_cause=needs-person`, name it in the report, and never reopen it again. The consecutive-blocked counters reset per invocation by design; this one must not, or a scheduled loop rebuilds the same failure forever.
+- Otherwise prove the recorded cause is gone before touching it. `trunk-moved` is gone when `<remote>/<default>` is currently green under `backlog_loop_ci`'s recorded route. `merge-precondition` is gone when the recorded PR is closed and no PR is open on the recorded branch. A cause with no proof the census can evaluate on its own is not a transient cause at all: record it `needs-person` rather than leaving it to expire on a condition nothing can satisfy.
+- Proven -> one atomic update, following the reclaim shape: `bd update <id> --status=open --assignee="" --unset-metadata backlog_loop_run --append-notes="reopened by census <census-run>: <cause> no longer holds"`, plus unsetting `backlog_loop_phase`, `backlog_loop_base`, `backlog_loop_branch`, `backlog_loop_head`, `backlog_loop_pr`, `backlog_loop_merge`, `backlog_loop_ci`, and `backlog_loop_worktrees`. Reopening preserves every metadata key it does not name, so a stale `backlog_loop_pr` left behind would be read as this run's own PR at the next claim. `backlog_loop_cause` and `backlog_loop_attempts` are deliberately NOT cleared: the attempt count is what bounds the cycle.
+- A block written because post-merge verification failed is never reopened, whatever trunk currently looks like. Its code is already on trunk and its phase is already `merged`; the proven-merge rule in THE RUN LEDGER says that work is finished, not rebuilt. Step 7 records it `needs-person` for exactly this reason.
+
+GATE REPAIR PASS. See `## HUMAN GATES`.
+
+REPORT. Both modes end with the census lines, the loop-responsible count, every gate with what its person must do, every labeling defect with the exact label to apply, every reported cycle, and -- in a loop run -- every repair and every reopen this run actually performed, each naming both issues, the marker state relied on, and where its restorable record sits. A run that mutates a person's tracker and does not say so is the failure this section exists to prevent, so that list is printed whether the run cleared the backlog or not.
+
+For each `ready` issue also print how many issues it would unblock, counted transitively over the same visited-set walk, as two figures: those the loop can clear unaided, and those that become reachable only once named gates are released. One combined number hides the pairing an operator most needs -- a ready issue sitting in front of a gate is where a person-minute buys the most agent work -- so name those gates beside it.
+
+DIAGNOSTIC RUN. Classification, emission, and reporting are identical to a loop run; only authority differs. Every `bd` command carries the global `--readonly` flag, so a write is refused by the tracker rather than merely avoided by this prose. The run branches nothing, pushes nothing, and merges nothing, and it needs only the tracker and constraints preflight items -- the forge, default-branch, CI, and merge-capability items do not gate it, because diagnosing a backlog must work in a repository this loop could never merge into. It reports every repair and reopen it would perform. The operator authorizes those by starting an ordinary loop run; nothing here asks a question mid-run.
 
 ## ITERATION
 
@@ -113,7 +184,9 @@ Two things are deliberately NOT in the ledger. The consecutive-blocked and conse
    `<batch-ci>=on`: take the latest attempt of EVERY workflow for that SHA, not just the newest one overall. Any of them failed from code -> STOP and report; never pile another merge onto a broken trunk. Any of them still in progress -> wait under a bounded deadline of 10 minutes, re-reading every 30s, and require all of them terminal and green; still undecided at the deadline -> STOP and report. An undecided run is not a green one: later probes only ever look at their own exact SHA, so a trunk failure ignored here is never observed again and every following batch stacks onto it.
    `<batch-ci>=off`: LOCAL TRUNK GATE: run the unconditional quality gates through CLEAN-TREE GATE RUN at the current `<remote>/<default>` SHA. Skip them only when the previous iteration ended with a green POST-MERGE VERIFY and `<remote>/<default>` still resolves to that exact verified commit; record `trunk gate: skipped (verified <sha>)`. Green -> continue. Red -> STOP and report.
 
-2. **PICK BATCH.** `bd ready --json --exclude-type=epic`. Skip `[epic]` containers; close an epic only when all children are closed.
+2. **PICK BATCH.** Run CENSUS first, every iteration, and select from it rather than from a bare ready list. The pool is its `ready` category minus any issue carrying `backlog_loop_quarantine`. Skip `[epic]` containers; close an epic only when all children are closed.
+
+   No issue in the loop-responsible set -> the backlog is clear. Report it with the census and stop. Loop-responsible work remains but none of it is selectable -> that is not clear either: report which categories hold it and why, and stop. Ready work remains alongside issues the loop cannot act on -> continue; a serialized backlog is still a healthy one, and reporting the rest at the end beats stopping on it.
 
    ANCHOR: highest priority P0->P4, then dependency depth (unblockers first).
 
@@ -174,11 +247,11 @@ Two things are deliberately NOT in the ledger. The consecutive-blocked and conse
 
    Anything else -> the merge did not happen and the PR must not be left mergeable by someone else. Run `gh pr merge <url> --disable-auto` if auto-merge ended up armed, then `gh pr close <url> --comment "not merged by backlog-loop: <reason>"`, re-read the PR to confirm its final state, and only then take the blocked path. A PR left open at a head this run refused is unmanaged forge state: repository automation or a passing human can merge it later while the tracker says blocked and no run reconciles it.
 
-   Members stay `in_progress` at `merge-requested` while the outcome is unknown - recovery scans `in_progress`, not `blocked`, so moving them early strands a merge that may have succeeded. Only after the PR is proven not merged and retired: for every member use `bd update <id> --status=blocked --append-notes="merge blocked: <reason> | <url>"`, sync when configured, count the batch blocked, and go to step 1. Never force or retry a merge.
+   Members stay `in_progress` at `merge-requested` while the outcome is unknown - recovery scans `in_progress`, not `blocked`, so moving them early strands a merge that may have succeeded. Only after the PR is proven not merged and retired: for every member use `bd update <id> --status=blocked --append-notes="merge blocked: <reason> | <url>" --set-metadata backlog_loop_cause=<class> --set-metadata backlog_loop_attempts=<n+1>`, sync when configured, count the batch blocked, and go to step 1. Classify `<class>` from the reason and not from the write site: trunk moved, or a merge precondition went stale, is `transient`; anything else is `needs-person`. Never force or retry a merge.
 
-7. **VERIFY, THEN CLOSE.** `<batch-ci>=off` only: safely update trunk with fetch/switch/ff-only, derive final changed files with `git diff-tree --no-commit-id --name-only -r <merge-sha>`, then run the applicable quality gate set once through CLEAN-TREE GATE RUN at `<merge-sha>`. A squash merge produces a commit that was never tested on the branch. Red -> for every member use `bd update <id> --status=blocked --append-notes="post-merge verification failed: <gate> | <url>"`, sync, and STOP; never close an issue whose merged result leaves trunk red.
+7. **VERIFY, THEN CLOSE.** `<batch-ci>=off` only: safely update trunk with fetch/switch/ff-only, derive final changed files with `git diff-tree --no-commit-id --name-only -r <merge-sha>`, then run the applicable quality gate set once through CLEAN-TREE GATE RUN at `<merge-sha>`. A squash merge produces a commit that was never tested on the branch. Red -> for every member use `bd update <id> --status=blocked --append-notes="post-merge verification failed: <gate> | <url>" --set-metadata backlog_loop_cause=needs-person --set-metadata backlog_loop_attempts=<n+1>`, sync, and STOP; never close an issue whose merged result leaves trunk red. This cause is ALWAYS `needs-person`, however transient the gate failure reads: the code is already on trunk and the phase is already `merged`, so CENSUS must never reopen it and rebuild work that shipped.
    Green -> write `backlog_loop_phase=verified`. Green, or `<batch-ci>=on` -> append calibration notes before closing: `bd update <id> --append-notes="actual: <k> files"`, taking `<k>` from the final PR/merge diff, including simplification and review fixes. Add elapsed minutes only when actually measured; never fabricate them. Then `bd close <id> --reason="<one line> | <url>"` for every member and sync.
-   If the selected route returned blocked or failed in step 5, no retry: for every member use `bd update <id> --status=blocked --append-notes="pipeline blocked: <reason> | <url-if-any>"`, then sync. Every member counts as attempted.
+   If the selected route returned blocked or failed in step 5, no retry: for every member use `bd update <id> --status=blocked --append-notes="pipeline blocked: <reason> | <url-if-any>" --set-metadata backlog_loop_cause=<class> --set-metadata backlog_loop_attempts=<n+1>`, then sync. Classify `<class>` from the reason: a reason matching no known pattern is `needs-person`, never `transient`, so an unrecognized failure is surfaced to a person instead of being retried forever. Every member counts as attempted.
    Either way print one line per member - `<id> | <title> | <url> | merged|blocked` - plus one `batch: <id>,<id>,... | est <n> min | actual <k> files` line.
 
 8. **REAP.** Runs at the end of every iteration - merged, blocked, or stopped early - before step 1 of the next batch and before any early-stop report returns.
@@ -187,9 +260,40 @@ Two things are deliberately NOT in the ledger. The consecutive-blocked and conse
    - Everything else is reported, never killed. Repo path plus start time is not ownership: a second agent session, another worktree, or the user's own detached dev server started from this same checkout matches both and would be terminated with their state lost. Never kill by tool name either: no `pkill -f vitest|node|go|python|pytest`, since other sessions run those same binaries on this machine.
    - Record `reaped: <n> group(s), <m> orphan(s)` on the batch line and list every killed command in the FINAL REPORT.
 
+## HUMAN GATES
+
+A human gate is work a person reserved for themselves -- an access grant, a credential, a paid subscription, a production approval, information only they hold. The loop never claims, plans, builds, or merges one, and never counts one as unfinished agent work. A backlog whose only remainder is gates has no agent work left in it; say that plainly rather than reporting it unclear.
+
+RECOGNITION, decided in the census before anything else looks at the issue:
+
+- The `human-gate` label, or `issue_type=gate`. Those are the only two signals. A label is queryable in the same pass that finds the issue, and its absence is a fact rather than a reading.
+- A title beginning `[HUMAN]` without the label is a `label-defect`: withheld from claiming exactly like a gate, reported with the label to apply, and repaired never. The prefix is a human convention that no query can rely on, which is why it protects but does not certify.
+- Both labels named here -- `human-gate` and `hard-blocker` -- are author-only signals. NO step of this procedure ever writes either one, on any issue, in any mode. That invariant is what makes the declaration below mean something: a label carries no author, no timestamp, and no namespace, so nothing at read time can tell this loop's own writing from a person's. The only defense is never to write it, and to record what was observed so a later mistake is at least visible.
+
+Gate recognition runs BEFORE preflight's owner-decision content scan, and that scan sees only issues the census classified as neither `human-gate` nor `label-defect`. The two look alike from the body text -- a gate asking for a production approval reads like a product call -- and `## OWNER-DECISION ISSUES` says not to skip those and to pick a recommended option, which on a gate means shipping the thing a person reserved. The distinguishing question is not what the body sounds like but what the agent can do: an owner-decision is a preference the agent can substitute for and a human reviews in the PR; a gate is an act the agent cannot perform at all. An issue matching both is treated as a gate and reported as a labeling defect.
+
+REPORTING. Every open gate is named in the final report with what the person must do, taken from its description, acceptance criteria, or design field. All three empty -> report it as an incomplete gate, because a gate nobody can act on blocks as hard as one nobody has seen.
+
+REPAIR. The repository convention this procedure serves says a gate must not be a dependency of other work, and that any real exception is declared explicitly. So a gate holding another issue with no declaration contradicts its own recorded intent, and that contradiction is provable from a field's absence rather than from reading prose. That, and only that, is repairable here.
+
+- The declaration is the `hard-blocker` label on the gate. Free prose is never read as one, however clearly it is written; a rule that turns on a reading is a rule the executor decides differently on different days.
+- ADOPTION GATE, evaluated first, every run. When NO issue anywhere in the tracker carries a `hard-blocker` label, the repository has not adopted the convention: report every undeclared gate edge with the exact label to apply, and remove none of them. This is not caution for its own sake -- the label is introduced by this procedure, so on the day it ships no gate can carry one, and an unguarded first run would strip every gate edge in the tracker including the ones a person meant. The first `hard-blocker` anywhere is the operator's adoption of the convention; after it exists, the rule below applies normally.
+- A native gate (`issue_type=gate`) is NEVER repaired. Its blocking edge is declared by construction: `bd gate create --blocks <id>` is how it comes into being, blocking is the whole of what it is for, and it carries no labels to declare anything with. Report it and leave it. Only a label-identified gate is ever repaired.
+- `<repair-ceiling>=5` edge removals per run. Reaching it stops the pass and reports the remainder rather than working through a whole tracker unattended in one pass.
+
+REPAIR SEQUENCE, per undeclared edge, in this order. The destructive step is last because the record has to exist before the thing it explains can disappear -- the same reason step 5 writes `shipping-requested` before invoking the child:
+
+1. Write the removal record on the gate: `bd update <gate-id> --set-metadata backlog_loop_edge_removed="<gate-id> blocks <dep-id> | <edge-type> | census <census-run> | <iso-time> | labels observed: <labels>"`. Recording the labels observed at decision time is what makes a later mistaken `hard-blocker` detectable after the fact, since nothing can prevent one at read time.
+2. Read the gate's acceptance criteria, append the release condition to what is already there, and write the whole field back. `bd update --acceptance` REPLACES, there is no append form, and unlike description and design there is no `--acceptance-file` either, so the entire field round-trips through one shell argument. Then re-read it and require the author's original text to still be present as an exact substring. Not present -> the write mangled it: stop this repair, restore nothing else, and report it. Never proceed to step 4 on an unverified acceptance write. Skip steps 1 and 2 entirely when the record and the release condition are already there; a second run must not duplicate either.
+3. Write the same removal record on the dependent.
+4. `bd dep remove <gate-id> <dep-id>`.
+5. Quarantine the dependent: `bd update <dep-id> --set-metadata backlog_loop_quarantine="census <census-run> | <iso-time>"`. A quarantined issue is never admitted to a batch, by any run. The marker is durable on purpose -- "until the next invocation" buys nothing under a loop that runs on a timer, where the next invocation arrives an hour later and nobody has read anything. It is cleared by the operator, or by a run that finds the gate's removal record acknowledged. Until then the work waits, which is the point: a person gets to see the edge disappear before the code that edge was holding back reaches trunk.
+
+REPAIRED NOTHING ELSE. Every other census finding is reported and left alone -- a gate nested as a child step inside an implementation epic, a gate whose label and title prefix disagree, a dependency cycle, a gate carrying `hard-blocker` and holding work. A declared gate's edge stays, and the report names the declaration as the reason the dependent cannot start. The run can show it changed nothing outside the repairs it reported, labels included.
+
 ## OWNER-DECISION ISSUES
 
-Don't skip them. They always run solo so one PR carries one decision. Pick your recommended option, preserve any existing design text, append `<decision> | rejected: <alt> | reason: <why>` to the design field, and add the `owner-decision` label for the user's audit. Never overwrite an existing design record.
+Reached only for issues CENSUS classified as neither `human-gate` nor `label-defect` -- see `## HUMAN GATES` for why that order is load-bearing. Don't skip them. They always run solo so one PR carries one decision. Pick your recommended option, preserve any existing design text, append `<decision> | rejected: <alt> | reason: <why>` to the design field, and add the `owner-decision` label for the user's audit. Never overwrite an existing design record.
 
 ## CONSTRAINTS
 
@@ -201,4 +305,4 @@ Trunk health fails (`<batch-ci>=on`: the newest completed run failed, or is stil
 
 ## FINAL REPORT
 
-Build it from `bd list --all --limit 0 --metadata-field backlog_loop_run=<run-id> --json` plus the touched issues' notes - not from memory and not from all historical closed issues. Both flags are load-bearing: `bd list` hides closed issues unless `--all` is passed and returns at most 50 rows unless `--limit 0` is, so the plain form omits precisely the members a successful run has just closed. Include every decision made on the user's behalf. Report batch composition with its budget and batch-scoped CI state (`batch N: <ids> | CI on|off | est <n> min | actual <k> files | reaped <n>g/<m>o -> <pr url>`), every re-estimate drop and its reason, every `oversized` anchor, and every batch-level failure. For every `CI off` batch, state explicitly that no server-side verification backed its merge, list the local gate set actually run, and repeat the gate-coverage gaps found in preflight. Report any externally owned in-progress issue that prevented the backlog from being declared clear. List every process the reap killed, and every runaway process it reported and deliberately left alone.
+Build it from CENSUS plus the union of `bd list --all --limit 0 --metadata-field backlog_loop_run=<run-id> --json` and the same query for `backlog_loop_census=<census-run>`, plus the touched issues' notes - not from memory and not from all historical closed issues. `bd list --has-metadata-key` takes one key per invocation, so the union is two queries. Scope it to non-closed issues plus this run's own closures, or a report covering every marker ever written grows without bound. A previous run's block carries a different `<run-id>` and MUST still appear: scoping the report to the current run is what let a restart report a backlog cleared over work an earlier run failed to land. Both flags are load-bearing: `bd list` hides closed issues unless `--all` is passed and returns at most 50 rows unless `--limit 0` is, so the plain form omits precisely the members a successful run has just closed. Include every decision made on the user's behalf. Report batch composition with its budget and batch-scoped CI state (`batch N: <ids> | CI on|off | est <n> min | actual <k> files | reaped <n>g/<m>o -> <pr url>`), every re-estimate drop and its reason, every `oversized` anchor, and every batch-level failure. For every `CI off` batch, state explicitly that no server-side verification backed its merge, list the local gate set actually run, and repeat the gate-coverage gaps found in preflight. Report any externally owned in-progress issue that prevented the backlog from being declared clear. List every process the reap killed, and every runaway process it reported and deliberately left alone.
