@@ -181,6 +181,28 @@ while IFS= read -r skill; do
         done
     done
 
+    # 6a. No top-level frontmatter key may appear twice. YAML resolution of a
+    #     duplicate is implementation-defined, and frontmatter_value reads the
+    #     first occurrence -- so a second, conflicting `description:` can be
+    #     what a host actually loads while every check here reads the first.
+    for md in "$claude_md" "$codex_md"; do
+        dup=$(frontmatter_keys "$md" | LC_ALL=C sort | uniq -d | tr '\n' ' ')
+        [ -z "$dup" ] ||
+            fail "$skill: $md declares duplicate frontmatter key(s): $dup"
+    done
+
+    # 6b. Required values must be plain scalars. `description: [a, b]` and
+    #     `description: |` are valid YAML that no host reads as the string it
+    #     needs, and both satisfy a non-empty check.
+    for key in $REQUIRED_KEYS; do
+        for md in "$claude_md" "$codex_md"; do
+            case "$(frontmatter_value "$md" "$key")" in
+                "["*|"{"*|"|"*|">"*|"&"*|"*"*|"!"*)
+                    fail "$skill: $md gives '$key:' a non-scalar YAML value; both hosts need a plain string" ;;
+            esac
+        done
+    done
+
     # 7. The declared name must match the directory and be hyphen-case. Codex's
     #    validator enforces ^[a-z0-9-]+$ with no leading, trailing, or repeated
     #    hyphen; Claude Code accepts more, so the stricter rule applies to both.
@@ -210,17 +232,24 @@ while IFS= read -r skill; do
     done
 
     # 10. The Codex copy declares explicit-only invocation its own way. The key
-    #     must sit under the top-level `policy:` block: an unanchored match
-    #     would accept the right value at the wrong path while `policy.` itself
-    #     says true.
+    #     must be a DIRECT child of the top-level `policy:` block. Accepting it
+    #     at any depth below `policy:` is not enough: `policy: { defaults: {
+    #     allow_implicit_invocation: false } }` leaves the setting Codex
+    #     actually reads unset while the text still appears under `policy`.
+    #     Depth is compared against the first key in the block, so any
+    #     indentation width works as long as the flag sits at that level.
     codex_yaml="$codex_dir/agents/openai.yaml"
     [ -f "$codex_yaml" ] ||
         fail "$skill: missing skills/codex/$skill/agents/openai.yaml"
-    awk '/^policy:[[:space:]]*$/ { in_policy = 1; next }
+    awk '/^policy:[[:space:]]*$/ { in_policy = 1; depth = -1; next }
          /^[^[:space:]#]/ { in_policy = 0 }
-         in_policy && /^[[:space:]]+allow_implicit_invocation:[[:space:]]*false[[:space:]]*$/ { found = 1 }
+         in_policy && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ {
+             match($0, /^[[:space:]]+/); indent = RLENGTH
+             if (depth < 0) depth = indent
+             if (indent == depth && $0 ~ /^[[:space:]]+allow_implicit_invocation:[[:space:]]*false[[:space:]]*$/) found = 1
+         }
          END { exit found ? 0 : 1 }' "$codex_yaml" ||
-        fail "$skill: skills/codex/$skill/agents/openai.yaml must set 'allow_implicit_invocation: false' under a top-level 'policy:' block"
+        fail "$skill: skills/codex/$skill/agents/openai.yaml must set 'allow_implicit_invocation: false' as a direct child of the top-level 'policy:' block"
 
     count=$((count + 1))
 done <<SKILL_LIST_END

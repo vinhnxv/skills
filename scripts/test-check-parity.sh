@@ -205,7 +205,7 @@ metadata:\
     t=$(fresh_tree)
     sed_inplace 's/allow_implicit_invocation: false/allow_implicit_invocation: true/' \
         "$t/skills/codex/backlog-loop/agents/openai.yaml"
-    expect_fail "allow_implicit_invocation flipped to true" "$t" "under a top-level 'policy:' block"
+    expect_fail "allow_implicit_invocation flipped to true" "$t" "direct child"
 
     t=$(fresh_tree)
     cat > "$t/skills/codex/backlog-loop/agents/openai.yaml" <<'YAML'
@@ -214,7 +214,7 @@ policy:
 defaults:
   allow_implicit_invocation: false
 YAML
-    expect_fail "a decoy false outside the policy block" "$t" "under a top-level 'policy:' block"
+    expect_fail "a decoy false outside the policy block" "$t" "direct child"
 
     t=$(fresh_tree)
     cat > "$t/skills/codex/backlog-loop/agents/openai.yaml" <<'YAML'
@@ -222,7 +222,28 @@ agents:
   policy:
     allow_implicit_invocation: false
 YAML
-    expect_fail "allow_implicit_invocation nested at the wrong path" "$t" "under a top-level 'policy:' block"
+    expect_fail "allow_implicit_invocation nested at the wrong path" "$t" "direct child"
+
+    # The flag is genuinely under `policy:` -- just one level too deep, which
+    # is where Codex stops reading it. A depth-blind match reports this clean.
+    t=$(fresh_tree)
+    cat > "$t/skills/codex/backlog-loop/agents/openai.yaml" <<'YAML'
+policy:
+  defaults:
+    allow_implicit_invocation: false
+YAML
+    expect_fail "allow_implicit_invocation nested one level under policy" "$t" "direct child"
+
+    # Both copies agree, both are valid YAML, and the first value satisfies
+    # every check -- while a host may resolve the second one.
+    t=$(fresh_tree)
+    both_copies '2i\
+description: A second, conflicting description.' "$t"
+    expect_fail "duplicate frontmatter key in both copies" "$t" "duplicate frontmatter key"
+
+    t=$(fresh_tree)
+    both_copies 's/^description: .*/description: [not, a, string]/' "$t"
+    expect_fail "required value is a YAML sequence, not a scalar" "$t" "non-scalar"
 
     t=$(fresh_tree)
     for host in claude codex; do mv "$t/skills/$host/backlog-loop" "$t/skills/$host/two words"; done
