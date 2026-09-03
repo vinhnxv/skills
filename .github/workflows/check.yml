@@ -48,6 +48,27 @@ jobs:
           done
           exit "$status"
 
+  census:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # `--contract-only` is load-bearing: the other half of that suite drives
+      # a model through the host CLI, which is slow, non-deterministic, and has
+      # no place on a push path. The contract half is pure shell and pins the
+      # `bd` behaviours the skill's CENSUS section is built on -- which flags
+      # hide rows, what a native gate looks like, that a human gate is offered
+      # as ready work, that `--readonly` refuses a write, and that `bd export`
+      # rather than a file diff is the non-mutation oracle.
+      #
+      # `bd` is absent from a stock runner, so this usually skips, exactly as
+      # the `claude plugin validate` step above does. It earns its place anyway:
+      # the day someone runs it with `bd` installed, a tracker change that
+      # invalidated the procedure fails here instead of inside an unattended
+      # loop that has already claimed a batch.
+      - name: The tracker still behaves the way the census assumes
+        run: sh scripts/test-census.sh --contract-only
+
   install:
     # The README's install command is the first thing a stranger runs, and it
     # is the one piece of this repository that executes on their machine, not
