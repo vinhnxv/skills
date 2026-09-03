@@ -11,14 +11,16 @@ These skills are not general-purpose. `backlog-loop` needs all three of the
 following:
 
 1. **[Beads](https://github.com/steveyegge/beads) (`bd`)** as the repository's
-   issue tracker, initialized and working. The procedure is written against
-   `bd` commands. Without Beads the loop does **not** stop: preflight falls
-   back on its own to whatever tracker your repository does have, mapping the
-   `bd` commands onto it, and only a repository with no tracker at all stops
-   the run. That fallback is not supported here — see
-   [Tracker support](#backlog-loop) below.
+   issue tracker, initialized and working — preflight runs `bd prime` and
+   `bd ready` and stops if either fails. There is no fallback onto another
+   tracker: every step issues literal `bd` commands, so a partial mapping
+   would strand tracker state at the first unmapped operation.
 2. **A GitHub remote**, with [`gh`](https://cli.github.com) installed and
-   authenticated for it. Not GitHub → preflight stops.
+   authenticated for it. Not GitHub → preflight stops. The remote may carry any
+   name; preflight resolves the one whose URL matches the repository `gh`
+   reports, and stops if none or several do. Your default branch must **not**
+   require a merge queue: on such a branch `gh pr merge` enqueues the PR
+   instead of merging it, and the loop refuses a merge it cannot verify.
 3. **The `compound-engineering` plugin** for your host, providing `lfg`,
    `ce-plan`, `ce-work`, `ce-simplify-code`, `ce-code-review`,
    `ce-test-browser`, `ce-doc-review`, `ce-commit-push-pr`, and
@@ -30,9 +32,12 @@ following:
 
 **Also know what you are starting.** `backlog-loop` is autonomous. It claims
 issues, opens branches and pull requests, and **merges its own PRs** without
-asking. It refuses `--admin` and GitHub auto-merge, requires a clean trunk, and
-stops after repeated failures — but do not point it at a repository whose main
-branch you are not comfortable having written to.
+asking. It refuses `--admin` and GitHub auto-merge, pins each merge to the exact
+commit it reviewed, proves the PR reached `MERGED` before closing anything, runs
+every merge-authorizing gate in a clean throwaway worktree rather than beside
+your uncommitted files, stops when your local default branch holds unpushed
+commits, and stops after repeated failures — but do not point it at a repository
+whose main branch you are not comfortable having written to.
 
 ## Install
 
@@ -101,12 +106,10 @@ second step differs by host:
 - **Claude Code** — there is no `/goal` command. Paste the prompt file's
   contents as an ordinary message, immediately after loading the skill.
 
-**Tracker support.** The procedure is written against `bd` commands
-throughout. When Beads is absent, preflight does not stop — it maps those
-commands onto whatever tracker the repository does have, without asking. That
-path is not supported here and is not tested: every later step still issues
-literal `bd` commands. If you do not use Beads, this skill is not ready for
-you, and the fallback is not a substitute for it.
+**Tracker support.** Beads only. The procedure issues literal `bd` commands
+for claims, estimates, metadata, notes, and closure, and preflight stops when
+`bd` does not work rather than improvising a mapping onto another tracker. If
+you do not use Beads, this skill is not for you.
 
 ## Repository layout
 
