@@ -151,7 +151,9 @@ EMIT, always, in both modes. One line per enumerated issue, in this exact shape,
 census <id> | <category> | <cause>
 ```
 
-`<cause>` names why the issue sits where it does -- the blocking issue's id for `dep-blocked`, the run id for `claimed-other-run`, the recorded cause for the two self-blocked rows, `none` for `ready`. Print the header line first: the census token, the counts per category, and the flags the enumeration ran under.
+`<cause>` names why the issue sits where it does -- the blocking issue's id for `dep-blocked`, the run id for `claimed-other-run`, the recorded cause for the two self-blocked rows, `none` for `ready`. One line per issue and nothing else on it.
+
+Print the header line first, beginning with the literal `census-run ` and carrying the census token, the counts per category, and the flags the enumeration ran under. The two prefixes are fixed and distinct on purpose: a header that also began `census ` would be indistinguishable from a data line to anything counting them, and a reader downstream would report one more issue than the tracker holds.
 
 LOOP-RESPONSIBLE SET. Exactly four categories are the loop's to clear: `ready`, `claimed-this-run`, `self-blocked-transient`, and a `dep-blocked` issue whose blocker is itself in one of those. Everything else is somebody's or something else's. The backlog is clear when no issue sits in that set -- never because `bd ready` came back empty.
 
