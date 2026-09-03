@@ -102,8 +102,13 @@ it reads ready issues with `bd`, groups them into batches sized against a
 complexity budget, and drives one plan → branch → PR → merge cycle per batch,
 adapting its quality gates depending on whether CI is available.
 
-**Launch it in two steps.** Load the skill first, then give it the companion
-prompt in [`prompts/backlog-loop.goal.md`](prompts/backlog-loop.goal.md). The
+**Launch it in two steps.** Load the skill first, then give it one of the two
+companion prompts. Use
+[`prompts/backlog-loop.goal.md`](prompts/backlog-loop.goal.md) to clear the
+backlog, and
+[`prompts/backlog-census.goal.md`](prompts/backlog-census.goal.md) to find out
+why it is stuck without changing anything -- the census prompt runs read-only,
+reports every gate, block, and repair it would make, and merges nothing. The
 second step differs by host:
 
 - **Codex** — `/goal` is a built-in command. Paste the prompt file's contents
