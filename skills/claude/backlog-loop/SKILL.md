@@ -114,7 +114,7 @@ Two things are deliberately NOT in the ledger. The consecutive-blocked and conse
 
 ## CENSUS
 
-One classification pass over the whole tracker, written once and read by both entry points, so a diagnostic run and a loop run can never report different truths about the same backlog. The loop runs it at the termination decision; the companion census prompt runs it alone. An empty `bd ready` list has at least six causes and only one of them is "finished", so nothing below infers termination from that list.
+One classification pass over the whole tracker, written once and read by both entry points. Both evaluate the same recorded fields under the same stated precedence, so a category difference between a diagnostic run and a loop run over an unchanged backlog is a defect -- in this section, the fixture, or the tracker -- and never a permitted outcome. A shared section removes drift between two texts; it does not by itself make a model deterministic, which is why every test below is a lookup over recorded fields rather than a reading. The loop runs it at the termination decision; the companion census prompt runs it alone. An empty `bd ready` list has at least six causes and only one of them is "finished", so nothing below infers termination from that list.
 
 Choose a `<census-run>` token the same way as `<run-id>`. It is a separate key from the claim marker because "claimed by this run" is itself a category below; reusing one key would make the categories overlap.
 
