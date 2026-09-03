@@ -191,14 +191,33 @@ while IFS= read -r skill; do
             fail "$skill: $md declares duplicate frontmatter key(s): $dup"
     done
 
-    # 6b. Required values must be plain scalars. `description: [a, b]` and
-    #     `description: |` are valid YAML that no host reads as the string it
-    #     needs, and both satisfy a non-empty check.
+    # 6b. Required values must be plain STRINGS. Two ways to fail that both
+    #     survive a non-empty test: a collection or block scalar
+    #     (`description: [a, b]`, `description: |`), and an unquoted token YAML
+    #     types as something else -- `description: true` loads as a boolean,
+    #     `description: 3.10` as a number, `description: null` as nothing. The
+    #     supplementary Claude validator would catch some of these, but it is
+    #     absent from a stock runner, so this is the gate that has to.
     for key in $REQUIRED_KEYS; do
         for md in "$claude_md" "$codex_md"; do
-            case "$(frontmatter_value "$md" "$key")" in
+            value=$(frontmatter_value "$md" "$key")
+            case "$value" in
                 "["*|"{"*|"|"*|">"*|"&"*|"*"*|"!"*)
                     fail "$skill: $md gives '$key:' a non-scalar YAML value; both hosts need a plain string" ;;
+            esac
+            # Quoted is always a string, so only bare tokens are typed.
+            case "$value" in
+                '"'*|"'"*) continue ;;
+            esac
+            lower=$(printf '%s' "$value" | tr 'A-Z' 'a-z')
+            case "$lower" in
+                true|false|yes|no|on|off|null|"~")
+                    fail "$skill: $md gives '$key:' the bare token '$value', which YAML loads as a boolean or null, not the string both hosts need" ;;
+            esac
+            case "$value" in
+                *[!0-9.eE+-]*) ;;
+                "") ;;
+                *) fail "$skill: $md gives '$key:' the bare numeric '$value'; both hosts need a string" ;;
             esac
         done
     done

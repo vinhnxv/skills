@@ -16,9 +16,11 @@ following:
    tracker: every step issues literal `bd` commands, so a partial mapping
    would strand tracker state at the first unmapped operation.
 2. **A GitHub remote**, with [`gh`](https://cli.github.com) installed and
-   authenticated for it. Not GitHub → preflight stops. The remote may carry any
-   name; preflight resolves the one whose URL matches the repository `gh`
-   reports, and stops if none or several do. Your default branch must **not**
+   authenticated for it. Not GitHub → preflight stops. The remote must be
+   named `origin`: preflight resolves the remote whose URL matches the
+   repository `gh` reports and stops if it is absent, ambiguous, or named
+   anything else, because the pinned `ce-commit-push-pr` contract pushes to a
+   literal `origin`. Your default branch must **not**
    require a merge queue: on such a branch `gh pr merge` enqueues the PR
    instead of merging it, and the loop refuses a merge it cannot verify.
 3. **The `compound-engineering` plugin** for your host, providing `lfg`,

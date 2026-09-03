@@ -245,6 +245,24 @@ description: A second, conflicting description.' "$t"
     both_copies 's/^description: .*/description: [not, a, string]/' "$t"
     expect_fail "required value is a YAML sequence, not a scalar" "$t" "non-scalar"
 
+    # Non-empty, no rejected prefix, and still not a string once YAML loads it.
+    t=$(fresh_tree)
+    both_copies 's/^description: .*/description: true/' "$t"
+    expect_fail "required value is a bare YAML boolean" "$t" "boolean or null"
+
+    t=$(fresh_tree)
+    both_copies 's/^description: .*/description: null/' "$t"
+    expect_fail "required value is a bare YAML null" "$t" "boolean or null"
+
+    t=$(fresh_tree)
+    both_copies 's/^description: .*/description: 3.10/' "$t"
+    expect_fail "required value is a bare YAML number" "$t" "bare numeric"
+
+    # A quoted token is a string and must keep passing.
+    t=$(fresh_tree)
+    both_copies 's/^description: .*/description: "true"/' "$t"
+    expect_pass "required value is a quoted 'true', which is a string" "$t"
+
     # Check 10 stops at its first match, so a second, contradicting value
     # below it is invisible to it -- and is what a YAML loader may resolve.
     t=$(fresh_tree)
