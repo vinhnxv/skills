@@ -22,7 +22,10 @@ following:
    anything else, because the pinned `ce-commit-push-pr` contract pushes to a
    literal `origin`. Your default branch must **not**
    require a merge queue: on such a branch `gh pr merge` enqueues the PR
-   instead of merging it, and the loop refuses a merge it cannot verify.
+   instead of merging it, and the loop refuses a merge it cannot verify. A
+   private repository on a free plan cannot have one — branch protection and
+   rulesets are both unavailable there, and preflight reads that plan's 403 as
+   an unprotected branch rather than stopping on it.
 3. **The `compound-engineering` plugin** for your host, providing `lfg`,
    `ce-plan`, `ce-work`, `ce-simplify-code`, `ce-code-review`,
    `ce-test-browser`, `ce-doc-review`, `ce-commit-push-pr`, and
