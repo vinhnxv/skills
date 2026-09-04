@@ -122,9 +122,13 @@ Choose a `<census-run>` token the same way as `<run-id>`. It is a separate key f
 
 ENUMERATE. `bd list --all --limit 0 --include-gates --json`, then discard `status=closed` and `issue_type=epic` rows. Every flag is load-bearing: without `--limit 0` the query returns at most 50 rows, without `--include-gates` it omits native gate issues entirely, and without `--all` it omits `pinned` issues, because `--pinned` filters a different attribute and does not surface them. `--all` also returns the repository's whole closed history, which is why discarding closed rows is part of the query and not an afterthought. Do NOT pass `--include-infra` or `--include-templates`: agent, role, message, and template beads are not work, have no category below, and would make the exhaustiveness claim false. Say so on the census header line, so an operator reading a count knows what it counted.
 
-Reconcile against `bd ready --explain --json` for blocker identities ONLY. That explanation covers dependency-blocked OPEN issues and nothing else: a `blocked` issue carrying no dependency edge -- the exact shape of every block this loop writes -- appears in neither of its buckets. Every other category is read from the issue's own stored status.
+`bd ready --explain --json` is the AUTHORITY for the dependency question -- which issues are dependency-blocked, and by what -- and not merely a source of blocker names. Do not re-derive it from edges. The tracker propagates blocking through a blocked parent, so a child whose only edge is `parent-child` to an open epic is offered as ready when that epic is ready and withheld when it is blocked, and no walk over an issue's own edge list can see that. Re-deriving it produced four ready issues on a backlog where the tracker reported one.
 
-BACKFILL, once per issue, BEFORE the precedence walk below. A `blocked` issue carrying `backlog_loop_run` but no `backlog_loop_cause` predates this section: it was written by an earlier form of the procedure that recorded only a note. This runs first because rows 6 and 7 read the cause key, and a blocked issue that reaches the walk without one is exactly the population the Problem Frame names.
+That explanation covers OPEN issues only. A `blocked` issue appears in neither of its buckets, so every category below that turns on `status` is read from the issue's own stored status.
+
+METADATA IS NOT IN THE ENUMERATION. `bd list --json` returns neither a `metadata` object nor a `dependencies` array; it carries `dependency_count` and nothing to resolve it with. So the marker-bearing rows below are answered by one `bd list --has-metadata-key <key> --json` per marker key -- `backlog_loop_run`, `backlog_loop_cause`, `backlog_loop_quarantine`, `backlog_loop_heartbeat`, `backlog_loop_census_heartbeat` -- intersected with the enumeration. That is five queries whatever the backlog's size, where reading the same fact per issue would be one `bd show` per issue and would put the census's cost on the tracker's.
+
+BACKFILL, once per issue, BEFORE the precedence walk below. A `blocked` issue carrying `backlog_loop_run` but no `backlog_loop_cause` predates this section: it was written by an earlier form of the procedure that recorded only a note. This runs first because rows 6 and 7 read the cause key, and a blocked issue that reaches the walk without one would otherwise be filed by a key that is merely missing. It covers only blocks that already carry a marker; a block with no marker at all is older still, and row 10 handles it without writing anything.
 
 - The note text is not in the enumeration output, so read it with one `bd show <id> --json` per affected issue. That is the one place a per-issue query is allowed, and it is bounded twice over: only `blocked` marker-bearing issues with no cause qualify, and an issue that has a cause key is never re-read.
 - Classify it with step 6's reason patterns only. Step 7's rule is unconditional (`needs-person` whatever the gate said), so it contributes a note prefix to recognize, not a pattern to match: a note beginning `post-merge verification failed:` backfills as `needs-person`. So does a note matching nothing.
@@ -144,19 +148,21 @@ CLASSIFY. Every enumerated issue gets exactly one category. Walk this precedence
 | 7 | `self-blocked-transient` | `status=blocked`, `backlog_loop_run` present, `backlog_loop_cause` begins `transient` |
 | 8 | `claimed-this-run` | `backlog_loop_run` equals `<run-id>`, and `status` is not `blocked` |
 | 9 | `abandoned-claim` | `backlog_loop_run` present, that run is NOT live, and `status` is not `blocked` |
-| 10 | `dep-blocked` | an unmet dependency, or `status=blocked` with no `backlog_loop_run` |
-| 11 | `hooked` | `status=hooked` |
-| 12 | `pinned` | `status=pinned` |
-| 13 | `deferred` | `status=deferred` |
-| 14 | `ready` | everything left |
+| 10 | `legacy-blocked` | `status=blocked`, no `backlog_loop_run`, and no unmet dependency |
+| 11 | `dep-blocked` | an unmet dependency, by `--explain`'s verdict above |
+| 12 | `hooked` | `status=hooked` |
+| 13 | `pinned` | `status=pinned` |
+| 14 | `deferred` | `status=deferred` |
+| 15 | `ready` | everything left |
 
 Every ordering above is load-bearing, and each one exists because the opposite order sends work somewhere destructive:
 
 - Rows 1 and 2 sit above everything because a gate must never be claimed whatever else is true of it, and a mislabeled gate must not fall through to `ready` and get built.
 - Row 3 sits above the rest because a quarantined issue is waiting on a person's eyes, not on the loop, and any lower row would put it back in the pool the quarantine exists to keep it out of.
 - Rows 6 and 7 sit above row 8 so that an issue THIS run blocked is filed as blocked rather than as still claimed. Below row 8 they would be shadowed entirely, and every self-block this run wrote would stay in the loop-responsible set, so the run could never report the backlog clear.
-- Rows 6 and 7 also sit above row 10 because an issue this loop blocked can also carry a dependency edge, and the loop's own wreckage is the actionable half of that pair.
-- Row 9 exists because rows 4, 5, and 8 between them do NOT cover an issue left `in_progress` by a run that has since died: row 4 requires that run to be live, row 5 requires no marker at all, and row 8 requires the marker to be this run's. Without row 9 such an issue reaches row 14 and is offered as ready work, and the loop claims an issue that may still have an open PR -- the exact double-shipping THE RUN LEDGER warns about.
+- Rows 6 and 7 also sit above rows 10 and 11 because an issue this loop blocked can also carry a dependency edge, and the loop's own wreckage is the actionable half of that pair.
+- Row 10 sits above row 11 because a `blocked` issue that no dependency explains is not dependency-blocked, and filing it as though it were hides it among issues that will clear themselves. It is a block written by an earlier form of this procedure, before any marker was recorded -- the exact population the Problem Frame names -- and it is recognized the way everything else here is, from the ABSENCE of fields rather than from reading the note: no marker to own it, and no unmet dependency to explain it. The note is reported, never tested. A block a person wrote by hand has the same shape and gets the same treatment, which is correct: both need a person, and neither is this loop's to reopen.
+- Row 9 exists because rows 4, 5, and 8 between them do NOT cover an issue left `in_progress` by a run that has since died: row 4 requires that run to be live, row 5 requires no marker at all, and row 8 requires the marker to be this run's. Without row 9 such an issue reaches row 15 and is offered as ready work, and the loop claims an issue that may still have an open PR -- the exact double-shipping THE RUN LEDGER warns about.
 
 An `abandoned-claim` is never selected directly. It is this procedure's own wreckage and it goes through THE RUN LEDGER's RECOVERY, which reads `backlog_loop_phase` and decides per phase whether to reclaim, adopt the existing PR, or leave it; only what recovery returns to `open` can be picked in a later iteration.
 
@@ -180,17 +186,20 @@ census <id> | <category> | <cause>
 | `self-blocked-needs-person` / `self-blocked-transient` | the recorded `backlog_loop_cause` value |
 | `claimed-this-run` | the recorded `backlog_loop_phase` |
 | `abandoned-claim` | the recorded `backlog_loop_phase`, or `none` when unset |
-| `dep-blocked` | the blocking issue's id; `no-edge` when the issue is `blocked` with no dependency edge |
+| `legacy-blocked` | `no-marker-no-edge` |
+| `dep-blocked` | the blocking issue's id, as `--explain` reports it |
 | `hooked` / `pinned` / `deferred` | `none` |
 | `ready` | `none` |
 
 One line per issue and nothing else on it.
 
+ACCOUNT FOR THE COUNT before reporting anything. The census claims to have accounted for every issue, so it verifies that claim rather than asserting it: the number of `census ` lines must equal the number of rows the enumeration kept. They differ only if a per-issue read failed, and such a read can fail without saying so -- one `bd show` in fifty-three returned nothing on a live tracker, silently, and a run that did not count would have reported a backlog one issue smaller than it is. On a mismatch, name the missing ids and stop; do not report a census, and do not enter a mutation pass.
+
 Print the header line first, beginning with the literal `census-run ` and carrying the census token, the counts per category, and the flags the enumeration ran under. The two prefixes are fixed and distinct on purpose: a header that also began `census ` would be indistinguishable from a data line to anything counting them, and a reader downstream would report one more issue than the tracker holds.
 
-LOOP-RESPONSIBLE SET. Exactly five categories are the loop's to clear: `ready`, `claimed-this-run`, `abandoned-claim`, `self-blocked-transient`, and a `dep-blocked` issue whose blocker is itself in one of those. Everything else is somebody's or something else's. `quarantined` is deliberately NOT in the set: a quarantined issue waits on a person, so counting it would make a run that quarantined anything unable to ever report the backlog clear. The backlog is clear when no issue sits in that set -- never because `bd ready` came back empty.
+LOOP-RESPONSIBLE SET. Exactly five categories are the loop's to clear: `ready`, `claimed-this-run`, `abandoned-claim`, `self-blocked-transient`, and a `dep-blocked` issue whose blocker is itself in one of those. Everything else is somebody's or something else's. `quarantined` and `legacy-blocked` are deliberately NOT in the set, both because they wait on a person. Counting `quarantined` would make a run that quarantined anything unable to ever report the backlog clear. `legacy-blocked` is excluded for a stronger reason: reopening one means overriding a decision an earlier run recorded and a person has not revisited, and the recorded reasons are routinely ones no later run can re-derive -- a release boundary the epic declares, a collision with work its caller owned, a unit no agent can build. Reopening those rebuilds what somebody deliberately stopped. The backlog is clear when no issue sits in that set -- never because `bd ready` came back empty.
 
-Walking `dep-blocked` transitively meets the cycles this procedure reports and never repairs, so the walk carries a visited set, counts each issue at most once, and treats a repeat visit as the end of that branch plus a reported cycle. Read edges from the `dependencies` array already present in the enumeration output; do not issue a query per issue.
+Walking `dep-blocked` transitively meets the cycles this procedure reports and never repairs, so the walk carries a visited set, counts each issue at most once, and treats a repeat visit as the end of that branch plus a reported cycle. Walk the `blocked_by` lists in the `bd ready --explain --json` output already taken above, which reports its own cycle count; the enumeration carries no edges to walk.
 
 WRITE GATE, covering EVERY write this section makes -- the BACKFILL persist above and both mutation passes below, not the passes alone. Each is skipped entirely, with no partial application, when either of these holds: the run is a diagnostic run, or any other run of this procedure holds a live heartbeat. The `<repair-ceiling>` is a third stop but a narrower one: it bounds GATE REPAIR PASS only, and never stops REOPEN PASS, which is bounded per issue by `backlog_loop_attempts`. Letting an unrelated run of gate repairs stall recovery would leave blocked work unreopened for a reason that has nothing to do with it. A skipped write still classifies, still emits, and still reports every action it would have taken.
 
@@ -211,7 +220,7 @@ Stamp `backlog_loop_census=<census-run>` on every issue this section writes to, 
 
 GATE REPAIR PASS. See `## HUMAN GATES`.
 
-REPORT. Both modes end with the census lines, the loop-responsible count, every gate with what its person must do, every labeling defect with the exact label to apply, every reported cycle, and -- in a loop run -- every repair and every reopen this run actually performed, each naming both issues, the marker state relied on, and where its restorable record sits. A run that mutates a person's tracker and does not say so is the failure this section exists to prevent, so that list is printed whether the run cleared the backlog or not.
+REPORT. Both modes end with the census lines, the loop-responsible count, every gate with what its person must do, every labeling defect with the exact label to apply, every `legacy-blocked` issue with the first line of its note -- that note is the only record of why it was stopped, and a person cannot decide without it -- every reported cycle, and -- in a loop run -- every repair and every reopen this run actually performed, each naming both issues, the marker state relied on, and where its restorable record sits. A run that mutates a person's tracker and does not say so is the failure this section exists to prevent, so that list is printed whether the run cleared the backlog or not.
 
 For each `ready` issue also print how many issues it would unblock, counted transitively over the same visited-set walk, as two figures: those the loop can clear unaided, and those that become reachable only once named gates are released. One combined number hides the pairing an operator most needs -- a ready issue sitting in front of a gate is where a person-minute buys the most agent work -- so name those gates beside it.
 

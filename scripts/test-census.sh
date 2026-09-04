@@ -320,6 +320,52 @@ else
     fail "reads no longer touch tracker files; a filesystem diff may now be valid"
 fi
 
+# The enumeration cannot answer the marker rows or the dependency rows on its
+# own. `bd list --json` carries neither a `metadata` object nor a `dependencies`
+# array -- only a `dependency_count` with nothing to resolve it against. The
+# procedure said otherwise and told the census to read edges straight out of the
+# enumeration, which no run could ever have done.
+list_row=$(bd -C "$store" list --all --limit 0 --include-gates --json 2>/dev/null \
+    | python3 -c 'import sys,json; r=json.load(sys.stdin); print(json.dumps(sorted(r[0].keys())) if r else "[]")')
+case "$list_row" in
+    *'"metadata"'*) fail "bd list now returns metadata; the per-key queries below are no longer needed" ;;
+    *) pass "bd list carries no metadata, so marker rows need their own query" ;;
+esac
+case "$list_row" in
+    *'"dependencies"'*) fail "bd list now returns dependencies; the census may read edges from it again" ;;
+    *) pass "bd list carries no dependencies, so the census cannot walk edges from it" ;;
+esac
+
+# What the census uses instead. One query per marker key answers that key for
+# the whole backlog, so the cost is flat in the number of keys rather than in
+# the number of issues.
+mk=$(fresh_store)
+mk_marked=$(bd -C "$mk" create "carries a run marker" --silent)
+mk_bare=$(bd -C "$mk" create "carries nothing" --silent)
+bd -C "$mk" update "$mk_marked" --set-metadata backlog_loop_run=SOME-RUN >/dev/null
+mk_hit=$(bd -C "$mk" list --has-metadata-key backlog_loop_run --json 2>/dev/null \
+    | python3 -c 'import sys,json; print(" ".join(sorted(x["id"] for x in json.load(sys.stdin))))')
+[ "$mk_hit" = "$mk_marked" ] \
+    && pass "--has-metadata-key returns exactly the issues carrying that key" \
+    || fail "--has-metadata-key returned '$mk_hit', wanted exactly '$mk_marked' (bare: $mk_bare)"
+
+# Blocking propagates through a blocked parent, and an issue's own edge list
+# cannot show it: the child's only edge is `parent-child` to the parent, whose
+# own blocker lives somewhere else entirely. Re-deriving readiness from edges
+# therefore disagrees with the tracker, which is why `--explain` is the
+# authority for the dependency question rather than a source of names.
+pp=$(fresh_store)
+pp_parent=$(bd -C "$pp" create "parent that is itself blocked" --silent)
+pp_child=$(bd -C "$pp" create "child whose only edge is parent-child" --parent "$pp_parent" --silent)
+pp_blocker=$(bd -C "$pp" create "what blocks the parent" --silent)
+bd -C "$pp" dep "$pp_blocker" --blocks "$pp_parent" >/dev/null
+pp_blocked=$(bd -C "$pp" ready --explain --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); print(" ".join(sorted(x["id"] for x in d["blocked"])))')
+case " $pp_blocked " in
+    *" $pp_child "*) pass "--explain reports a child blocked through its blocked parent" ;;
+    *) fail "--explain did not report $pp_child blocked; blocked set was '$pp_blocked'" ;;
+esac
+
 if [ "$contract_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [contract only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
@@ -329,10 +375,10 @@ fi
 echo ""
 echo "PART 2 - classification"
 
-# The fourteen categories the CENSUS section files every issue under, in its
+# The fifteen categories the CENSUS section files every issue under, in its
 # own precedence order. Kept here so a rename in the procedure fails this suite
 # rather than silently shrinking what it counts.
-CATEGORIES='human-gate|label-defect|quarantined|claimed-other-run|external-wip|self-blocked-needs-person|self-blocked-transient|claimed-this-run|abandoned-claim|dep-blocked|hooked|pinned|deferred|ready'
+CATEGORIES='human-gate|label-defect|quarantined|claimed-other-run|external-wip|self-blocked-needs-person|self-blocked-transient|claimed-this-run|abandoned-claim|legacy-blocked|dep-blocked|hooked|pinned|deferred|ready'
 
 host_cli=""
 for candidate in claude codex; do
@@ -496,7 +542,14 @@ c1_gate=$(bd -C "$c1" create "[HUMAN] provision the deploy account" -l human-gat
 c1_dep=$(bd -C "$c1" create "ship the deploy step" --silent)
 c1_prefix=$(bd -C "$c1" create "[HUMAN] rotate the signing key" --silent)
 c1_block=$(bd -C "$c1" create "left blocked by an earlier run" --silent)
+# A block from before any marker existed: blocked, no metadata at all, and no
+# dependency edge to explain it. This is the population the whole section was
+# written for, and it is recognized from the ABSENCE of both fields -- never
+# from the note, which a person may have written and which no query can trust.
+c1_legacy=$(bd -C "$c1" create "blocked by a loop that recorded only a note" --silent)
 bd -C "$c1" dep "$c1_gate" --blocks "$c1_dep" >/dev/null
+bd -C "$c1" update "$c1_legacy" --status=blocked \
+    --append-notes "backlog-loop cannot ship this unit: release-boundary conflict" >/dev/null
 bd -C "$c1" update "$c1_block" --status=blocked --set-metadata backlog_loop_run=OLD-RUN \
     --set-metadata backlog_loop_cause=needs-person --set-metadata backlog_loop_attempts=1 \
     --append-notes "post-merge verification failed: lint | none" >/dev/null
@@ -509,6 +562,8 @@ if census_usable "$out"; then
     expect_category "$out" "$c1_prefix" label-defect  "a [HUMAN] prefix with no label is a labeling defect"
     expect_category "$out" "$c1_block"  self-blocked-needs-person \
         "a post-merge verification block is never transient"
+    expect_category "$out" "$c1_legacy" legacy-blocked \
+        "a blocked issue with no marker and no edge is legacy, not dependency-blocked"
 
     # Count the data shape, not the word "census": the header is prose the
     # model composes, and a counter that merely looks for a prefix reports one
@@ -516,9 +571,9 @@ if census_usable "$out"; then
     # makes the count independent of the header entirely, and makes this line
     # fail loudly if the procedure ever renames one.
     emitted=$(printf '%s\n' "$out" | grep -cE "^census +[^ |]+ +\\| +($CATEGORIES) +\\|" || true)
-    [ "$emitted" -eq 5 ] \
+    [ "$emitted" -eq 6 ] \
         && pass "exactly one line per non-closed non-epic issue" \
-        || fail "expected 5 census lines, got $emitted"
+        || fail "expected 6 census lines, got $emitted"
 fi
 
 echo "  case: a native gate is a gate and is never repaired"
