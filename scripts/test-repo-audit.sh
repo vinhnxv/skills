@@ -14,14 +14,23 @@
 # the tracker half of the procedure is proven against, writes a set of them,
 # and checks that the set parses and discriminates. No model, no tracker.
 #
-# PART 2, the run. Seeds a Beads store, feeds the fixture set to the
-# orchestrator with NO SUBAGENTS SPAWNED, and diffs the emitted lines against
-# what the emit contract says they must be. Driving the procedure from a
-# fixture rather than from live discovery is deliberate: the handoff into a
-# tracker that merges its own pull requests is the part of this skill that
-# carries real risk, and a fixture makes it provable without waiting for the
-# discovery engine to be trustworthy. A defect found here is a defect in the
-# write protocol rather than an ambiguous result from an engine still settling.
+# PART 2, the run. Seeds a target repository and a Beads store, feeds the
+# fixture set to the orchestrator with NO SUBAGENTS SPAWNED, and diffs the
+# emitted lines against what the emit contract says they must be. Driving the
+# procedure from a fixture rather than from live discovery is deliberate: the
+# handoff into a tracker that merges its own pull requests is the part of this
+# skill that carries real risk, and a fixture makes it provable without waiting
+# for the discovery engine to be trustworthy. A defect found here is a defect in
+# the write protocol rather than an ambiguous result from an engine still
+# settling.
+#
+# EVERY PART 2 CASE RUNS THE REDUCED FIXTURE ROSTER: no subagent is spawned, no
+# wave is dispatched, and no round runs. NO CASE HERE RUNS THE FULL ROSTER
+# against live discovery. That is a deliberate bound on this suite's cost, and
+# the banner below prints both deadlines so the difference is visible rather
+# than assumed -- a full-roster run is bounded at MAX_ROUNDS waves-worth of
+# WAVE_DEADLINE plus POPULATION_DEADLINE, which is more wall clock than any
+# suite should spend per case.
 #
 # Both parts skip cleanly rather than failing when a prerequisite is missing.
 
@@ -152,6 +161,92 @@ else
     fail "the redacted record does not hold both halves of the redaction"
 fi
 
+# ---------------------------------------------------------------------------
+# THE FINGERPRINT-STABILITY CORPUS.
+#
+# One seeded defect, written five times with a mutation that the normalization
+# rules say must NOT change its fingerprint, plus two genuinely distinct
+# defects that sit at the same location under the same rule and therefore MUST
+# fingerprint apart.
+#
+# The five mutations are exactly the ones the procedure claims to survive:
+#
+#   C1  the defect as first read
+#   C2  the file renamed -- carried by the rename map below, per R81
+#   C3  reformatted: indentation and internal whitespace changed
+#   C4  CRLF line endings instead of LF
+#   C5  a comment inserted above it, which moves its line range
+#
+# C3's mutation is written with the whitespace UNNORMALIZED on purpose. The
+# fixture record's `evidence` field is defined as normalized text, so a corpus
+# that pre-normalized every variant would prove that identical strings hash
+# identically and nothing else. The run is what must normalize it.
+#
+# C6 and C7 are the discriminator's job: same path, same rule, overlapping
+# region, different defects. They fingerprint apart via the enclosing symbol,
+# and a procedure that collapsed them would silently file one issue for two
+# bugs.
+# ---------------------------------------------------------------------------
+corpus="$work/corpus"
+mkdir -p "$corpus"
+
+write_corpus() { # id, path, lines, evidence
+    cat > "$corpus/$1.fixture" <<CORPUS
+id: $1
+dims: correctness and control flow
+path: $2
+lines: $3
+evidence: $4
+severity: P2
+recipe: $2 | ${3%%-*} | literal:acquire(lock) | matches 1 | FIXTURESHA
+receipt: $1 | $2:$3 | read the acquire and every exit; the release is not on the error path
+CORPUS
+}
+
+write_corpus C1 "src/pool.py" "20-26" "def drain(self): acquire(lock) ; self._flush() ; release(lock)"
+write_corpus C2 "src/pooling.py" "20-26" "def drain(self): acquire(lock) ; self._flush() ; release(lock)"
+write_corpus C3 "src/pool.py" "20-26" "def drain(self):      acquire(lock)  ;  self._flush()  ;  release(lock)"
+printf 'id: C4\r\ndims: correctness and control flow\r\npath: src/pool.py\r\nlines: 20-26\r\nevidence: def drain(self): acquire(lock) ; self._flush() ; release(lock)\r\nseverity: P2\r\nrecipe: src/pool.py | 20 | literal:acquire(lock) | matches 1 | FIXTURESHA\r\nreceipt: C4 | src/pool.py:20-26 | read the acquire and every exit; the release is not on the error path\r\n' > "$corpus/C4.fixture"
+write_corpus C5 "src/pool.py" "23-29" "def drain(self): acquire(lock) ; self._flush() ; release(lock)"
+
+write_corpus C6 "src/pool.py" "40-44" "def close(self): acquire(lock) ; self._shutdown()"
+write_corpus C7 "src/pool.py" "40-44" "def reset(self): acquire(lock) ; self._clear()"
+
+# The rename map C2 is measured against. R81 resolves a finding at a rename
+# target back to the fingerprint recorded under the rename source, so the map
+# is an input to the run rather than something it can infer from the fixtures.
+cat > "$corpus/renames" <<'RENAMES'
+src/pool.py -> src/pooling.py
+RENAMES
+
+CORPUS_ONE_FINGERPRINT='C1 C2 C3 C4 C5'
+CORPUS_DISTINCT='C6 C7'
+
+corpus_count=$(find "$corpus" -name '*.fixture' | wc -l | tr -d ' ')
+[ "$corpus_count" -eq 7 ] \
+    && pass "the fingerprint corpus holds all seven records" \
+    || fail "the fingerprint corpus holds $corpus_count record(s), wanted 7"
+
+# The corpus only proves anything if the variants really do differ as written.
+# Five byte-identical files would pass every fingerprint assertion below for
+# reasons that have nothing to do with normalization.
+same=0
+for a in C2 C3 C4 C5; do
+    if cmp -s "$corpus/C1.fixture" "$corpus/$a.fixture"; then
+        same=$((same + 1))
+    fi
+done
+[ "$same" -eq 0 ] \
+    && pass "every mutation in the corpus differs in bytes from the base record" \
+    || fail "$same corpus mutation(s) are byte-identical to C1; they prove nothing"
+
+# C4's whole point is the line-ending conversion, so assert the CR is there.
+if od -c "$corpus/C4.fixture" 2>/dev/null | grep -q '\\r'; then
+    pass "the line-ending variant really carries CRLF"
+else
+    fail "the line-ending variant carries no CR; the LF normalization is untested"
+fi
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
@@ -186,43 +281,130 @@ if [ -z "$host_cli" ] || [ -z "$deadline" ]; then
     exit 0
 fi
 
-fresh_store() {
-    dir=$(mktemp -d "$work/store.XXXXXX")
-    ( cd "$dir" && bd init --prefix ra >/dev/null 2>&1 )
+# ---------------------------------------------------------------------------
+# THE PER-CASE DEADLINE, DERIVED FROM THE PROCEDURE'S OWN CONSTANTS BLOCK.
+#
+# Never copied from the census suite. That suite's kill is sized for a
+# procedure that reads a six-issue tracker; a repo-audit case drives preflight,
+# a sweep, deduplication, verification, filing and a report, and a deadline
+# borrowed from the smaller procedure would kill every case mid-run. The
+# runner's own guard would then report each kill as a runner failure rather
+# than as a classification result, which is a suite that reports noise.
+#
+# Every case here runs the REDUCED FIXTURE ROSTER -- no subagent, no wave, no
+# round -- so the bound that applies is one wave's worth of orchestrator wall
+# clock. The full-roster bound is computed too, and printed, so the cost this
+# suite is declining to spend is visible rather than assumed.
+# ---------------------------------------------------------------------------
+const_val() { # NAME -> the first integer on its line in the constants block
+    sed -n "s/^$1 *= *\([0-9][0-9]*\).*/\1/p" "$skill" | head -n 1
+}
+
+wave_min=$(const_val WAVE_DEADLINE)
+pop_min=$(const_val POPULATION_DEADLINE)
+max_rounds=$(const_val MAX_ROUNDS)
+fanout_floor=$(const_val FANOUT_FLOOR)
+roster_size=$(sed -n '/^| class | dimension | cacheable | why |$/,/^$/p' "$skill" \
+    | grep -c '^| \(latent defect\|health\|conformance\) |' || true)
+
+for pair in "WAVE_DEADLINE:$wave_min" "POPULATION_DEADLINE:$pop_min" \
+            "MAX_ROUNDS:$max_rounds" "FANOUT_FLOOR:$fanout_floor"; do
+    [ -n "${pair#*:}" ] || {
+        echo "FAIL: ${pair%%:*} did not parse out of the constants block; every deadline below would be empty."
+        exit 1
+    }
+done
+[ "${roster_size:-0}" -ge 1 ] || { echo "FAIL: the dimension roster did not parse; the emit counts would be empty."; exit 1; }
+
+case_deadline=$((wave_min * 60))
+waves=$(((roster_size + fanout_floor - 1) / fanout_floor))
+full_deadline=$((max_rounds * waves * (wave_min + pop_min) * 60))
+
+echo "  roster: $roster_size dimensions, $waves wave(s) at a width of $fanout_floor"
+echo "  per-case deadline: ${case_deadline}s (WAVE_DEADLINE), reduced fixture roster, no spawn"
+echo "  a full-roster case would be bounded at ${full_deadline}s; none runs here"
+echo "  worst case for this suite: 8 host runs, so up to $((case_deadline * 8))s"
+echo ""
+
+# ---------------------------------------------------------------------------
+# The seeded target repository. The fixtures name paths, and a run that cannot
+# resolve them audits nothing; the report cases additionally need a real VCS to
+# ask whether the report path is ignored.
+# ---------------------------------------------------------------------------
+fresh_target() { # ignore_reports: yes | no
+    ignore_reports=$1
+    dir=$(mktemp -d "$work/target.XXXXXX")
+    mkdir -p "$dir/src"
+    for f in reader.py queue.py config.py pool.py pooling.py; do
+        printf 'def placeholder():\n    return None\n' > "$dir/src/$f"
+    done
+    (
+        cd "$dir" || exit 1
+        git init -q .
+        # bd init APPENDS its own entries to .gitignore, so it runs before the
+        # report-path entry and before the commit. Otherwise the seeded tree is
+        # dirty from the moment it is created, and preflight would record a
+        # dirty path in every single case.
+        bd init --prefix ra >/dev/null 2>&1
+        [ "$ignore_reports" = yes ] && printf 'docs/audits/\n' >> .gitignore
+        git add -A
+        git -c user.email=suite@example.invalid -c user.name=suite commit -qm seed
+    )
     echo "$dir"
 }
 
-# Feed the fixture set to the orchestrator with NO SUBAGENTS SPAWNED. The
-# procedure's discovery half is skipped by handing it findings that are already
-# verified; what runs is everything from deduplication onward.
-run_audit() { # store_dir, mode
-    store_dir=$1
-    mode=$2   # writing | readonly
-    prompt="Read the repo-audit skill at $skill.
-Its discovery half has already run. Treat the verified findings in $fixtures as
-its output: one record per .fixture file, one 'key: value' per line.
-Spawn NO subagents. Run everything from deduplication onward as a $mode run,
-against the Beads tracker in $store_dir, using 'bd -C $store_dir ...' for every
-tracker command.
-Print the audit-run header line, one dimension line per roster dimension, and
-one finding line per surviving candidate, between a line reading AUDIT-BEGIN and
-a line reading AUDIT-END, and nothing else between those markers."
-    if [ "$host_cli" = "claude" ]; then
-        set -- --allowedTools 'Bash(bd:*)'
+issue_count() { # target_dir
+    bd -C "$1" list --all --limit 0 --json 2>/dev/null | grep -c '"id"' || true
+}
+
+# Writes the host's combined output to $host_out and sets $host_status. It
+# does NOT print to stdout: a status set inside a command substitution dies
+# with the subshell, and every caller here needs both the output and the exit
+# code of the same invocation.
+host_out="$work/host-out"
+host_run() { # prompt, tools
+    _prompt=$1
+    _tools=$2
+    if [ "$host_cli" = "claude" ] && [ -n "$_tools" ]; then
+        set -- --allowedTools "$_tools"
     else
         set --
     fi
-    raw=$("$deadline" 900 "$host_cli" -p "$prompt" "$@" 2>&1); status=$?
+    set +e
+    "$deadline" "$case_deadline" "$host_cli" -p "$_prompt" "$@" > "$host_out" 2>&1
+    host_status=$?
+    set -e
+}
+
+# Feed a fixture set to the orchestrator with NO SUBAGENTS SPAWNED. The
+# procedure's discovery half is skipped by handing it findings that are already
+# verified; what runs is everything from deduplication onward.
+run_audit() { # target_dir, mode, fixture_dir, label, extra_instructions
+    target=$1; mode=$2; fx=$3; label=$4; extra=$5
+    prompt="Read the repo-audit skill at $skill.
+The target repository is $target and its Beads store is there; issue every
+tracker command as 'bd -C $target ...'.
+Its discovery half has already run. Treat the verified findings in $fx as its
+output: one record per .fixture file, one 'key: value' per line. If $fx holds a
+file named 'renames', each of its lines is 'old-path -> new-path' for the rename
+reconciliation.
+Spawn NO subagents. Run everything from deduplication onward as a $mode run.
+$extra
+Print the audit-run header line, one dimension line per roster dimension, and
+one finding line per surviving candidate, between a line reading AUDIT-BEGIN and
+a line reading AUDIT-END, and nothing else between those markers."
+    host_run "$prompt" 'Bash(bd:*),Read,Write,Glob,Grep'
+    # Each case's transcript is named after its own target and label, so two
+    # cases never overwrite one another's evidence.
     if [ -n "${AUDIT_RAW_DIR:-}" ]; then
         mkdir -p "$AUDIT_RAW_DIR"
-        printf '%s\n' "$raw" > "$AUDIT_RAW_DIR/${store_dir##*/}-$mode.log"
+        cp "$host_out" "$AUDIT_RAW_DIR/${target##*/}-$label.log"
     fi
-    if [ "$status" -ne 0 ]; then
-        echo "__AUDIT_RUNNER_FAILED__ $host_cli exited $status"
+    if [ "$host_status" -ne 0 ]; then
+        echo "__AUDIT_RUNNER_FAILED__ $host_cli exited $host_status"
         return
     fi
-    printf '%s\n' "$raw" \
-        | sed -n '/^AUDIT-BEGIN$/,/^AUDIT-END$/p' \
+    sed -n '/^AUDIT-BEGIN$/,/^AUDIT-END$/p' "$host_out" \
         | sed -e '/^AUDIT-BEGIN$/d' -e '/^AUDIT-END$/d'
 }
 
@@ -236,34 +418,325 @@ emit_usable() {
     return 0
 }
 
-store=$(fresh_store)
-emitted=$(run_audit "$store" writing)
+# Normalize the two fields no suite can predict -- the fingerprint hash and the
+# tracker id -- so an emitted table can be diffed against an expected one. The
+# fingerprint is replaced positionally by the order of first appearance, which
+# keeps the DISTINCTNESS of the field checkable while dropping its value.
+normalize_findings() {
+    awk -F' \\| ' '
+        /^finding /{
+            fp = $1; sub(/^finding /, "", fp)
+            if (!(fp in seen)) { seen[fp] = ++n }
+            id = $5; if (id != "none") { id = "ID" }
+            printf "finding #%d | %s | %s | %s | %s | %s\n", seen[fp], $2, $3, $4, id, $6
+        }
+    '
+}
 
-if emit_usable "$emitted"; then
-    # Positive control on the emit itself: the header must be there, exactly
-    # once, and distinguishable from the data lines. Everything below counts
-    # lines, and a run that emitted only narration would satisfy every
-    # "no bad line" assertion there is.
-    headers=$(printf '%s\n' "$emitted" | grep -c '^audit-run ' || true)
+field_count_violations() {
+    awk -F' \\| ' '
+        /^audit-run /{ if (NF != 9) print "audit-run has " NF " fields, wanted 9" }
+        /^dimension /{ if (NF != 6) print "dimension has " NF " fields, wanted 6" }
+        /^finding /  { if (NF != 6) print "finding has " NF " fields, wanted 6" }
+        { for (i = 1; i <= NF; i++) if ($i ~ /^[[:space:]]*$/) print "blank field " i " in: " $0 }
+    '
+}
+
+# ---------------------------------------------------------------------------
+# POSITIVE CONTROLS, BEFORE ANY NEGATIVE ASSERTION.
+#
+# A serially degraded read-only run satisfies every "no write" and every
+# coverage assertion below for reasons that have nothing to do with the
+# procedure. So prove first that this harness CAN write to the tracker and CAN
+# spawn an agent. An unproven control fails with its own text; it never passes,
+# and it never lets the assertion it guards pass either.
+# ---------------------------------------------------------------------------
+write_proven=0
+spawn_proven=0
+
+control_target=$(fresh_target no)
+host_run "Run exactly this command and nothing else, then print the word DONE:
+bd -C $control_target create 'control probe' --silent" 'Bash(bd:*)'
+if [ "$host_status" -eq 0 ] && [ "$(issue_count "$control_target")" -ge 1 ]; then
+    write_proven=1
+    pass "positive control: this harness can write an issue through the host CLI"
+else
+    fail "positive control unproven: no issue reached the store, so every no-write assertion below would be vacuous"
+fi
+
+spawn_token="spawn-$$-$(date +%s)"
+spawn_probe="$work/spawn-probe"
+host_run "Spawn exactly one subagent whose only instruction is to write the
+text $spawn_token into the file $spawn_probe. Wait for it, then print DONE." \
+    'Task,Write,Bash'
+if [ "$host_status" -eq 0 ] && [ -f "$spawn_probe" ] && grep -q "$spawn_token" "$spawn_probe"; then
+    spawn_proven=1
+    pass "positive control: this harness can spawn a subagent that writes a file"
+else
+    fail "positive control unproven: no subagent wrote the probe file, so a degraded serial run is indistinguishable from a spawning one here"
+fi
+
+guarded() { # flag, description -> 0 when the guarding control was proven
+    [ "$1" -eq 1 ] && return 0
+    fail "not run, its positive control was unproven: $2"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# CASE A - the first run against a fresh target.
+#
+# It files NOTHING whichever prompt invoked it, and makes exactly one tracker
+# write: the index issue. Expect three finding lines, all report-only.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case A: first run, fresh target, writing mode"
+target_a=$(fresh_target no)
+emit_a=$(run_audit "$target_a" writing "$fixtures" first "This is the first run against this repository.")
+
+if emit_usable "$emit_a"; then
+    headers=$(printf '%s\n' "$emit_a" | grep -c '^audit-run ' || true)
     [ "$headers" -eq 1 ] \
         && pass "the run emitted exactly one audit-run header" \
         || fail "the run emitted $headers audit-run header(s), wanted 1"
 
-    dims=$(printf '%s\n' "$emitted" | grep -c '^dimension ' || true)
-    [ "$dims" -eq 9 ] \
+    dims=$(printf '%s\n' "$emit_a" | grep -c '^dimension ' || true)
+    [ "$dims" -eq "$roster_size" ] \
         && pass "the run emitted one dimension line per roster dimension" \
-        || fail "the run emitted $dims dimension line(s), wanted 9"
+        || fail "the run emitted $dims dimension line(s), wanted $roster_size"
 
-    finds=$(printf '%s\n' "$emitted" | grep -c '^finding ' || true)
+    finds=$(printf '%s\n' "$emit_a" | grep -c '^finding ' || true)
     [ "$finds" -eq "$count" ] \
         && pass "the run emitted one finding line per fixture record" \
         || fail "the run emitted $finds finding line(s), wanted $count"
 
-    blank=$(printf '%s\n' "$emitted" | grep -nE '\|[[:space:]]*\|' || true)
-    [ -z "$blank" ] \
-        && pass "no emitted line carries a blank field" \
-        || fail "an emitted line carries a blank field: $(printf '%s' "$blank" | head -n 1)"
+    violations=$(printf '%s\n' "$emit_a" | field_count_violations)
+    [ -z "$violations" ] \
+        && pass "every emitted line parses into its declared field set with no blank field" \
+        || fail "emitted line(s) violate the field set: $(printf '%s' "$violations" | head -n 1)"
+
+    printf '%s\n' "$emit_a" | grep -q '^audit-run .*first-run' \
+        && pass "the header carries the first-run flag" \
+        || fail "the header does not carry the first-run flag"
+
+    # THE EXPECTED TABLE. Fingerprints are positional and issue ids are folded
+    # to ID, so what is diffed is the dimension list, the severity, the
+    # disposition, the resolution to an issue or not, and the location.
+    cat > "$work/expected-a" <<'EXPECTED'
+finding #1 | correctness and control flow | P1 | report-only | none | src/reader.py:41-47
+finding #2 | state, ordering, and idempotency,correctness and control flow | P0 | report-only | none | src/queue.py:88-96
+finding #3 | input boundaries and untrusted data | P0 | report-only | none | src/config.py:12-12
+EXPECTED
+    printf '%s\n' "$emit_a" | normalize_findings | sort > "$work/actual-a"
+    sort "$work/expected-a" > "$work/expected-a.sorted"
+    if diff -u "$work/expected-a.sorted" "$work/actual-a" > "$work/diff-a" 2>&1; then
+        pass "the first run's finding lines diff clean against the expected table"
+    else
+        fail "the first run's finding lines differ from the expected table: $(head -n 8 "$work/diff-a" | tr '\n' ' ')"
+    fi
+
+    if guarded "$write_proven" "the first run files nothing but the index"; then
+        n=$(issue_count "$target_a")
+        [ "$n" -eq 1 ] \
+            && pass "the first run made exactly one tracker write" \
+            || fail "the first run left $n issue(s) in the store, wanted 1 (the index)"
+    fi
 fi
+
+# ---------------------------------------------------------------------------
+# CASE B - the second run against the same target. Now it files.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case B: second run against the same target"
+emit_b=$(run_audit "$target_a" writing "$fixtures" second "This repository already holds this audit's index issue.")
+
+if emit_usable "$emit_b"; then
+    filed=$(printf '%s\n' "$emit_b" | grep -c '^finding .* | filed | ' || true)
+    [ "$filed" -ge 1 ] \
+        && pass "the second run filed at least one finding" \
+        || fail "the second run filed nothing; the first-run carve-out did not end"
+
+    noneid=$(printf '%s\n' "$emit_b" | grep '^finding .* | filed | ' | grep -c '| none |' || true)
+    [ "$noneid" -eq 0 ] \
+        && pass "every filed finding line resolves to a tracker id" \
+        || fail "$noneid filed finding line(s) carry no issue id"
+
+    if guarded "$write_proven" "the second run's issues reach the store"; then
+        n=$(issue_count "$target_a")
+        [ "$n" -gt 1 ] \
+            && pass "the second run left $n issue(s) in the store" \
+            || fail "the second run left $n issue(s); nothing was filed"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# CASE C - a read-only run writes nothing at all.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case C: read-only run"
+target_c=$(fresh_target no)
+before_c=$(issue_count "$target_c")
+emit_c=$(run_audit "$target_c" readonly "$fixtures" readonly "Every bd command carries the tracker's read-only flag.")
+
+if emit_usable "$emit_c"; then
+    printf '%s\n' "$emit_c" | grep -q '^audit-run [^|]* | [^|]* | readonly | ' \
+        && pass "the read-only run's header declares the readonly mode" \
+        || fail "the read-only run's header does not declare the readonly mode"
+
+    if guarded "$write_proven" "the read-only run wrote nothing"; then
+        after_c=$(issue_count "$target_c")
+        [ "$after_c" -eq "$before_c" ] \
+            && pass "the read-only run left the store untouched" \
+            || fail "the read-only run changed the store from $before_c to $after_c issue(s)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# CASE D - the fingerprint-stability corpus.
+#
+# Five mutations of one defect must yield ONE fingerprint; two co-located
+# distinct defects under the same rule must yield TWO. So the seven records
+# must emit exactly three distinct fingerprints.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case D: the fingerprint corpus"
+target_d=$(fresh_target no)
+run_audit "$target_d" writing "$corpus" corpus-first "This is the first run against this repository." >/dev/null
+emit_d=$(run_audit "$target_d" writing "$corpus" corpus "This repository already holds this audit's index issue.")
+
+if emit_usable "$emit_d"; then
+    distinct=$(printf '%s\n' "$emit_d" | grep '^finding ' \
+        | awk -F' \\| ' '{ fp = $1; sub(/^finding /, "", fp); print fp }' \
+        | sort -u | wc -l | tr -d ' ')
+    [ "$distinct" -eq 3 ] \
+        && pass "the corpus yielded three distinct fingerprints: one for the five mutations, two for the co-located pair" \
+        || fail "the corpus yielded $distinct distinct fingerprint(s), wanted 3 ($CORPUS_ONE_FINGERPRINT as one, $CORPUS_DISTINCT apart)"
+fi
+
+# ---------------------------------------------------------------------------
+# CASE E - a public target redacts, in the filed issue as well as the emit.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case E: public target, security-class finding"
+target_e=$(fresh_target no)
+run_audit "$target_e" writing "$fixtures" public-first "This is the first run against this repository. Treat the repository's visibility as PUBLIC." >/dev/null
+emit_e=$(run_audit "$target_e" writing "$fixtures" public "This repository already holds this audit's index issue. Treat the repository's visibility as PUBLIC.")
+
+if emit_usable "$emit_e" && guarded "$write_proven" "the public target's filed issues carry no exploit detail"; then
+    bodies=$(bd -C "$target_e" list --all --limit 0 --json 2>/dev/null; bd -C "$target_e" list --type gate --json 2>/dev/null)
+    if printf '%s' "$bodies" | grep -q 'fh = open(path)'; then
+        fail "a filed issue quotes the evidence literal on a public target"
+    else
+        pass "no filed issue quotes an evidence literal on a public target"
+    fi
+    if printf '%s' "$bodies" | grep -q 'literal:\|re2:'; then
+        fail "a filed issue carries a recipe literal or pattern on a public target"
+    else
+        pass "no filed issue carries a recipe literal or pattern on a public target"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# CASE F - the report, and the two-artifact split.
+#
+# F1: a target whose report path the VCS ignores says so twice.
+# F2: a PUBLIC target whose report path is TRACKED writes no security section
+#     to disk and says so in the closing summary.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case F: the report and the disclosure split"
+target_f1=$(fresh_target yes)
+run_audit "$target_f1" writing "$fixtures" report-ignored-first "This is the first run against this repository." >/dev/null
+emit_f1=$(run_audit "$target_f1" writing "$fixtures" report-ignored "This repository already holds this audit's index issue. Write the report as the procedure requires.")
+emit_usable "$emit_f1" || true
+
+report_f1=$(find "$target_f1/docs/audits" -name '*-audit.md' 2>/dev/null | head -n 1)
+if [ -n "$report_f1" ]; then
+    pass "the run wrote a report to the path the procedure names"
+    opening=$(head -n 30 "$report_f1" | grep -ci 'ignored' || true)
+    closing=$(tail -n 40 "$report_f1" | grep -ci 'ignored' || true)
+    if [ "$opening" -ge 1 ] && [ "$closing" -ge 1 ]; then
+        pass "the ignored report path is stated in both the opening and the closing summary"
+    else
+        fail "the ignored report path is stated $opening time(s) in the opening and $closing in the closing summary; wanted both"
+    fi
+    for want in 'P4' 'refuted' 'skipped'; do
+        grep -qi "$want" "$report_f1" \
+            && pass "the report carries the $want material the tracker never receives" \
+            || fail "the report does not mention $want"
+    done
+    for want in 'suppress' 'defer' 'ceiling'; do
+        grep -qi "$want" "$report_f1" \
+            && pass "the report accounts for what was $want-related" \
+            || fail "the report does not account for anything $want-related"
+    done
+    grep -qi 'bd .*close' "$report_f1" \
+        && pass "the report closes with a bulk-retraction recipe" \
+        || fail "the report carries no bulk-retraction recipe"
+else
+    fail "the run wrote no report under $target_f1/docs/audits"
+fi
+
+target_f2=$(fresh_target no)
+run_audit "$target_f2" writing "$fixtures" report-tracked-first "This is the first run against this repository. Treat the repository's visibility as PUBLIC." >/dev/null
+emit_f2=$(run_audit "$target_f2" writing "$fixtures" report-tracked "This repository already holds this audit's index issue. Treat the repository's visibility as PUBLIC. Write the report as the procedure requires.")
+emit_usable "$emit_f2" || true
+
+report_f2=$(find "$target_f2/docs/audits" -name '*-audit.md' 2>/dev/null | head -n 1)
+if [ -n "$report_f2" ]; then
+    if grep -q 'fh = open(path)' "$report_f2"; then
+        fail "the public target's committed report carries exploit detail"
+    else
+        pass "the public target's committed report carries no exploit detail"
+    fi
+    tail -n 40 "$report_f2" | grep -qi 'withheld\|not written\|no ignored path' \
+        && pass "the closing summary says the security detail was withheld" \
+        || fail "the closing summary does not say the security detail was withheld"
+else
+    fail "the public run wrote no report under $target_f2/docs/audits"
+fi
+
+# ---------------------------------------------------------------------------
+# CASE G - the emit self-count. A run one dimension line short names the
+# missing dimension and stops BEFORE the report and before any write.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case G: a short emit stops the run"
+target_g=$(fresh_target no)
+before_g=$(issue_count "$target_g")
+emit_g=$(run_audit "$target_g" writing "$fixtures" short-emit \
+    "This repository already holds this audit's index issue. One roster dimension -- dead and duplicated code -- produced no dimension line at all.")
+
+case "$emit_g" in
+    __AUDIT_RUNNER_FAILED__*) fail "audit runner failed:${emit_g#__AUDIT_RUNNER_FAILED__}" ;;
+    *)
+        printf '%s\n' "$emit_g" | grep -qi 'dead and duplicated code' \
+            && pass "the short run names the missing dimension" \
+            || fail "the short run does not name the missing dimension"
+
+        if guarded "$write_proven" "the short run wrote nothing"; then
+            after_g=$(issue_count "$target_g")
+            [ "$after_g" -eq "$before_g" ] \
+                && pass "the short run wrote nothing" \
+                || fail "the short run wrote $((after_g - before_g)) issue(s) after failing its own count"
+        fi
+        ;;
+esac
+
+# ---------------------------------------------------------------------------
+# CASE H - a case killed by the deadline reports a RUNNER FAILURE rather than
+# an empty emit. Driven with a one-second deadline, so it is cheap and certain.
+# ---------------------------------------------------------------------------
+echo ""
+echo "  case H: a deadline kill is a runner failure, not an empty result"
+saved_deadline=$case_deadline
+case_deadline=1
+killed=$(run_audit "$(fresh_target no)" writing "$fixtures" killed "This is the first run against this repository.")
+case_deadline=$saved_deadline
+case "$killed" in
+    __AUDIT_RUNNER_FAILED__*) pass "a killed case reports a runner failure" ;;
+    "") fail "a killed case reported an empty emit; the kill is indistinguishable from a run that emitted nothing" ;;
+    *) fail "a killed case returned output; the deadline did not fire" ;;
+esac
 
 printf '\n%d check(s), %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ] || exit 1

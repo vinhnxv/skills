@@ -80,6 +80,18 @@ jobs:
       - name: Tracker contract for both skills (skipped unless bd is installed)
         run: sh scripts/test-census.sh --contract-only
 
+      # `--fixtures-only` for the same reason, and one more. This suite's other
+      # half seeds a git repository and a Beads store per case and drives the
+      # host CLI through eight of them under a deadline derived from the
+      # procedure's own WAVE_DEADLINE, so a full behavioral run costs hours.
+      # The fixtures half is pure shell: it pins the verified-finding record the
+      # write protocol consumes and the fingerprint-stability corpus that says
+      # which mutations of one defect must fingerprint alike and which must not.
+      # A change to the record's field set or to the corpus fails here rather
+      # than as a confusing diff inside a run nobody watched.
+      - name: The finding record and the fingerprint corpus still hold
+        run: sh scripts/test-repo-audit.sh --fixtures-only
+
   install:
     # The README's install command is the first thing a stranger runs, and it
     # is the one piece of this repository that executes on their machine, not
