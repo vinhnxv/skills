@@ -61,12 +61,14 @@ jobs:
       # as ready work, that `--readonly` refuses a write, and that `bd export`
       # rather than a file diff is the non-mutation oracle.
       #
-      # `bd` is absent from a stock runner, so this usually skips, exactly as
-      # the `claude plugin validate` step above does. It earns its place anyway:
-      # the day someone runs it with `bd` installed, a tracker change that
-      # invalidated the procedure fails here instead of inside an unattended
-      # loop that has already claimed a batch.
-      - name: The tracker still behaves the way the census assumes
+      # `bd` is absent from a stock runner, so on this repository's own CI this
+      # step SKIPS and proves nothing -- the step name says so, because a green
+      # check named as an assertion is exactly the silent pass this whole
+      # feature exists to stop. It earns its place anyway: the day someone runs
+      # it on a runner with `bd` installed, a tracker change that invalidated
+      # the procedure fails here instead of inside an unattended loop that has
+      # already claimed a batch. Install `bd` on the runner to turn it on.
+      - name: Tracker contract (skipped unless bd is installed)
         run: sh scripts/test-census.sh --contract-only
 
   install:

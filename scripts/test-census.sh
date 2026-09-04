@@ -75,6 +75,29 @@ enumerate() {
     bd -C "$1" list --all --limit 0 --include-gates --json
 }
 
+# The ids this issue depends on, space-separated. `bd show --json` returns the
+# edges as objects; the repair's read-back needs only their ids.
+deps_of() {
+    bd -C "$1" show "$2" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print(" ".join(x["id"] for x in (r.get("dependencies") or [])))'
+}
+
+# One field or metadata value off an issue, empty when unset. The repair is
+# verified through these rather than through the census's own prose: the whole
+# failure this suite guards is a run that reports a repair it did not perform.
+acc_of() {
+    bd -C "$1" show "$2" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print(r.get("acceptance_criteria") or "")'
+}
+
+meta_of() {
+    bd -C "$1" show "$2" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print((r.get("metadata") or {}).get(sys.argv[1], ""))' "$3"
+}
+
 # Every id in a `bd ... --json` payload, sorted and space-separated, ready for
 # the `case " $ids " in *" $id "*)` membership tests below. bd returns a bare
 # list from some subcommands and an object keyed by "issues" from others, so
@@ -94,22 +117,23 @@ gate_id() {
     sed -n 's/^.*Created gate \([A-Za-z0-9-]*\).*$/\1/p'
 }
 
-# Assert that `missing` is absent from the id list `ids` while `baseline` is
-# still present. The baseline half is what makes the check mean anything: these
-# assertions pass on ABSENCE, so a query that came back empty for any reason
-# unrelated to the flag under test would otherwise report that flag
-# load-bearing while having proved nothing at all.
-assert_hidden_without() {
-    ids=$1; missing=$2; baseline=$3; ok_msg=$4; bad_msg=$5
-    case " $ids " in
-        *" $baseline "*) : ;;
-        *) fail "$bad_msg -- the comparison query returned no baseline row, so it proves nothing"
-           return ;;
-    esac
-    case " $ids " in
-        *" $missing "*) fail "$bad_msg" ;;
-        *) pass "$ok_msg" ;;
-    esac
+# Assert that dropping a flag hides exactly `missing` from the enumeration and
+# nothing else, by comparing against the full expected survivor set. A mere
+# "missing is absent" test is not enough: it passes on a query that returned
+# nothing at all, or returned one unrelated row, for any reason having nothing
+# to do with the flag under test -- and would then report that flag
+# load-bearing while having proved nothing. Both `full` and `got` are
+# space-separated id lists, deliberately left unquoted below so the shell
+# splits them into words; ids are `[A-Za-z0-9-]` and cannot glob.
+assert_hides_exactly() {
+    full=$1; got=$2; missing=$3; ok_msg=$4; bad_msg=$5
+    want=$(printf '%s\n' $full | grep -vx "$missing" | sort | tr '\n' ' ')
+    have=$(printf '%s\n' $got | sort | tr '\n' ' ')
+    if [ "$want" = "$have" ]; then
+        pass "$ok_msg"
+    else
+        fail "$bad_msg (expected exactly [${want% }], got [${have% }])"
+    fi
 }
 
 if ! command -v bd >/dev/null 2>&1; then
@@ -160,23 +184,28 @@ if [ "$omitted" -eq 0 ]; then
 fi
 
 without_all=$(bd -C "$store" list --limit 0 --include-gates --json | sorted_ids_json)
-assert_hidden_without "$without_all" "$pinned" "$ready_issue" \
-    "--all is load-bearing: a pinned issue is hidden without it" \
-    "--all is not needed for a pinned issue; the procedure over-explains"
+assert_hides_exactly "$all_ids" "$without_all" "$pinned" \
+    "--all is load-bearing: a pinned issue, and only it, is hidden without it" \
+    "--all does not hide exactly the pinned issue; the procedure's claim is wrong"
 
 if [ -n "$native_gate" ]; then
     without_gates=$(bd -C "$store" list --all --limit 0 --json | sorted_ids_json)
-    assert_hidden_without "$without_gates" "$native_gate" "$ready_issue" \
-        "--include-gates is load-bearing: a native gate is hidden without it" \
-        "--include-gates is not needed; the procedure over-explains"
+    assert_hides_exactly "$all_ids" "$without_gates" "$native_gate" \
+        "--include-gates is load-bearing: the native gate, and only it, is hidden without it" \
+        "--include-gates does not hide exactly the native gate; the procedure's claim is wrong"
 
     # A native gate is a gate by type and carries no labels, which is exactly why
     # the repair rule must never fire on one: its blocking edge is what it is for,
     # and it has nothing to declare that edge with.
+    # The match is checked before it is indexed. `$native_gate` parsed fine or
+    # we would not be in this branch, but the enumeration that must contain it
+    # is exactly what this suite exists to catch regressing -- and an
+    # unguarded [0] turns that regression into an IndexError that aborts the
+    # whole run, hiding every check after this one.
     gate_shape=$(enumerate "$store" | python3 -c "import json,sys
 d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get('issues',d)
-r=[x for x in rows if x['id']=='$native_gate'][0]
-print(r.get('issue_type'), len(r.get('labels') or []))")
+m=[x for x in rows if x['id']=='$native_gate']
+print('%s %d' % (m[0].get('issue_type'), len(m[0].get('labels') or [])) if m else 'MISSING')")
     [ "$gate_shape" = "gate 0" ] \
         && pass "a native gate reports issue_type=gate and carries no labels" \
         || fail "native gate shape changed: got '$gate_shape', expected 'gate 0'"
@@ -219,10 +248,7 @@ esac
 # has no file form. Both are why the repair reads back before it removes an edge.
 bd -C "$store" update "$gate" --acceptance "ORIGINAL AUTHOR TEXT" >/dev/null
 bd -C "$store" update "$gate" --acceptance "SECOND WRITE" >/dev/null
-acc=$(bd -C "$store" show "$gate" --json | python3 -c 'import json,sys
-d=json.load(sys.stdin)
-r = d[0] if isinstance(d, list) else d
-print(r.get("acceptance_criteria") or "")')
+acc=$(acc_of "$store" "$gate")
 case "$acc" in
     *ORIGINAL*) fail "--acceptance now appends; the read-modify-write rule is obsolete" ;;
     *SECOND*) pass "--acceptance replaces the field, so the repair must round-trip it" ;;
@@ -233,6 +259,37 @@ if bd -C "$store" update --help 2>&1 | grep -q -- '--acceptance-file'; then
 else
     pass "--acceptance has no file form, unlike --body-file and --design-file"
 fi
+
+# A metadata KEY may not contain `-` or `:`, and every bd id contains `-`. That
+# is why the gate repair indexes removed edges as a space-separated VALUE
+# instead of one key per edge: a key-per-edge simply cannot be written.
+if bd -C "$store" update "$ready_issue" --set-metadata "probe_key-with-dash=v" >/dev/null 2>&1; then
+    fail "metadata keys now accept '-'; the repair could use one key per edge after all"
+else
+    pass "metadata keys reject '-', so a key per edge is not available to the repair"
+fi
+if bd -C "$store" update "$ready_issue" --set-metadata "probe_list=$gate $dependent" >/dev/null 2>&1; then
+    pass "a metadata value holds a space-separated id list, which is what the repair indexes with"
+else
+    fail "a metadata value can no longer hold a space-separated id list"
+fi
+
+# `bd dep remove` takes the DEPENDENT first, then what it depends on. Reversing
+# them is NOT an error: it exits 0 and prints a success line while leaving the
+# edge in place. The gate repair ends in this command, so a swapped argument
+# order would rewrite the gate's acceptance, quarantine the dependent, report a
+# successful repair, and remove nothing -- which is why the procedure verifies
+# the removal by re-reading the edge rather than by trusting the exit status.
+bd -C "$store" dep remove "$gate" "$dependent" >/dev/null 2>&1
+case " $(deps_of "$store" "$dependent") " in
+    *" $gate "*) pass "bd dep remove silently no-ops on the reversed argument order" ;;
+    *) fail "bd dep remove now honors <blocker> <dependent>; the repair's argument-order warning is obsolete" ;;
+esac
+bd -C "$store" dep remove "$dependent" "$gate" >/dev/null 2>&1
+case " $(deps_of "$store" "$dependent") " in
+    *" $gate "*) fail "bd dep remove <dependent> <blocker> did not remove the edge the repair depends on" ;;
+    *) pass "bd dep remove <dependent> <blocker> removes the edge, which is the order the repair uses" ;;
+esac
 
 # Read-only mode is a tracker guarantee, not a promise in prose. The diagnostic
 # entry point depends on it.
@@ -272,18 +329,30 @@ fi
 echo ""
 echo "PART 2 - classification"
 
-# The twelve categories the CENSUS section files every issue under, in its own
-# precedence order. Kept here so a rename in the procedure fails this suite
+# The fourteen categories the CENSUS section files every issue under, in its
+# own precedence order. Kept here so a rename in the procedure fails this suite
 # rather than silently shrinking what it counts.
-CATEGORIES='human-gate|label-defect|claimed-other-run|external-wip|claimed-this-run|self-blocked-needs-person|self-blocked-transient|dep-blocked|hooked|pinned|deferred|ready'
+CATEGORIES='human-gate|label-defect|quarantined|claimed-other-run|external-wip|self-blocked-needs-person|self-blocked-transient|claimed-this-run|abandoned-claim|dep-blocked|hooked|pinned|deferred|ready'
 
 host_cli=""
 for candidate in claude codex; do
     command -v "$candidate" >/dev/null 2>&1 && { host_cli=$candidate; break; }
 done
 
-if [ -z "$host_cli" ]; then
-    echo "SKIP: no host CLI on PATH; classification needs one to run the census."
+# `timeout` is GNU coreutils and is absent from a stock macOS, where Homebrew
+# installs the same binary as `gtimeout`. Probe rather than assume: an
+# unresolved `timeout` would fail every case with "command not found" folded
+# into an empty census, which reads as a classification bug rather than a
+# missing prerequisite.
+deadline=""
+for candidate in timeout gtimeout; do
+    command -v "$candidate" >/dev/null 2>&1 && { deadline=$candidate; break; }
+done
+
+if [ -z "$host_cli" ] || [ -z "$deadline" ]; then
+    [ -z "$host_cli" ] \
+        && echo "SKIP: no host CLI on PATH; classification needs one to run the census." \
+        || echo "SKIP: no timeout/gtimeout on PATH; classification needs a deadline wrapper."
     printf '\n%d check(s), %d failure(s)\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
     exit 0
@@ -303,9 +372,32 @@ Use 'bd -C $store_dir ...' for every tracker command.
 Print the census header line and every 'census <id> | <category> | <cause>' line,
 between a line reading CENSUS-BEGIN and a line reading CENSUS-END, and nothing else
 between those markers."
-    timeout 600 "$host_cli" -p "$prompt" 2>/dev/null \
+    # Capture first, filter second, and check the status in between. Piping the
+    # host CLI straight into sed discards its exit status, so a run the
+    # deadline killed part-way through still passes its partial output to the
+    # filter -- and if both markers happened to be emitted before the kill, a
+    # dead run reports a clean census.
+    raw=$("$deadline" 600 "$host_cli" -p "$prompt" 2>/dev/null); status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "__CENSUS_RUNNER_FAILED__ $host_cli exited $status"
+        return
+    fi
+    printf '%s\n' "$raw" \
         | sed -n '/^CENSUS-BEGIN$/,/^CENSUS-END$/p' \
         | sed -e '/^CENSUS-BEGIN$/d' -e '/^CENSUS-END$/d'
+}
+
+# Gate every case on the runner having actually produced a census. Without this
+# a failed or empty run falls through to expect_category, which reports a pile
+# of category mismatches and buries the real cause.
+census_usable() {
+    case "$1" in
+        __CENSUS_RUNNER_FAILED__*)
+            fail "census runner failed:${1#__CENSUS_RUNNER_FAILED__}"; return 1 ;;
+        "")
+            fail "census emitted nothing; the runner or the marker contract is broken"; return 1 ;;
+    esac
+    return 0
 }
 
 # category_of <output> <id>  ->  the category the census filed that id under
@@ -333,9 +425,7 @@ bd -C "$c1" update "$c1_block" --status=blocked --set-metadata backlog_loop_run=
     --append-notes "post-merge verification failed: lint | none" >/dev/null
 
 out=$(run_census "$c1" diagnostic)
-if [ -z "$out" ]; then
-    fail "census emitted nothing; the runner or the marker contract is broken"
-else
+if census_usable "$out"; then
     expect_category "$out" "$c1_ready"  ready         "a dependency-free open issue is ready"
     expect_category "$out" "$c1_gate"   human-gate    "a labeled gate is a human gate, never ready"
     expect_category "$out" "$c1_dep"    dep-blocked   "the issue behind the gate is dependency-blocked"
@@ -363,6 +453,7 @@ bd -C "$c2" create "unrelated ready work" --silent >/dev/null
 bd -C "$c2" export > "$work/c2.before" 2>/dev/null
 
 out=$(run_census "$c2" loop)
+census_usable "$out" || out=""
 expect_category "$out" "$c2_gate"   human-gate  "a native gate classifies as a human gate"
 expect_category "$out" "$c2_target" dep-blocked "the step behind it stays dependency-blocked"
 
@@ -379,6 +470,7 @@ bd -C "$c3" dep "$c3_gate" --blocks "$c3_dep" >/dev/null
 bd -C "$c3" export > "$work/c3.before" 2>/dev/null
 
 out=$(run_census "$c3" loop)
+census_usable "$out" || out=""
 expect_category "$out" "$c3_gate" human-gate  "the labeled gate is recognized"
 expect_category "$out" "$c3_dep"  dep-blocked "its dependent stays blocked while the convention is unadopted"
 
@@ -396,6 +488,7 @@ bd -C "$c4" dep "$c4_gate" --blocks "$c4_dep" >/dev/null
 bd -C "$c4" export > "$work/c4.before" 2>/dev/null
 
 out=$(run_census "$c4" diagnostic)
+census_usable "$out" || out=""
 expect_category "$out" "$c4_gate"  human-gate "the undeclared gate is recognized in diagnostic mode"
 expect_category "$out" "$c4_other" human-gate "the declared gate is recognized too"
 
@@ -403,6 +496,47 @@ bd -C "$c4" export > "$work/c4.after" 2>/dev/null
 cmp -s "$work/c4.before" "$work/c4.after" \
     && pass "a diagnostic run left the tracker's issue records unchanged" \
     || fail "a diagnostic run mutated the tracker"
+
+echo "  case: an adopted repository repairs an undeclared gate edge"
+# The only case that lets a repair actually fire. c2 and c3 cover the two
+# refusals (native gate, unadopted repository) and c4 runs read-only, so
+# without this one the loop's single most destructive unattended action -- the
+# one that rewrites a field and deletes a dependency edge -- ships untested.
+c5=$(fresh_store)
+c5_adopted=$(bd -C "$c5" create "[HUMAN] declared blocker elsewhere" -l human-gate,hard-blocker --silent)
+c5_gate=$(bd -C "$c5" create "[HUMAN] provision the staging account" -l human-gate --silent)
+c5_dep=$(bd -C "$c5" create "wire the staging deploy" --silent)
+bd -C "$c5" dep "$c5_gate" --blocks "$c5_dep" >/dev/null
+bd -C "$c5" update "$c5_gate" --acceptance "AUTHOR ORIGINAL ACCEPTANCE" >/dev/null
+
+out=$(run_census "$c5" loop)
+census_usable "$out" || out=""
+expect_category "$out" "$c5_gate"    human-gate "the undeclared gate is still classified a human gate"
+expect_category "$out" "$c5_adopted" human-gate "the declared gate elsewhere is what adopts the convention"
+
+case " $(deps_of "$c5" "$c5_dep") " in
+    *" $c5_gate "*) fail "the undeclared gate edge survived a repair in an adopted repository" ;;
+    *) pass "an adopted repository removes the undeclared gate edge" ;;
+esac
+
+c5_acc=$(acc_of "$c5" "$c5_gate")
+case "$c5_acc" in
+    *"AUTHOR ORIGINAL ACCEPTANCE"*)
+        pass "the gate's original acceptance text survived the release-condition write" ;;
+    *) fail "the repair destroyed the gate's acceptance text: got '$c5_acc'" ;;
+esac
+[ "$c5_acc" != "AUTHOR ORIGINAL ACCEPTANCE" ] \
+    && pass "a release condition was written alongside the author's text" \
+    || fail "the edge was repaired but no release condition was recorded on the gate"
+
+[ -n "$(meta_of "$c5" "$c5_dep" backlog_loop_quarantine)" ] \
+    && pass "the freed issue is quarantined, so no run can build it yet" \
+    || fail "the freed issue carries no quarantine; the loop can ship the work the gate held"
+
+case " $(meta_of "$c5" "$c5_gate" backlog_loop_edge_removed) " in
+    *" $c5_dep "*) pass "the gate indexes the removed edge, so a re-run skips it" ;;
+    *) fail "the gate has no removal index for the freed issue; a re-run would repair it twice" ;;
+esac
 
 printf '\n%d check(s), %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ] || exit 1
