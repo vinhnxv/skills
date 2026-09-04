@@ -7,8 +7,9 @@ and nothing to edit afterwards.
 
 ## Before you install
 
-These skills are not general-purpose. `backlog-loop` needs all three of the
-following:
+These skills are not general-purpose.
+
+### `backlog-loop` needs all three of the following
 
 1. **[Beads](https://github.com/steveyegge/beads) (`bd`)** as the repository's
    issue tracker, initialized and working — preflight runs `bd prime` and
@@ -35,6 +36,22 @@ following:
    repository, not a misconfiguration on your side. A missing plugin → preflight
    stops before any issue is claimed.
 
+### `repo-audit` needs two things
+
+1. **Beads (`bd`)**, exactly as above and for the same reason: every write it
+   makes is a literal `bd` command, and preflight stops on Beads before it
+   reads a single repository file.
+2. **A host that can spawn subagents.** `repo-audit` shards its roster one
+   dimension per subagent, and it does not stop when the host cannot: a host
+   with no spawn primitive, and a host that refuses the first spawn, both fall
+   back to auditing the roster serially in one context — and a serial run is
+   **read-only**. It reports everything it found and files none of it, because
+   the party doing the searching would otherwise be the party measuring its own
+   coverage. So on such a host the skill still works and still never writes.
+
+It does **not** need a GitHub remote, `gh`, or the `compound-engineering`
+plugin. It reads the repository and writes to the tracker; it opens nothing.
+
 **Also know what you are starting.** `backlog-loop` is autonomous. It claims
 issues, opens branches and pull requests, and **merges its own PRs** without
 asking. It refuses `--admin` and GitHub auto-merge, pins each merge to the exact
@@ -43,6 +60,17 @@ every merge-authorizing gate in a clean throwaway worktree rather than beside
 your uncommitted files, stops when your local default branch holds unpushed
 commits, and stops after repeated failures — but do not point it at a repository
 whose main branch you are not comfortable having written to.
+
+**And know what the two of them are together.** `repo-audit` fills the backlog
+that `backlog-loop` clears, and every finding it files enters `bd ready` with no
+human gate in front of it. Install both and point them at the same repository
+and you have a closed loop: the audit files, the loop plans, builds, opens a
+pull request, and merges it. Nobody stands between the two. That is the design,
+not a side effect — but it is worth knowing before the first run rather than
+after it. `repo-audit` bounds its own half: a first run against a repository
+files **nothing at all**, whichever prompt invoked it, so you get a full report
+of what it would have filed before anything reaches the tracker. Every run also
+prints the exact commands that would close everything it just filed.
 
 ## Install
 
@@ -128,6 +156,43 @@ for claims, estimates, metadata, notes, and closure, and preflight stops when
 `bd` does not work rather than improvising a mapping onto another tracker. If
 you do not use Beads, this skill is not for you.
 
+### `repo-audit`
+
+Audits a repository against a fixed roster of nine dimensions — one subagent
+per dimension, in waves — and files what survives verification into **Beads**
+as ready work. It derives its rules from the target repository each run rather
+than shipping a pattern library, measures per-dimension coverage against a
+population the orchestrator counts itself, and files nothing it did not confirm
+against the audited commit.
+
+**It is incremental across runs.** A coverage ledger records what each
+dimension proved clean and at which commit, so a later run audits the files
+that changed since — plus their reverse-dependency closure — instead of the
+whole tree. Dimensions whose defects are not file-local are never cached, and
+every skip it takes is enumerated in the report.
+
+**It closes what it opened.** A run's first write is a sweep over its own
+previously filed issues: each one's recorded detection recipe is re-evaluated
+at the current commit, and only the ones that provably no longer reproduce are
+closed. It has no authority over anyone else's issues, and it never closes on a
+recipe it could not evaluate.
+
+**Launch it in two steps**, the same way — load the skill, then give it one of
+the two companion prompts. Use
+[`prompts/repo-audit.goal.md`](prompts/repo-audit.goal.md) for a writing run,
+and [`prompts/repo-audit-readonly.goal.md`](prompts/repo-audit-readonly.goal.md)
+to see everything it would file without letting it file any of it — that prompt
+runs every `bd` command under `--readonly`, so a write is refused by the tracker
+rather than merely avoided. The per-host second step is identical to
+`backlog-loop`'s above.
+
+**Suppressing a finding is your act, not its.** Close the issue and label it
+`audit-suppressed`; the audit re-derives its suppression list from those labels
+on every run and never writes that label itself. Remove the label or reopen the
+issue and the suppression is gone on the next run.
+
+**Tracker support.** Beads only, for the same reason.
+
 ## Repository layout
 
 ```
@@ -135,6 +200,7 @@ skills/claude/<skill-name>/    installable into ~/.claude/skills/
 skills/codex/<skill-name>/     installable into ~/.codex/skills/
 prompts/                       companion launch prompts
 scripts/check-parity.sh        keeps the two host copies from drifting
+scripts/check-cross-skill.sh   keeps the two skills' shared assumptions true
 ```
 
 Each skill exists twice, once per host, because the two hosts declare
