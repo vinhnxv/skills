@@ -362,7 +362,6 @@ fi
 # writes them between two markers so the surrounding narration a model produces
 # never reaches the diff. `--readonly` is not passed here: a loop-mode case
 # must be able to observe the mutation passes.
-raw_seq=0
 run_census() {
     store_dir=$1
     mode=$2   # diagnostic | loop
@@ -404,8 +403,12 @@ between those markers."
     # default: CI wants the verdict, not the transcripts.
     if [ -n "${CENSUS_RAW_DIR:-}" ]; then
         mkdir -p "$CENSUS_RAW_DIR"
-        raw_seq=$((raw_seq + 1))
-        printf '%s\n' "$raw" > "$CENSUS_RAW_DIR/census-$raw_seq-$mode.log"
+        # Named after the store, not a counter: this function runs inside a
+        # command substitution, so a counter increments in a subshell, resets on
+        # the next call, and every case overwrites the previous one's
+        # transcript. Each case gets its own `fresh_store`, so its basename is
+        # already unique and survives the subshell.
+        printf '%s\n' "$raw" > "$CENSUS_RAW_DIR/${store_dir##*/}-$mode.log"
     fi
     if [ "$status" -ne 0 ]; then
         echo "__CENSUS_RUNNER_FAILED__ $host_cli exited $status"
