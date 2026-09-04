@@ -413,15 +413,128 @@ Without them the state is self-perpetuating: an uncovered dimension's ledger row
 
 ## DEDUPLICATION AND DISPOSITION
 
-Matching each verified finding against what the tracker already holds, and resolving exactly one disposition for it.
+THE FINGERPRINT is derived from four inputs and no others: the finding's FILE IDENTITY, its RULE, its NORMALIZED EVIDENCE, and a DISCRIMINATOR that separates co-located occurrences -- the enclosing symbol, or, where there is none, the occurrence's ordinal within the file for that rule. Dimension is NOT an input; it is recorded alongside, so that the same defect surfaced by two dimensions fingerprints once.
+
+NORMALIZATION, STATED EXHAUSTIVELY, IN THIS ONE PLACE:
+
+1. line endings to LF
+2. leading and trailing whitespace stripped per line
+3. internal whitespace runs collapsed to one space
+4. line numbers excluded
+
+The LINE RANGE is recorded beside the fingerprint and NEVER HASHED INTO IT -- otherwise every edit above a defect refiles it as new. Anything not on that list is hashed as read. The list is exhaustive rather than illustrative because a normalization that varies between runs is a fingerprint that varies between runs.
+
+FILE IDENTITY FOLLOWS RENAMES, never a path string. Before the sweep and before any fingerprint lookup, reconcile renames between each recorded SHA and `<sha>`. A finding at a rename target resolves to the recorded fingerprint whose path was the rename SOURCE. Without this, one `git mv` refiles every finding in the moved file and closes none of the originals.
+
+THE PRECEDENCE, STOP AT FIRST MATCH. No finding takes two paths.
+
+| order | tier | matched -> disposition |
+|---|---|---|
+| 1 | SUPPRESSION: the fingerprint appears in the suppression table | `suppressed` |
+| 2 | INTRA-RUN COLLAPSE: already performed in `## VERIFICATION`, listed here so the order is complete | folded into the survivor |
+| 3 | FINGERPRINT against the index's table | `deduped`, or `noted` |
+| 4 | DIRECT RE-CHECK against the issues themselves | `deduped`, or `noted` |
+| 5 | SEMANTIC against the open backlog | `noted` |
+| 6 | no match | `filed` |
+
+Why each ordering is load-bearing:
+
+- SUPPRESSION SITS FIRST because a suppression is a person's recorded judgement, and any lower position lets a fingerprint or semantic match refile something a person deliberately set aside. A finding matching BOTH a suppression entry and an open issue resolves as `suppressed`.
+- COLLAPSE SITS ABOVE EVERY TRACKER TIER because collapsing after a lookup files the same defect twice and then deduplicates the second against the first, leaving the owner an issue that closes as a duplicate of an issue filed a second earlier.
+- THE DIRECT RE-CHECK SITS BETWEEN THE INDEX AND THE SEMANTIC TIER. It is an exact metadata-field lookup on `repo_audit_fingerprint`, one query per unmatched finding, and it is what makes a crash between filing and index rewrite SELF-HEALING rather than a source of duplicates. Below the semantic tier it would be shadowed by a fuzzy match; above the index tier it would cost a query for every finding the index already answers.
+- THE SEMANTIC TIER SITS LAST BEFORE FILING because it is the only tier that can be wrong in the direction that loses a finding.
+
+TWO STATED REFUSALS OVERRIDE A MATCH, and in both the finding is FILED rather than absorbed -- a visible duplicate, never a silent disappearance:
+
+- An evidence-hash mismatch against a suppression row. `## STALE-CLOSE SWEEP` owns it.
+- Either absorption bound below.
+
+THE SEMANTIC TIER'S SCOPE is the OPEN backlog, INCLUDING ISSUES THE AUDIT DID NOT CREATE, plus CLOSED issues for one decision only: whether a still-reproducing finding relinks or reopens.
+
+- A SEMANTIC MATCH records the fingerprint against the matched issue and APPENDS A NOTE ONLY WHEN NO SUCH RECORD ALREADY EXISTS, so a repeated run does not append the same note again. It changes NO OTHER FIELD of an issue the audit did not write.
+- A FINGERPRINT MATCHING A CLOSED ISSUE while the finding STILL REPRODUCES creates a NEW issue linked to the closed one as `discovered-from`, rather than reopening it, so the record that a fix was attempted survives. That rule fires only when EVERY issue carrying the fingerprint is closed; where an open one carries it too, the open one wins.
+
+THE SEMANTIC TIER IS BOUNDED WHERE IT REACHES FOREIGN ISSUES, because an unbounded one is a second suppression channel with none of the suppression label's discipline:
+
+- At most `ABSORB_PER_ISSUE` findings into any one foreign issue.
+- At most `ABSORB_PER_RUN` findings into foreign issues across the whole run. A per-issue cap alone bounds nothing: someone who can add issues to the tracker plants many decoys and absorbs a multiple of the cap every run, indefinitely.
+- A match is REFUSED OUTRIGHT when the finding is P0 or P1 and the matched issue names no overlapping path.
+- The report names every semantic match against a foreign issue by issue id and title, exactly as it names a suppression.
+
+EVERY DISPOSITION HERE IS A TERM FROM `## THE EMIT CONTRACT`'s closed vocabulary, and every finding gets exactly one.
 
 ## ISSUE SHAPE
 
-What a filed issue carries: its metadata, its epic, its estimate, and the acceptance criteria that let a later run re-verify it.
+EVERY FINDING ISSUE THE AUDIT WRITES IS LEFT IN A STATE `bd ready` RETURNS. The index issue and the per-dimension epics are not finding issues and are exempt.
+
+THE DURABLE PER-DIMENSION EPIC. One epic per dimension, DURABLE ACROSS RUNS and never per run, created open at the highest priority it holds. The consumer admits a sibling into a batch only when it shares the anchor's parent epic and never batches across epics, so a per-run epic would keep every run's findings from ever batching with the next run's. `[HUMAN]` GATES ARE PARENTED TO NOTHING.
+
+P0 AND P1: each finding becomes ITS OWN ISSUE.
+
+P2: grouped into ONE SWEEP ISSUE PER DIMENSION, capped at `SWEEP_CAP` entries, OVERFLOWING into an additional sweep issue for that dimension rather than growing without bound. Entries within a sweep are ORDERED BY FINGERPRINT so the grouping is reproducible across runs. A sweep issue never mixes dimensions.
+
+P3 AND P4 ARE NEVER WRITTEN TO THE TRACKER. They live in the report.
+
+EVERY FILED ISSUE CARRIES AN ESTIMATE. A sweep issue is estimated AT OR ABOVE the consumer's own batch target, so it ships as a batch of one: the entry cap bounds one issue's size, and only the estimate bounds how many such issues land in a single pull request.
+
+METADATA ON EVERY ISSUE THE AUDIT CREATES AND EVERY NOTE IT APPENDS: `repo_audit_authored`, `repo_audit_run`, and -- on a finding issue -- `repo_audit_fingerprint`, `repo_audit_dims`, `repo_audit_sha`. The audit-authored marker is what keeps TWO AUTOMATED WRITERS distinguishable at read time in a tracker where a label cannot distinguish them.
+
+THE FILING CEILINGS. At most `FILING_CEILING` issues per run, with a separate and lower `CRITICAL_CEILING` on P0 and P1 together. Findings beyond a ceiling are REPORTED IN FULL, not filed, emitted as `over-ceiling`, and the overflow is named in the run's closing summary.
+
+THE ACCEPTANCE CRITERIA are composed IN ONE SHOT, as a single value carrying every field the audit puts there, because the tracker REPLACES that field rather than appending to it and offers NO FILE FORM for it. One value, one write, containing all of:
+
+1. The instruction to RE-VERIFY that the finding still reproduces before any fix is attempted, and -- when it does not -- to STOP, report the issue as no longer reproducing, and leave it alone. It does NOT instruct the consumer to close the issue: that skill has no path from claimed to closed that does not go through a merge.
+2. The EVALUATION CONSTRAINT, verbatim: the recipe is evaluated as a file read and a literal or pattern match, never as a shell invocation, a network request, a redirection, a command substitution, an environment read, or a write. That sentence has to be IN THE STORED TEXT, because the second evaluator is a skill that never reads this procedure.
+3. The AUDITED SHA.
+4. The RECIPE, in the grammar `## VERIFICATION` defines.
+
+THE `[HUMAN]` SHAPE, and the ONE COMMAND that produces it. A gate-typed issue created in a single call with its `[HUMAN]`-prefixed title, its `human-gate` label, its body, its acceptance criteria and its metadata all set at creation, WITH NO PARENT AND NO DEPENDENCY EDGE EVER EXISTING.
+
+THE GATE TYPE, NOT THE LABEL, IS WHAT WITHHOLDS IT. The consumer's batch-growth step re-queries ready siblings by parent, and its admission list carries no label exclusion; the type is what the tracker itself withholds on. The label is carried anyway, because the operator's cross-repository convention requires it and the consumer reads it too.
+
+THE DEDICATED GATE-CREATION SUBCOMMAND IS NEVER USED. It requires a blocked issue and accepts no title, label, body, parent or metadata. Building a gate through it would block a real issue for a window, break the ready-state invariant if that issue were a filed finding, and -- if the run died mid-sequence -- strand an orphaned gate carrying no audit-authored marker, indistinguishable from a person's.
+
+A `[HUMAN]` BODY IS COMPOSED FROM THE FIXED TEMPLATE PLUS ENUMERATED SLOT VALUES, and this set is CLOSED and COMPLETE: path, line range, dimension, classification, the stated action, the audited SHA, and a recipe restricted to the classifier-matching form. NO OTHER SLOT EXISTS. So a gate's recipe can never carry a repository-derived literal or pattern, no subagent prose and no repository text reaches it, and the gate stays sweepable and provable without becoming a channel for repository text. NO SUCH ISSUE EVER ASKS ITS READER FOR A CREDENTIAL OR ANY SECRET VALUE; a finding whose text would do so is reported and not filed.
+
+THE AUDIT NEVER WRITES THE `hard-blocker` LABEL, ON ANY ISSUE, IN ANY MODE. The first such label anywhere in a tracker is the consumer's recorded signal that an operator adopted the convention, after which it begins removing dependency edges from human-authored gates. One label written here would start that, on the strength of a machine's act read as a person's.
+
+THE AUDIT WRITES ISSUES AND NEVER PERFORMS THE WORK IN THEM. It does not modify or close an issue it did not create, other than appending a deduplication note.
+
+EVERY PLACE THE AUDIT ENUMERATES ISSUES -- the reconciliation, the sweep, the fingerprint tier, the ceiling count, and the wave snapshot -- issues the GATE-TYPE QUERY as well as the ordinary one and unions the results. A gate-type issue is invisible to the default listing, so without that union the audit's own gates become unreconcilable, unsweepable, and uncounted the moment they are filed.
 
 ## WRITE ORDER
 
-The order every tracker write happens in, and what makes a run that dies mid-write safe to re-run.
+PER DIMENSION, IN THIS ORDER, AND NEVER ACROSS DIMENSIONS:
+
+1. File that dimension's issues.
+2. Read them back.
+3. Advance that dimension's index rows -- its fingerprint rows AND its ledger row, in ONE index write.
+
+Everything that must survive a crash is written BEFORE the step that depends on it. A run that dies between 1 and 3 leaves that dimension's ledger row unadvanced and its issues filed; the next run re-audits exactly that dimension, and the direct fingerprint re-check in `## DEDUPLICATION AND DISPOSITION` matches what was already filed, so it neither double-files nor skips.
+
+IDEMPOTENT BY RE-READING, NOT LEDGER-PHASED. There is no natural key to phase against here -- the audit's unit of work is a dimension, not an issue, and a phase marker would have to live in the index whose write is the very step being phased. The reconciliation and the direct fingerprint re-check together make the idempotent form available: both read the ISSUES, which the crash already committed, rather than the index, which it may not have. A run repeats work; it does not repeat writes.
+
+AT MOST ONE INDEX WRITE PER DIMENSION PER RUN. Not one per issue: the index is read whole and rewritten whole, so an issue-granular write rewrites the whole body once per finding and multiplies both the generation-check window and the read-back cost by the number of findings.
+
+THE READ-BACK TOLERATES the other writer. Between filing and read-back the consumer may legitimately have added its claim marker, moved the issue to `in_progress`, or rewritten the estimate. NONE OF THOSE IS A FAILED WRITE. Deference is ONE-WAY and stated as such: the consumer cannot see this audit's heartbeat and will not be taught to, so the audit absorbs the interleaving rather than treating it as a conflict.
+
+THE ONE READ-BACK MISMATCH THAT IS A FAILURE IS THE COUNT. Fewer issues came back than were filed. That is the only difference the audit can attribute to itself rather than to the other writer, and it stops the run.
+
+DEFERENCE IS BY THE MARKER'S PRESENCE, NEVER BY ITS HEARTBEAT'S AGE. The audit does not write to, and does not close, an issue carrying `backlog_loop_run`. That skill refreshes its heartbeat once per batch and a live batch is budgeted well past this audit's own liveness window, so AGE WOULD READ A WORKING BATCH AS ABANDONED and the audit would write into a claim that is very much alive.
+
+THE DEFERENCE IS BOUNDED BY STATUS, not open-ended:
+
+| the marker-bearing issue is | the audit |
+|---|---|
+| `in_progress` | YIELDS -- this is the state a live batch actually holds |
+| `blocked` under a `transient` cause | YIELDS -- that pair sits inside the consumer's loop-responsible set, and its reopen pass exists to prove the condition gone and return the issue to the pool |
+| `blocked` under a `needs-person` cause | MAY SWEEP -- the consumer's census puts that one outside the set it clears and its reopen pass never touches it, so it is the only marker-bearing state that would otherwise accumulate forever |
+
+A yielded issue is emitted with disposition `deferred`. Without the status clause, every finding the consumer claims and then stops on accumulates permanently, and the sweep could never close what the consumer would not.
+
+THE NAMESPACE RULE, ABSOLUTE: the audit writes NO metadata key belonging to the consumer's namespace, in ANY mode, and publishes its heartbeat under its OWN key. Reusing the consumer's heartbeat key would make every audit run suppress that skill's own write passes for the length of its liveness window, because its liveness test reads any heartbeat whose run marker is not its own.
+
+A HEARTBEAT IS PUBLISHED BEFORE EACH INDEX WRITE and RE-READ IMMEDIATELY BEFORE THAT WRITE -- once per write, never once per run. `## HEARTBEAT AND DEGRADATION` owns what a foreign heartbeat means.
 
 ## THE COVERAGE LEDGER
 
