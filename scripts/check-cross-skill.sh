@@ -75,22 +75,56 @@ skills=$(
 # ---------------------------------------------------------------------------
 SET_FLAGS='--metadata[ =]|--set-metadata[ =]|--labels[ =]|--set-labels[ =]|--add-label[ =]|--remove-label[ =]'
 
-write_sites() { # file, name
-    grep -nF -- "$2" "$1" | grep -E 'bd [a-z]' | grep -E -- "$SET_FLAGS" || true
+# The two-condition filter itself, so the definition above has ONE
+# implementation. Both users below apply it; a second inline copy is a second
+# place for the definition to drift from this comment.
+bd_set_lines() { # file
+    grep -nE 'bd [a-z]' "$1" | grep -E -- "$SET_FLAGS" || true
 }
 
-# Metadata keys a file actually WRITES, from write sites only.
+write_sites() { # file, name
+    bd_set_lines "$1" | grep -F -- "$2" || true
+}
+
+# ---------------------------------------------------------------------------
+# THE DECLARED-METADATA TABLE, the second source of written keys.
 #
-# TWO forms, because `bd` offers two and a check that reads one is a check that
-# misses the other entirely. `bd update --set-metadata key=value` writes a bare
-# key; `bd create --metadata '{"key":"value"}'` writes a JSON object, and
-# that is the form an issue is created with -- so a namespace collision
-# introduced at creation would be invisible to a bare-token scan.
+# A skill written as prose states its tracker writes in a table instead of a
+# command line, and a checker that reads only command lines therefore sees
+# NOTHING in such a skill -- every check below would pass on it for reasons
+# that have nothing to do with the invariant. That is not hypothetical: it was
+# the state of this file against `repo-audit`, which declares its whole
+# namespace as a table and issues no literal `bd ... --set-metadata` anywhere.
+#
+# The table is identified by its header row and not by a heading, because a
+# heading is prose and drifts: a DECLARED-METADATA TABLE is a markdown table
+# whose header row's first cell is exactly `key` and whose last cell is exactly
+# `value`. Both skills already carry one in that shape. Body rows run until the
+# first line that is not a table row; the first cell's backticked token is the
+# key.
+# ---------------------------------------------------------------------------
+declared_metadata_keys() { # file
+    awk -F'|' '
+        /^\| *key *\|/ { if ($NF ~ /^ *$/ && $(NF-1) ~ /^ *value *$/) { intable = 1; next } }
+        intable && /^\|[ -]*-[ -|]*\|$/ { next }
+        intable && !/^\|/ { intable = 0 }
+        intable { gsub(/[` ]/, "", $2); if ($2 != "") print $2 }
+    ' "$1" || true
+}
+
+# Every metadata key a file writes, from BOTH sources, unioned.
+#
+# The command-line source has TWO forms, because `bd` offers two and a check
+# that reads one is a check that misses the other entirely. `bd update
+# --set-metadata key=value` writes a bare key; `bd create --metadata
+# '{"key":"value"}'` writes a JSON object, and that is the form an issue is
+# created with -- so a namespace collision introduced at creation would be
+# invisible to a bare-token scan.
 #
 # Tokens that are placeholders rather than literals -- `<key>` and friends --
 # do not match the key charset and drop out.
 written_metadata_keys() { # file
-    sites=$(grep -nE 'bd [a-z]' "$1" | grep -E -- "$SET_FLAGS" || true)
+    sites=$(bd_set_lines "$1")
     {
         # bare form: the token after --metadata or --set-metadata
         printf '%s\n' "$sites" |
@@ -100,26 +134,47 @@ written_metadata_keys() { # file
         printf '%s\n' "$sites" |
             grep -oE '"[A-Za-z_][A-Za-z0-9_]*"[[:space:]]*:' |
             sed -E 's/^"//; s/"[[:space:]]*:$//'
+        # declared form: the key column of the skill's own namespace table
+        declared_metadata_keys "$1"
     } | grep -E '^[a-z][a-z0-9_]*$' | LC_ALL=C sort -u || true
 }
 
-reserved_prefix_of() { # skill
-    for pair in $RESERVED_PREFIXES; do
-        case "$pair" in
-            "$1":*) echo "${pair#*:}"; return 0 ;;
-        esac
+# ---------------------------------------------------------------------------
+# THE ANTI-VACUITY GUARD, run before any check that iterates over harvested
+# keys. Every check below is a loop over `written_metadata_keys`, so an empty
+# harvest makes all of them pass while asserting nothing. A green run has to
+# mean the keys were found and compared, not that none were found.
+#
+# Global: at least one skill in the tree must yield at least one key.
+# Per skill: every skill that RESERVES a prefix must yield at least one key
+# carrying it. That is the exact form of the drift -- a skill still owns a
+# namespace and the harvest no longer finds any of it, whether because the
+# table header changed shape, the table moved, or the writes became prose.
+# A skill absent from `RESERVED_PREFIXES` reserves nothing and is exempt, which
+# is what still lets a third skill land without editing this file.
+# ---------------------------------------------------------------------------
+total_keys=0
+for skill in $skills; do
+    for f in $(copies_of "$skill"); do
+        n=$(written_metadata_keys "$f" | grep -c . || true)
+        total_keys=$((total_keys + n))
     done
-    return 0
-}
+done
 
-owner_of_prefix() { # prefix
-    for pair in $RESERVED_PREFIXES; do
-        case "$pair" in
-            *:"$1") echo "${pair%%:*}"; return 0 ;;
-        esac
+[ "$total_keys" -gt 0 ] ||
+    fail "no metadata key was harvested from any skill in $root/skills -- every namespace check below would pass vacuously"
+
+for pair in $RESERVED_PREFIXES; do
+    owner="${pair%%:*}"
+    prefix="${pair#*:}"
+    owner_copies=$(copies_of "$owner")
+    [ -n "$owner_copies" ] || continue
+    for f in $owner_copies; do
+        own=$(written_metadata_keys "$f" | grep -c "^$prefix" || true)
+        [ "$own" -gt 0 ] ||
+            fail "$owner: $f yields no metadata key under its own reserved prefix '$prefix' -- the harvest went silent, so every namespace check below would pass vacuously for this skill"
     done
-    return 0
-}
+done
 
 # ---------------------------------------------------------------------------
 # 1. No skill writes a metadata key reserved to another skill.
@@ -175,28 +230,55 @@ for a in $skills; do
 done
 
 # ---------------------------------------------------------------------------
-# 3. Neither skill has a write site for the author-only label.
+# 3. NO skill has a write site for either author-only label. Both are written
+#    by a person and by nobody else, and the two are checked by one loop
+#    because the argument for each is the same one: a label carries no author,
+#    no timestamp and no namespace, so nothing at read time can tell a
+#    machine's writing from a person's. The only defence is never to write it.
+#
+#    Every skill, not just the consumer. `backlog-loop` declares
+#    `hard-blocker` author-only and `repo-audit` declares `audit-suppressed`
+#    author-only, but the prohibition each declares binds BOTH -- an audit that
+#    wrote `hard-blocker` would forge a person's judgement in the consumer's
+#    tracker just as surely as a consumer that wrote `audit-suppressed` would
+#    forge one in the audit's.
 # ---------------------------------------------------------------------------
+#    TWO detectors, because a skill written as prose issues no `bd` command
+#    line at all and the command-line detector alone sees nothing in it. The
+#    second reads the prose: a line that NAMES the label and carries an
+#    affirmative write verb, with no negation on that same line, is a claim to
+#    write it. Both procedures must be able to TALK about these labels -- to
+#    declare the prohibition, to read one at decision time, to report one they
+#    observed -- so the negation clause is what keeps the prohibition sentences
+#    and every read-context sentence from tripping it.
+#
+#    STATED BLIND SPOT: the prose detector is a heuristic over one line. A
+#    write claim spread across two sentences, or phrased without any of the
+#    verbs below, is not caught. It is here because the alternative measured on
+#    this tree was zero detection, not because prose can be decided statically.
+# ---------------------------------------------------------------------------
+WRITE_VERBS='\b(writes?|adds?|applies|apply|sets?|attaches|attach|marks?|labels)\b|--add-label|--labels|--set-labels'
+NEGATIONS='\b([Nn]ever|NEVER|[Nn]o|NO|[Nn]ot|NOT|[Nn]othing|[Nn]either|[Nn]one|refuses?)\b|AUTHOR ONLY|author-only'
+
+prose_write_claims() { # file, label
+    grep -nF -- "$2" "$1" | grep -E -- "$WRITE_VERBS" | grep -Ev -- "$NEGATIONS" || true
+}
+
 for skill in $skills; do
     for f in $(copies_of "$skill"); do
-        sites=$(write_sites "$f" "$AUTHOR_ONLY_LABEL")
-        [ -z "$sites" ] ||
-            fail "$skill: $f has a write site for the author-only label '$AUTHOR_ONLY_LABEL': $(echo "$sites" | head -n 1)"
+        for label in $AUTHOR_ONLY_LABEL $SUPPRESSION_LABEL; do
+            sites=$(write_sites "$f" "$label")
+            [ -z "$sites" ] ||
+                fail "$skill: $f has a write site for the author-only label '$label': $(echo "$sites" | head -n 1)"
+            claims=$(prose_write_claims "$f" "$label")
+            [ -z "$claims" ] ||
+                fail "$skill: $f claims in prose to write the author-only label '$label': $(echo "$claims" | head -n 1)"
+        done
     done
 done
 
 # ---------------------------------------------------------------------------
-# 4. The suppression label has a write site in exactly one skill, and it is
-#    never `backlog-loop`.
-# ---------------------------------------------------------------------------
-for f in $(copies_of backlog-loop); do
-    sites=$(write_sites "$f" "$SUPPRESSION_LABEL")
-    [ -z "$sites" ] ||
-        fail "backlog-loop: $f has a write site for the suppression label '$SUPPRESSION_LABEL': $(echo "$sites" | head -n 1)"
-done
-
-# ---------------------------------------------------------------------------
-# 5. Facts in the consumer's text that `repo-audit`'s own protections rest on.
+# 4. Facts in the consumer's text that `repo-audit`'s own protections rest on.
 #    Each failure names the audit requirement it breaks, because the failure is
 #    otherwise unreadable: the consumer's text is correct on its own terms and
 #    only wrong with respect to an assumption made in another file.
@@ -230,6 +312,25 @@ for f in $(copies_of backlog-loop); do
     # every other check here while silently voiding the whole deference rule.
     grep -q 'backlog_loop_run' "$f" ||
         fail "backlog-loop: $f no longer uses 'backlog_loop_run' as its claim marker (breaks repo-audit R77: deference would never trigger)"
+
+    # R77, second half: the audit's DEFERENCE BY STATUS table switches on the
+    # VALUES of `backlog_loop_cause`, not just on the key's existence. A run
+    # sweeps a `blocked` issue under `needs-person` and yields to one under a
+    # `transient` cause. Rename either value and the audit still finds the key,
+    # matches neither arm, and takes whichever default the executor invents.
+    grep -q 'backlog_loop_cause' "$f" ||
+        fail "backlog-loop: $f no longer records 'backlog_loop_cause' (breaks repo-audit R77: the deference-by-status table has nothing to switch on)"
+    for cause in needs-person transient; do
+        grep -F -- "$cause" "$f" | grep -q 'backlog_loop_cause\|`blocked`' ||
+            fail "backlog-loop: $f no longer uses the '$cause' cause vocabulary (breaks repo-audit R77: the deference-by-status table's '$cause' arm can never match)"
+    done
+
+    # The author-only label's exact spelling. Check 3 forbids every skill from
+    # writing `hard-blocker`, but that prohibition is only worth holding while
+    # the consumer still USES that literal as its adoption signal; a rename
+    # there leaves check 3 policing a string nothing reads.
+    grep -qF -- "$AUTHOR_ONLY_LABEL" "$f" ||
+        fail "backlog-loop: $f no longer names the '$AUTHOR_ONLY_LABEL' label (check 3 above would then police a string this procedure does not use)"
 done
 
 if [ "$consumer_checked" -eq 1 ]; then

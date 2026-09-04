@@ -201,6 +201,7 @@ skills/codex/<skill-name>/     installable into ~/.codex/skills/
 prompts/                       companion launch prompts
 scripts/check-parity.sh        keeps the two host copies from drifting
 scripts/check-cross-skill.sh   keeps the two skills' shared assumptions true
+scripts/test-*.sh              proves each checker still fails on a broken tree
 ```
 
 Each skill exists twice, once per host, because the two hosts declare

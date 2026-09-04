@@ -22,6 +22,14 @@ jobs:
       - name: Cross-skill invariants hold
         run: sh scripts/check-cross-skill.sh
 
+      # The same guard-on-the-guard the parity check gets, and for a reason
+      # this repository has already paid for: the cross-skill checker shipped
+      # recognizing zero write sites in `repo-audit`, so three of its four
+      # checks passed vacuously against the skill they were written to
+      # constrain. A checker whose loops iterate over nothing reports success.
+      - name: The cross-skill check can still fail
+        run: sh scripts/test-check-cross-skill.sh
+
       # Supplementary gate only, and a partial one: probed against this
       # skill, `claude plugin validate --strict` catches a missing
       # `description` and a missing or empty frontmatter block, but passes a

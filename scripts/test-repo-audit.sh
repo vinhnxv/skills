@@ -39,9 +39,29 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 skill="$repo_root/skills/claude/repo-audit/SKILL.md"
 
+# A missing skill is a HARD FAILURE, not a skip. The two skips this suite does
+# take -- no `bd`, no host CLI -- are about the environment the suite runs in,
+# which the repository does not control. The skill's own path is not: if it is
+# absent, either it was renamed and this literal was not, or the checkout is
+# broken. Either way the CI step named "The finding record and the fingerprint
+# corpus still hold" would print SKIP, exit 0, and run zero of its checks while
+# reporting green -- the exact silent pass the rest of this suite exists to
+# prevent. The message names the alternative path so a rename is a one-line fix
+# rather than a hunt.
+if [ ! -f "$skill" ]; then
+    echo "FAIL: no repo-audit skill at $skill" >&2
+    echo "      (if the skill was renamed or moved, update \`skill=\` in $0;" >&2
+    echo "       skills currently present: $(ls "$repo_root/skills/claude" 2>/dev/null | tr '\n' ' '))" >&2
+    exit 1
+fi
+
 fixtures_only=0
 [ "${1:-}" = "--fixtures-only" ] && fixtures_only=1
 
+# `bd` warns on every invocation when `beads.role` is unset, which would bury
+# this suite's output in a CI log. Supplying it through the environment answers
+# the warning without touching the user's git config and without redirecting
+# stderr, which would hide real errors too.
 GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}
 GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-beads.role}
 GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-contributor}
@@ -55,7 +75,6 @@ checks=0
 pass() { checks=$((checks + 1)); printf '  ok: %s\n' "$1"; }
 fail() { checks=$((checks + 1)); failures=$((failures + 1)); printf '  FAIL: %s\n' "$1"; }
 
-[ -f "$skill" ] || { echo "SKIP: no repo-audit skill at $skill."; exit 0; }
 
 # ---------------------------------------------------------------------------
 # THE VERIFIED-FINDING FIXTURE RECORD.
@@ -77,10 +96,16 @@ fail() { checks=$((checks + 1)); failures=$((failures + 1)); printf '  FAIL: %s\
 #   recipe     the detection recipe, in the procedure's own five-field grammar
 #   receipt    the investigation receipt: id, read region, and what was concluded
 #
-# The fingerprint inputs are `dims`, `path`, `lines`, and `evidence`. They are
-# listed here rather than left implicit because a fixture that varies a
-# non-input field must produce the SAME fingerprint, and a suite that cannot
-# say which fields are inputs cannot check that.
+# THE FINGERPRINT INPUTS ARE NOT THIS FIELD SET. `## VERIFICATION` names four
+# and no others -- FILE IDENTITY, RULE, NORMALIZED EVIDENCE, and DISCRIMINATOR
+# -- and says explicitly that the DIMENSION is not an input and that the LINE
+# RANGE is never hashed into it. So of the fields above, only `path` (through
+# file identity) and `evidence` reach the fingerprint at all; `dims` and
+# `lines` are carried in the record for collapse, emission and the index row,
+# and a fixture that varies either must produce the SAME fingerprint. Corpus
+# case C5 is exactly that check: it shifts the line range and asserts C1's
+# fingerprint. Stating the inputs wrongly here would make that case read as a
+# contradiction rather than as the assertion it is.
 # ---------------------------------------------------------------------------
 FIXTURE_FIELDS='id dims path lines evidence severity recipe receipt'
 
@@ -261,6 +286,11 @@ for candidate in claude codex; do
     command -v "$candidate" >/dev/null 2>&1 && { host_cli=$candidate; break; }
 done
 
+# `timeout` is GNU coreutils and is absent from a stock macOS, where Homebrew
+# installs the same binary as `gtimeout`. Probe rather than assume: an
+# unresolved `timeout` would fail every case with "command not found" folded
+# into an empty emit, which reads as a procedure defect rather than a missing
+# prerequisite.
 deadline=""
 for candidate in timeout gtimeout; do
     command -v "$candidate" >/dev/null 2>&1 && { deadline=$candidate; break; }
@@ -323,7 +353,13 @@ full_deadline=$((max_rounds * waves * (wave_min + pop_min) * 60))
 echo "  roster: $roster_size dimensions, $waves wave(s) at a width of $fanout_floor"
 echo "  per-case deadline: ${case_deadline}s (WAVE_DEADLINE), reduced fixture roster, no spawn"
 echo "  a full-roster case would be bounded at ${full_deadline}s; none runs here"
-echo "  worst case for this suite: 8 host runs, so up to $((case_deadline * 8))s"
+# Every invocation of the host CLI, counted rather than guessed: two positive
+# controls, one run for each of cases A, B, C and G, two each for D, E and both
+# halves of F, and one for H under its own one-second deadline. A hand-written
+# literal here drifts the moment a case is added, and this number exists to
+# tell a reader what the suite will cost before they start it.
+HOST_RUNS_PLANNED=15
+echo "  worst case for this suite: $HOST_RUNS_PLANNED host runs, so up to $(((HOST_RUNS_PLANNED - 1) * case_deadline + 1))s"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -353,8 +389,20 @@ fresh_target() { # ignore_reports: yes | no
     echo "$dir"
 }
 
+# Counted by parsing the payload, not by counting lines that carry an "id"
+# key. `bd` pretty-prints one field per line today, so a line count happens to
+# agree -- but it agrees by formatting rather than by structure, and a compact
+# payload or one nested id would silently miscount the very number that decides
+# whether a run wrote nothing. `bd` returns a bare list from some subcommands
+# and an object keyed by "issues" from others, so both shapes are accepted.
 issue_count() { # target_dir
-    bd -C "$1" list --all --limit 0 --json 2>/dev/null | grep -c '"id"' || true
+    bd -C "$1" list --all --limit 0 --json 2>/dev/null | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print(0); raise SystemExit
+rows = d if isinstance(d, list) else d.get("issues", d)
+print(len(rows))' 2>/dev/null || echo 0
 }
 
 # Writes the host's combined output to $host_out and sets $host_status. It
@@ -370,11 +418,19 @@ host_run() { # prompt, tools
     else
         set --
     fi
+    # Tallied through the filesystem, not through a shell variable. Nine of
+    # this suite's fifteen invocations sit inside `$( )`, which runs this
+    # function in a subshell -- an incremented variable dies with it, and the
+    # count printed at the end would report 6 of 15 on every complete run.
+    printf 'x' >> "$host_runs_file"
     set +e
     "$deadline" "$case_deadline" "$host_cli" -p "$_prompt" "$@" > "$host_out" 2>&1
     host_status=$?
     set -e
 }
+host_runs_file="$work/host-runs"
+: > "$host_runs_file"
+host_runs() { wc -c < "$host_runs_file" | tr -d ' '; }
 
 # Feed a fixture set to the orchestrator with NO SUBAGENTS SPAWNED. The
 # procedure's discovery half is skipped by handing it findings that are already
@@ -473,7 +529,7 @@ if [ "$host_status" -eq 0 ] && [ -f "$spawn_probe" ] && grep -q "$spawn_token" "
     spawn_proven=1
     pass "positive control: this harness can spawn a subagent that writes a file"
 else
-    fail "positive control unproven: no subagent wrote the probe file, so a degraded serial run is indistinguishable from a spawning one here"
+    fail "positive control unproven: no subagent wrote the probe file, so a host that cannot spawn is indistinguishable from one that can"
 fi
 
 guarded() { # flag, description -> 0 when the guarding control was proven
@@ -481,6 +537,17 @@ guarded() { # flag, description -> 0 when the guarding control was proven
     fail "not run, its positive control was unproven: $2"
     return 1
 }
+
+# The spawn control guards every FILING assertion, and this is why. The
+# procedure degrades a host that cannot spawn to a serial run, and a serial run
+# is READ-ONLY by its own rule. So on such a host every writing case here files
+# nothing for a reason that has nothing to do with the write protocol: case B's
+# "filed at least one finding" fails, and case A's "wrote only the index"
+# passes, both misattributed. The cases themselves ask for no subagent -- they
+# drive the tracker half from a fixture -- but what they assert about filing is
+# only meaningful on a host where the procedure would not have degraded.
+filing_proven=0
+[ "$write_proven" -eq 1 ] && [ "$spawn_proven" -eq 1 ] && filing_proven=1
 
 # ---------------------------------------------------------------------------
 # CASE A - the first run against a fresh target.
@@ -534,7 +601,7 @@ EXPECTED
         fail "the first run's finding lines differ from the expected table: $(head -n 8 "$work/diff-a" | tr '\n' ' ')"
     fi
 
-    if guarded "$write_proven" "the first run files nothing but the index"; then
+    if guarded "$filing_proven" "the first run files nothing but the index"; then
         n=$(issue_count "$target_a")
         [ "$n" -eq 1 ] \
             && pass "the first run made exactly one tracker write" \
@@ -560,7 +627,7 @@ if emit_usable "$emit_b"; then
         && pass "every filed finding line resolves to a tracker id" \
         || fail "$noneid filed finding line(s) carry no issue id"
 
-    if guarded "$write_proven" "the second run's issues reach the store"; then
+    if guarded "$filing_proven" "the second run's issues reach the store"; then
         n=$(issue_count "$target_a")
         [ "$n" -gt 1 ] \
             && pass "the second run left $n issue(s) in the store" \
@@ -610,6 +677,16 @@ if emit_usable "$emit_d"; then
     [ "$distinct" -eq 3 ] \
         && pass "the corpus yielded three distinct fingerprints: one for the five mutations, two for the co-located pair" \
         || fail "the corpus yielded $distinct distinct fingerprint(s), wanted 3 ($CORPUS_ONE_FINGERPRINT as one, $CORPUS_DISTINCT apart)"
+
+    # Distinctness alone does not prove the collapse happened. Seven finding
+    # lines, five of them carrying the same correctly-computed fingerprint,
+    # yield exactly three distinct values and would pass the check above while
+    # filing five issues for one defect. The line count is what says the five
+    # became one.
+    corpus_finds=$(printf '%s\n' "$emit_d" | grep -c '^finding ' || true)
+    [ "$corpus_finds" -eq 3 ] \
+        && pass "the corpus emitted three finding lines, so the five mutations collapsed to one candidate" \
+        || fail "the corpus emitted $corpus_finds finding line(s), wanted 3; the mutations did not collapse"
 fi
 
 # ---------------------------------------------------------------------------
@@ -621,7 +698,7 @@ target_e=$(fresh_target no)
 run_audit "$target_e" writing "$fixtures" public-first "This is the first run against this repository. Treat the repository's visibility as PUBLIC." >/dev/null
 emit_e=$(run_audit "$target_e" writing "$fixtures" public "This repository already holds this audit's index issue. Treat the repository's visibility as PUBLIC.")
 
-if emit_usable "$emit_e" && guarded "$write_proven" "the public target's filed issues carry no exploit detail"; then
+if emit_usable "$emit_e" && guarded "$filing_proven" "the public target's filed issues carry no exploit detail"; then
     bodies=$(bd -C "$target_e" list --all --limit 0 --json 2>/dev/null; bd -C "$target_e" list --type gate --json 2>/dev/null)
     if printf '%s' "$bodies" | grep -q 'fh = open(path)'; then
         fail "a filed issue quotes the evidence literal on a public target"
@@ -738,5 +815,9 @@ case "$killed" in
     *) fail "a killed case returned output; the deadline did not fire" ;;
 esac
 
-printf '\n%d check(s), %d failure(s)\n' "$checks" "$failures"
+host_runs_made=$(host_runs)
+printf '\n%d check(s), %d failure(s), %d host run(s)\n' "$checks" "$failures" "$host_runs_made"
+[ "$host_runs_made" -eq "$HOST_RUNS_PLANNED" ] ||
+    printf 'note: the suite planned %d host run(s) and made %d; the printed cost estimate is stale\n' \
+        "$HOST_RUNS_PLANNED" "$host_runs_made"
 [ "$failures" -eq 0 ] || exit 1
