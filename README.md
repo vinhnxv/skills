@@ -46,14 +46,18 @@ whose main branch you are not comfortable having written to.
 
 ## Install
 
-One command per host. It downloads the repository archive and extracts just the
-one skill directory — no clone, no Node, no script of ours to trust.
+One command per skill per host. Each downloads the repository archive and
+extracts just that one skill directory — no clone, no Node, no script of ours
+to trust. Install only the skills you want; they are independent.
 
 **Claude Code**
 
 ```sh
 mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/backlog-loop
+
+mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/repo-audit
 ```
 
 **Codex**
@@ -61,22 +65,25 @@ mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archiv
 ```sh
 mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/backlog-loop
+
+mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/repo-audit
 ```
 
 The `mkdir -p` is not optional: `tar -C` on a directory that does not exist
 fails, and on the `cp -R` path below it silently mis-installs instead.
 
 **Upgrading.** Delete the installed skill first — `rm -rf
-~/.claude/skills/backlog-loop` (or the Codex path) — then run the install
-command again. Extracting over an existing install leaves behind any file the
-new version dropped.
+~/.claude/skills/backlog-loop` (or the Codex path, or the other skill's) — then
+run its install command again. Extracting over an existing install leaves behind
+any file the new version dropped.
 
 **From a clone instead.** If you already have the repository checked out, copy
-the one directory that matches your host:
+the directories that match your host:
 
 ```sh
-mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop ~/.claude/skills/
-mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  ~/.codex/skills/
+mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit ~/.claude/skills/
+mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  ~/.codex/skills/
 ```
 
 `cp -R` into a directory that does not exist exits 0 and copies the skill's
