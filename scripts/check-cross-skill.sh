@@ -79,15 +79,28 @@ write_sites() { # file, name
     grep -nF -- "$2" "$1" | grep -E 'bd [a-z]' | grep -E -- "$SET_FLAGS" || true
 }
 
-# Metadata keys a file actually WRITES: the token after a metadata-setting
-# flag, on a line that is a write site, with any `=value` stripped. Tokens that
-# are placeholders rather than literals -- `<key>` and friends -- do not match
-# the key charset and drop out here.
+# Metadata keys a file actually WRITES, from write sites only.
+#
+# TWO forms, because `bd` offers two and a check that reads one is a check that
+# misses the other entirely. `bd update --set-metadata key=value` writes a bare
+# key; `bd create --metadata '{"key":"value"}'` writes a JSON object, and
+# that is the form an issue is created with -- so a namespace collision
+# introduced at creation would be invisible to a bare-token scan.
+#
+# Tokens that are placeholders rather than literals -- `<key>` and friends --
+# do not match the key charset and drop out.
 written_metadata_keys() { # file
-    grep -nE 'bd [a-z]' "$1" | grep -E -- "$SET_FLAGS" |
-        sed -E 's/.*--(set-)?metadata[ =]+/\n/g' |
-        sed -E 's/[ `].*//; s/=.*//' |
-        grep -E '^[a-z][a-z0-9_]*$' | LC_ALL=C sort -u || true
+    sites=$(grep -nE 'bd [a-z]' "$1" | grep -E -- "$SET_FLAGS" || true)
+    {
+        # bare form: the token after --metadata or --set-metadata
+        printf '%s\n' "$sites" |
+            sed -E 's/.*--(set-)?metadata[ =]+/\n/g' |
+            sed -E 's/[ `].*//; s/=.*//'
+        # JSON form: every object key inside a --metadata argument
+        printf '%s\n' "$sites" |
+            grep -oE '"[A-Za-z_][A-Za-z0-9_]*"[[:space:]]*:' |
+            sed -E 's/^"//; s/"[[:space:]]*:$//'
+    } | grep -E '^[a-z][a-z0-9_]*$' | LC_ALL=C sort -u || true
 }
 
 reserved_prefix_of() { # skill
