@@ -484,6 +484,83 @@ silent=$(recount_disagreements "$return_silent" cc-existing cc-error-path cc-stu
     && pass "replay: a criterion declaring zero receipts disagrees with nothing, so coverage decides it" \
     || fail "replay: a zero-receipt criterion was mis-flagged as a count disagreement: $silent"
 
+# ---------------------------------------------------------------------------
+# THE RECIPE'S ARITY AND THE TIER'S DISPOSITION, REPLAYED.
+#
+# A recipe is one or two clause-lines, each exactly the five-field grammar.
+# The parse gate is unchanged per clause, so these checks are about how many
+# clauses there are, what forms may sit together, and whether every clause
+# reproduced -- all of which are decidable over text.
+# ---------------------------------------------------------------------------
+recipe_verdict() { # recipe text (one clause per line) -> parseable | recipe-unparseable
+    printf '%s\n' "$1" | awk -F'|' '
+        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+        NF > 0 { clauses++
+                 if (NF != 5) bad = "field count"
+                 f = trim($3)
+                 if (f ~ /^classifier:/) classifier++
+               }
+        END { if (clauses < 1 || clauses > 2) print "recipe-unparseable"
+              else if (bad != "")            print "recipe-unparseable"
+              else if (classifier > 0 && clauses > 1) print "recipe-unparseable"
+              else print "parseable" }
+    '
+}
+
+one_clause='src/a.py | 10-12 | literal:open( | matches 1 | abc1234'
+two_clause='src/route.py | 4-4 | literal:GET /widgets | matches 1 | abc1234
+docs/api.md | 30-30 | literal:GET /widgets | absent 0 | abc1234'
+three_clause=$(printf '%s\n%s\n' "$two_clause" 'src/x.py | 1-1 | literal:z | matches 1 | abc1234')
+classifier_one='src/conf.py | 8-8 | classifier:rc-2 | matches 1 | abc1234'
+classifier_mixed=$(printf '%s\n%s\n' "$classifier_one" 'src/use.py | 3-3 | literal:token | matches 1 | abc1234')
+
+[ "$(recipe_verdict "$one_clause")" = parseable ] \
+    && pass "replay: a one-clause recipe still parses, unchanged" \
+    || fail "replay: the existing one-clause recipe stopped parsing"
+
+[ "$(recipe_verdict "$two_clause")" = parseable ] \
+    && pass "replay: a two-clause cross-file recipe parses" \
+    || fail "replay: a two-clause recipe was rejected"
+
+[ "$(recipe_verdict "$three_clause")" = recipe-unparseable ] \
+    && pass "replay: a three-clause recipe is recipe-unparseable" \
+    || fail "replay: a third clause was admitted"
+
+[ "$(recipe_verdict "$classifier_one")" = parseable ] \
+    && pass "replay: a single classifier-form clause parses" \
+    || fail "replay: the classifier form stopped parsing"
+
+[ "$(recipe_verdict "$classifier_mixed")" = recipe-unparseable ] \
+    && pass "replay: a classifier clause paired with any other form is recipe-unparseable" \
+    || fail "replay: a mixed-form recipe was admitted, which publishes the withheld location"
+
+# PROOF AT FILE TIME over an arity-two recipe: every clause must reproduce.
+proof_verdict() { # per-clause reproduce results, one per line -> filed | report-only
+    printf '%s\n' "$1" | awk '/^no$/ { failed = 1 } END { print failed ? "report-only" : "filed" }'
+}
+[ "$(proof_verdict "$(printf 'yes\nyes\n')")" = filed ] \
+    && pass "replay: a two-clause recipe whose clauses both reproduce files" \
+    || fail "replay: a fully reproducing two-clause recipe did not file"
+[ "$(proof_verdict "$(printf 'yes\nno\n')")" = report-only ] \
+    && pass "replay: a two-clause recipe with one failing clause goes to the report" \
+    || fail "replay: a half-reproducing recipe filed"
+
+# The tier's disposition, and the one rule that outranks it.
+tier_disposition() { # tier, classifier-match (yes/no) -> disposition
+    if [ "$2" = yes ]; then echo "human-gate"
+    elif [ "$1" = advisory ]; then echo "report-only"
+    else echo "filed"; fi
+}
+[ "$(tier_disposition advisory no)" = report-only ] \
+    && pass "replay: a confirmed advisory-tier finding is report-only and files nothing" \
+    || fail "replay: an advisory finding reached the tracker"
+[ "$(tier_disposition advisory yes)" = human-gate ] \
+    && pass "replay: the credential test outranks the tier -- a matching region still files a rotation gate" \
+    || fail "replay: an advisory-tier credential finding was silently left in the report"
+[ "$(tier_disposition in-file no)" = filed ] \
+    && pass "replay: an in-file finding's disposition is unchanged by the tier rule" \
+    || fail "replay: the tier rule changed a non-advisory disposition"
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1

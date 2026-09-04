@@ -114,7 +114,7 @@ NO FIELD IS EVER BLANK. Every category below has a value for every field, includ
 | `<disposition>` | `filed`, `swept`, `deduped`, `noted`, `suppressed`, `deferred`, `over-ceiling`, `report-only`, `citation-unresolved`, `no-receipt`, `recipe-unparseable`, `refuted`, `unevaluable` |
 | `<issue-id>` | a tracker id, or `none` |
 
-TWO DISPOSITIONS ARE ASSIGNED NOWHERE ELSE, so they are assigned here. `swept` is carried by a `finding ` line for an issue `## STALE-CLOSE SWEEP` closed this run: the fingerprint and issue id are the closed issue's, and the line is what puts a close in the same emitted record as a filing. `report-only` is carried by every confirmed finding that `## ISSUE SHAPE` keeps out of the tracker by severity -- P3 and P4 -- with `<issue-id>` `none`. Both count in the post-collapse total and in the `<dims>` sum, because a finding that was confirmed and then not filed is still a finding the run has to account for. Without these two, a swept issue and a confirmed P3 would each need a disposition the closed vocabulary does not offer.
+TWO DISPOSITIONS ARE ASSIGNED NOWHERE ELSE, so they are assigned here. `swept` is carried by a `finding ` line for an issue `## STALE-CLOSE SWEEP` closed this run: the fingerprint and issue id are the closed issue's, and the line is what puts a close in the same emitted record as a filing. `report-only` HAS TWO SOURCES AND NAMES BOTH. It is carried by every confirmed finding that `## ISSUE SHAPE` keeps out of the tracker by severity -- P3 and P4 -- and by every confirmed finding whose criterion declares the `advisory` tier, per `## VERIFICATION`, which cannot be filed at any severity because no recipe reproduces it. Either way `<issue-id>` is `none`. Both count in the post-collapse total and in the `<dims>` sum, because a finding that was confirmed and then not filed is still a finding the run has to account for. Without these two, a swept issue and a confirmed P3 would each need a disposition the closed vocabulary does not offer.
 
 `skipped` is the verdict of a dimension whose entire residue was ledger-skip-eligible, so no subagent was dispatched for it at all. A dimension that ran and was carried forward in part is `clean` with `<scope>` `residue`, never `skipped`. A discard reason occupies the `<disposition>` field itself; there is no separate reason field, because a reason in its own column is a field that is blank on every line that succeeded.
 
@@ -491,7 +491,9 @@ Four gates, each with its own disposition, and a candidate that fails one is not
 - CITATION. Every finding cites a repository-relative path and line range and quotes the code verbatim as read at `<sha>`. Re-resolve that quote against the file at `<sha>`. It does not resolve -> `citation-unresolved`, discarded, no issue.
 - RECEIPT. Every finding carries a receipt naming what was checked to establish it. No receipt -> `no-receipt`, not filed.
 - RECIPE. Every finding carries a detection recipe, parsed into the grammar below before anything is filed. It does not parse -> `recipe-unparseable`, reported and not filed.
-- PROOF AT FILE TIME. Evaluate the recipe about to be recorded, at `<sha>`, and file only if it reproduces the finding. A recipe that cannot be proven sends its finding to the report. Without this, both revalidation and the stale-close sweep act destructively on an artifact nothing ever validated.
+- PROOF AT FILE TIME. Evaluate the recipe about to be recorded, at `<sha>`, and file only if EVERY clause of it reproduces the finding. A recipe that cannot be proven sends its finding to the report. Without this, both revalidation and the stale-close sweep act destructively on an artifact nothing ever validated.
+- TIER. A finding surfaced under an `advisory` criterion is `confirmed` or not on the same evidence as any other, but it carries no recipe that any gate could prove, so its disposition is `report-only` and it makes NO TRACKER WRITE. THE CREDENTIAL AND PERSONAL-DATA TEST OUTRANKS THIS RULE: a region the classifier roster matches is still filed as a `[HUMAN]` rotation gate whatever tier surfaced it, because such a region can always carry a form-3 recipe and the rule above withholds filing only from evidence that CANNOT be reproduced. An advisory finding whose region does not match takes `report-only`.
+- GUARD. Where `## CRITERION ROSTER` states a guard for the criterion that surfaced a candidate, apply it before anything else here. A candidate the guard matches is not a finding, is not filed, and is not reported as one. The guard has no population and no verdict of its own -- it only ever removes candidates.
 
 THE RECIPE GRAMMAR is closed. Five fields, in this order:
 
@@ -499,11 +501,17 @@ THE RECIPE GRAMMAR is closed. Five fields, in this order:
 <repository-relative path> | <line anchor> | <form> | <polarity> <count> | <sha>
 ```
 
+A RECIPE CARRIES ONE OR TWO CLAUSE-LINES, each line exactly the five fields above. One clause is the ordinary case. Two is what a `cross-file` criterion needs, because its defect IS the disagreement between two files and neither file is wrong alone. `PROOF AT FILE TIME` then requires EVERY clause to reproduce at `<sha>`; a recipe whose second clause does not reproduce sends its finding to the report exactly as a failing single clause does. Three or more clause-lines is `recipe-unparseable`.
+
+The arity grows and the fields do not, deliberately. A wider positional row would give `|` a second meaning inside a field that already admits alternation, and a conjunction operator would give some other character one. Neither is needed: the per-clause parse gate below is UNCHANGED, so nothing the one-clause gate rejects today becomes admissible by being written beside a second clause.
+
 `<polarity>` is `matches` or `absent`. `<form>` takes one of three shapes and NO OTHER:
 
 1. `literal:<fixed string>` -- matched as bytes, never as a pattern.
 2. `re2:<pattern>` -- one named non-backtracking syntax, over an explicitly admitted character set, at most `RECIPE_MAX_LEN` characters.
 3. `classifier:<roster id>` -- one member of the classifier roster, carrying no repository-derived bytes at all.
+
+A RECIPE CONTAINING ANY `classifier:` CLAUSE CARRIES EXACTLY THAT ONE CLAUSE. A second clause of any form is `recipe-unparseable`, including one whose own form is `literal:` or `re2:`. The restriction is on the RECIPE and not on the form, because the leak it prevents is the recipe's and not the clause's: a credential finding's location is what the classifier carve-out withholds, and a second clause carries a second location plus the repository bytes around it. A gate written on the form alone would admit a mixed pair and publish exactly what the carve-out was for.
 
 The syntax is NAMED because that is what makes the parse gate expressible. A gate stated as rejecting shell metacharacters would reject nearly every working pattern -- regular-expression syntax is very largely shell metacharacters -- and an implementer who discovered that would loosen the gate with nothing to loosen it toward. No maximum evaluation time is stated, and the omission is deliberate: a non-backtracking syntax and a length cap bound evaluation cost by construction, and a procedure that forbids a shell invocation has no way to enforce a clock. A constant that enforces nothing is worse than no constant.
 
