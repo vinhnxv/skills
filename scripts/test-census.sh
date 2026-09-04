@@ -428,6 +428,11 @@ mf_partial=$(bd -C "$ra" list --all --limit 0 --metadata-field repo_audit_probe=
 
 # --- the P0-P4 band round-trips, since severity maps directly onto it ---
 band_ok=1
+# Cleared before the loop, not merely assigned inside it. `sh` has no locals,
+# so `got` is still bound to an earlier check's value here; if the update below
+# fails on the first iteration the loop breaks before `got` is set, and the
+# failure text would report that unrelated leftover as the value read back.
+got=""
 for band in P0 P1 P2 P3 P4; do
     bd -C "$ra" update "$ra_open" --priority "$band" >/dev/null 2>&1 || { band_ok=0; break; }
     got=$(bd -C "$ra" show "$ra_open" --json 2>/dev/null | python3 -c 'import json,sys
