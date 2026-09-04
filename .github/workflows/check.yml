@@ -16,6 +16,12 @@ jobs:
       - name: The parity check can still fail
         run: sh scripts/test-check-parity.sh
 
+      # Parity compares a skill against its own other host copy, so it cannot
+      # express an invariant that spans two DIFFERENT skills. This is the only
+      # check that can.
+      - name: Cross-skill invariants hold
+        run: sh scripts/check-cross-skill.sh
+
       # Supplementary gate only, and a partial one: probed against this
       # skill, `claude plugin validate --strict` catches a missing
       # `description` and a missing or empty frontmatter block, but passes a
