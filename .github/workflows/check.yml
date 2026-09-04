@@ -95,14 +95,40 @@ jobs:
           home="$RUNNER_TEMP/fakehome"
           rm -rf "$home"; mkdir -p "$home"
 
-          # Verbatim from README.md, with the archive standing in for the curl.
-          HOME="$home" sh -c 'mkdir -p ~/.claude/skills && tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/backlog-loop' < "$RUNNER_TEMP/main.tar.gz"
-          HOME="$home" sh -c 'mkdir -p ~/.codex/skills  && tar -xz -C ~/.codex/skills  --strip-components=3 skills-main/skills/codex/backlog-loop'  < "$RUNNER_TEMP/main.tar.gz"
+          # Every skill, not one named here: a skill this job does not extract
+          # is a skill whose install command nobody has ever run.
+          for skill in $(ls skills/claude); do
+            # Verbatim from README.md, with the archive standing in for the
+            # curl and the skill name substituted.
+            HOME="$home" sh -c "mkdir -p ~/.claude/skills && tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/$skill" < "$RUNNER_TEMP/main.tar.gz"
+            HOME="$home" sh -c "mkdir -p ~/.codex/skills  && tar -xz -C ~/.codex/skills  --strip-components=3 skills-main/skills/codex/$skill"  < "$RUNNER_TEMP/main.tar.gz"
 
-          diff -r "$home/.claude/skills/backlog-loop" skills/claude/backlog-loop
-          diff -r "$home/.codex/skills/backlog-loop"  skills/codex/backlog-loop
-          echo "install produced byte-identical trees for both hosts"
+            diff -r "$home/.claude/skills/$skill" "skills/claude/$skill"
+            diff -r "$home/.codex/skills/$skill"  "skills/codex/$skill"
+            echo "install produced byte-identical trees for both hosts: $skill"
+          done
 
+      # A skill nobody can find the command for is not installable, however
+      # cleanly it extracts. Checked against the archive member path both
+      # one-liners carry, which is the part that must name the skill exactly.
+      - name: The README documents an install command for every skill
+        run: |
+          set -eu
+          status=0
+          for skill in $(ls skills/claude); do
+            for host in claude codex; do
+              if ! grep -qF "skills-main/skills/$host/$skill" README.md; then
+                echo "README.md documents no $host install command for '$skill'"
+                status=1
+              fi
+            done
+          done
+          [ "$status" -eq 0 ] || exit 1
+          echo "every skill has an install command for both hosts in README.md"
+
+      # Deliberately one literal skill: this is a negative control on tar's
+      # behaviour, not on the skill set, and looping it would prove the same
+      # thing once per skill.
       - name: A missing target directory fails loudly instead of mis-installing
         run: |
           set -eu
