@@ -362,6 +362,7 @@ fi
 # writes them between two markers so the surrounding narration a model produces
 # never reaches the diff. `--readonly` is not passed here: a loop-mode case
 # must be able to observe the mutation passes.
+raw_seq=0
 run_census() {
     store_dir=$1
     mode=$2   # diagnostic | loop
@@ -377,7 +378,35 @@ between those markers."
     # deadline killed part-way through still passes its partial output to the
     # filter -- and if both markers happened to be emitted before the kill, a
     # dead run reports a clean census.
-    raw=$("$deadline" 600 "$host_cli" -p "$prompt" 2>/dev/null); status=$?
+    # `--allowedTools 'Bash(bd:*)'` is load-bearing and narrowly scoped. Without
+    # it the host CLI's permission classifier denies every tracker write, so a
+    # loop-mode case cannot mutate anything -- and every "nothing was mutated"
+    # assertion below then passes for that reason alone, proving nothing about
+    # the procedure. Scoping it to `bd` keeps the child unable to touch
+    # anything else. Codex takes different flags, so it stays read-only there
+    # and the write-capability control below reports those cases as unproven.
+    # Built with `set --` rather than an unquoted variable: word splitting on
+    # an unquoted expansion is a `sh` behaviour that zsh does not share, so the
+    # variable form silently passes "--allowedTools Bash(bd:*)" as ONE argument
+    # under some shells and the CLI rejects it. `store_dir` and `mode` are
+    # already saved above, so reusing the positional parameters here is safe.
+    if [ "$host_cli" = "claude" ]; then
+        set -- --allowedTools 'Bash(bd:*)'
+    else
+        set --
+    fi
+    raw=$("$deadline" 600 "$host_cli" -p "$prompt" "$@" 2>&1); status=$?
+    # The census is executed by a model, so a case can fail because the
+    # procedure is wrong OR because that run skipped a pass it should have run.
+    # Those two look identical in the pass/fail line, and re-running the suite
+    # to find out costs an hour. Setting CENSUS_RAW_DIR keeps each run's whole
+    # transcript, which is the only artifact that tells them apart. Unset by
+    # default: CI wants the verdict, not the transcripts.
+    if [ -n "${CENSUS_RAW_DIR:-}" ]; then
+        mkdir -p "$CENSUS_RAW_DIR"
+        raw_seq=$((raw_seq + 1))
+        printf '%s\n' "$raw" > "$CENSUS_RAW_DIR/census-$raw_seq-$mode.log"
+    fi
     if [ "$status" -ne 0 ]; then
         echo "__CENSUS_RUNNER_FAILED__ $host_cli exited $status"
         return
@@ -411,6 +440,51 @@ expect_category() {
         && pass "$4" \
         || fail "$4 (got '${got:-<no line>}', expected '$3')"
 }
+
+echo "  case: an adopted repository repairs an undeclared gate edge (write control)"
+# This runs FIRST because it is the positive control for every case after it.
+# It is the only case in which a repair is supposed to fire, so it is also the
+# only proof that this run can mutate a tracker at all. Every later case
+# asserts that something was NOT changed, and under a host CLI that denies
+# writes those assertions pass no matter what the procedure does -- the exact
+# silent pass this suite exists to catch. `write_proven` carries the result
+# forward so those cases report "unproven" instead of a false green.
+c5=$(fresh_store)
+c5_adopted=$(bd -C "$c5" create "[HUMAN] declared blocker elsewhere" -l human-gate,hard-blocker --silent)
+c5_gate=$(bd -C "$c5" create "[HUMAN] provision the staging account" -l human-gate --silent)
+c5_dep=$(bd -C "$c5" create "wire the staging deploy" --silent)
+bd -C "$c5" dep "$c5_gate" --blocks "$c5_dep" >/dev/null
+bd -C "$c5" update "$c5_gate" --acceptance "AUTHOR ORIGINAL ACCEPTANCE" >/dev/null
+
+out=$(run_census "$c5" loop)
+census_usable "$out" || out=""
+expect_category "$out" "$c5_gate"    human-gate "the undeclared gate is still classified a human gate"
+expect_category "$out" "$c5_adopted" human-gate "the declared gate elsewhere is what adopts the convention"
+
+write_proven=0
+case " $(deps_of "$c5" "$c5_dep") " in
+    *" $c5_gate "*) fail "the undeclared gate edge survived a repair in an adopted repository" ;;
+    *) write_proven=1; pass "an adopted repository removes the undeclared gate edge" ;;
+esac
+
+c5_acc=$(acc_of "$c5" "$c5_gate")
+case "$c5_acc" in
+    *"AUTHOR ORIGINAL ACCEPTANCE"*)
+        pass "the gate's original acceptance text survived the release-condition write" ;;
+    *) fail "the repair destroyed the gate's acceptance text: got '$c5_acc'" ;;
+esac
+[ "$c5_acc" != "AUTHOR ORIGINAL ACCEPTANCE" ] \
+    && pass "a release condition was written alongside the author's text" \
+    || fail "the edge was repaired but no release condition was recorded on the gate"
+
+[ -n "$(meta_of "$c5" "$c5_dep" backlog_loop_quarantine)" ] \
+    && pass "the freed issue is quarantined, so no run can build it yet" \
+    || fail "the freed issue carries no quarantine; the loop can ship the work the gate held"
+
+case " $(meta_of "$c5" "$c5_gate" backlog_loop_edge_removed) " in
+    *" $c5_dep "*) pass "the gate indexes the removed edge, so a re-run skips it" ;;
+    *) fail "the gate has no removal index for the freed issue; a re-run would repair it twice" ;;
+esac
 
 echo "  case: mixed backlog, one category per issue"
 c1=$(fresh_store)
@@ -458,9 +532,13 @@ expect_category "$out" "$c2_gate"   human-gate  "a native gate classifies as a h
 expect_category "$out" "$c2_target" dep-blocked "the step behind it stays dependency-blocked"
 
 bd -C "$c2" export > "$work/c2.after" 2>/dev/null
-cmp -s "$work/c2.before" "$work/c2.after" \
-    && pass "a loop-mode census removed no native gate edge" \
-    || fail "a loop-mode census mutated the tracker around a native gate"
+if [ "$write_proven" -eq 1 ]; then
+    cmp -s "$work/c2.before" "$work/c2.after" \
+        && pass "a loop-mode census removed no native gate edge" \
+        || fail "a loop-mode census mutated the tracker around a native gate"
+else
+    fail "unproven -- a loop-mode census removed no native gate edge: no case in this run showed the census can write at all, so an unchanged tracker proves nothing"
+fi
 
 echo "  case: adoption gate holds the first run back"
 c3=$(fresh_store)
@@ -475,9 +553,13 @@ expect_category "$out" "$c3_gate" human-gate  "the labeled gate is recognized"
 expect_category "$out" "$c3_dep"  dep-blocked "its dependent stays blocked while the convention is unadopted"
 
 bd -C "$c3" export > "$work/c3.after" 2>/dev/null
-cmp -s "$work/c3.before" "$work/c3.after" \
-    && pass "no hard-blocker label anywhere means no edge is removed" \
-    || fail "the first run removed a gate edge with no hard-blocker label in the tracker"
+if [ "$write_proven" -eq 1 ]; then
+    cmp -s "$work/c3.before" "$work/c3.after" \
+        && pass "no hard-blocker label anywhere means no edge is removed" \
+        || fail "the first run removed a gate edge with no hard-blocker label in the tracker"
+else
+    fail "unproven -- no hard-blocker label anywhere means no edge is removed: no case in this run showed the census can write at all, so an unchanged tracker proves nothing"
+fi
 
 echo "  case: a diagnostic run writes nothing"
 c4=$(fresh_store)
@@ -493,50 +575,13 @@ expect_category "$out" "$c4_gate"  human-gate "the undeclared gate is recognized
 expect_category "$out" "$c4_other" human-gate "the declared gate is recognized too"
 
 bd -C "$c4" export > "$work/c4.after" 2>/dev/null
-cmp -s "$work/c4.before" "$work/c4.after" \
-    && pass "a diagnostic run left the tracker's issue records unchanged" \
-    || fail "a diagnostic run mutated the tracker"
-
-echo "  case: an adopted repository repairs an undeclared gate edge"
-# The only case that lets a repair actually fire. c2 and c3 cover the two
-# refusals (native gate, unadopted repository) and c4 runs read-only, so
-# without this one the loop's single most destructive unattended action -- the
-# one that rewrites a field and deletes a dependency edge -- ships untested.
-c5=$(fresh_store)
-c5_adopted=$(bd -C "$c5" create "[HUMAN] declared blocker elsewhere" -l human-gate,hard-blocker --silent)
-c5_gate=$(bd -C "$c5" create "[HUMAN] provision the staging account" -l human-gate --silent)
-c5_dep=$(bd -C "$c5" create "wire the staging deploy" --silent)
-bd -C "$c5" dep "$c5_gate" --blocks "$c5_dep" >/dev/null
-bd -C "$c5" update "$c5_gate" --acceptance "AUTHOR ORIGINAL ACCEPTANCE" >/dev/null
-
-out=$(run_census "$c5" loop)
-census_usable "$out" || out=""
-expect_category "$out" "$c5_gate"    human-gate "the undeclared gate is still classified a human gate"
-expect_category "$out" "$c5_adopted" human-gate "the declared gate elsewhere is what adopts the convention"
-
-case " $(deps_of "$c5" "$c5_dep") " in
-    *" $c5_gate "*) fail "the undeclared gate edge survived a repair in an adopted repository" ;;
-    *) pass "an adopted repository removes the undeclared gate edge" ;;
-esac
-
-c5_acc=$(acc_of "$c5" "$c5_gate")
-case "$c5_acc" in
-    *"AUTHOR ORIGINAL ACCEPTANCE"*)
-        pass "the gate's original acceptance text survived the release-condition write" ;;
-    *) fail "the repair destroyed the gate's acceptance text: got '$c5_acc'" ;;
-esac
-[ "$c5_acc" != "AUTHOR ORIGINAL ACCEPTANCE" ] \
-    && pass "a release condition was written alongside the author's text" \
-    || fail "the edge was repaired but no release condition was recorded on the gate"
-
-[ -n "$(meta_of "$c5" "$c5_dep" backlog_loop_quarantine)" ] \
-    && pass "the freed issue is quarantined, so no run can build it yet" \
-    || fail "the freed issue carries no quarantine; the loop can ship the work the gate held"
-
-case " $(meta_of "$c5" "$c5_gate" backlog_loop_edge_removed) " in
-    *" $c5_dep "*) pass "the gate indexes the removed edge, so a re-run skips it" ;;
-    *) fail "the gate has no removal index for the freed issue; a re-run would repair it twice" ;;
-esac
+if [ "$write_proven" -eq 1 ]; then
+    cmp -s "$work/c4.before" "$work/c4.after" \
+        && pass "a diagnostic run left the tracker's issue records unchanged" \
+        || fail "a diagnostic run mutated the tracker"
+else
+    fail "unproven -- a diagnostic run left the tracker's issue records unchanged: no case in this run showed the census can write at all, so an unchanged tracker proves nothing"
+fi
 
 printf '\n%d check(s), %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ] || exit 1
