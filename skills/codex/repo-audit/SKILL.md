@@ -289,7 +289,6 @@ The conformance dimensions audit against the slots preflight filled, not against
 CACHEABILITY DECIDES ONLY WHETHER A LEDGER ROW MAY AUTHORIZE A SKIP. A non-cacheable dimension is scheduled `full` on every run, including a run where nothing changed and including the run after that one. `dependency and configuration hygiene` is cacheable only while its recorded verdict is younger than `EXTERNAL_VERDICT_AGE`, because its truth rests on facts outside the repository -- an advisory published against an unchanged dependency is a defect that arrived without a commit. Every other cacheable dimension expires at `INREPO_VERDICT_AGE`.
 
 RESIDUE. For a cacheable dimension the audited residue is the files changed since the SHA the ledger recorded, plus their reverse-dependency closure. Where the repository exposes no import graph this procedure can read, the affected dimensions are declared NON-CACHEABLE for that run and audited in full; an empty closure is not computed and never stands in for one. `## THE COVERAGE LEDGER` owns the rows, their digest, and when a change to this roster invalidates them.
-
 THE CLASSIFIER ROSTER sits here, beside the dimension roster, and is digested and invalidated the same way. It is the closed set of things `## VERIFICATION` may conclude a quoted region is, and no other classifier name is admissible anywhere in this procedure.
 
 | id | matches |
@@ -304,6 +303,60 @@ THE CLASSIFIER ROSTER sits here, beside the dimension roster, and is digested an
 | `rc-8` | a government or national identifier |
 
 THE IDS ARE DELIBERATELY CLASS-NEUTRAL. A classifier id travels into a `[HUMAN]` rotation gate body, and on a public target that body is committed and published. An id reading `aws-access-key` in a published gate discloses in the gate exactly what the redaction withheld from the finding.
+
+
+## CRITERION ROSTER
+
+The dimension is what a subagent is dispatched against; the criterion is what coverage is measured against and what the report accounts for. This list is the criterion roster: A CRITERION NAMED HERE IS AUDITED OR EXPLICITLY SKIPPED ON EVERY RUN, AND A CRITERION NOT NAMED HERE IS NOT AUDITED AT ALL. That is the rule `## DIMENSION ROSTER` states one level up, restated one level down, and it is why the roster is where breadth is added rather than in a subagent's judgement about what its dimension's name implies.
+
+THE TIER VOCABULARY IS CLOSED. Exactly three values, and no other tier name is admissible anywhere in this procedure:
+
+| tier | what its evidence supports | what it may reach |
+|---|---|---|
+| `in-file` | the defect is visible inside one file | files, on a one-clause recipe |
+| `cross-file` | the defect IS a disagreement between two files | files, on a two-clause recipe |
+| `advisory` | no machine-reproducible recipe is possible | the report only, never the tracker |
+
+THE `id` IS WHAT TRAVELS, not the prose name. The ledger row, the `criterion ` emit line and every investigation receipt carry the id, because all three are length-bounded surfaces and a prose name in them is a line that grows without a rule. The name in this table is what a reader resolves the id against.
+
+THE `guard` COLUMN IS A PRECONDITION ON CANDIDATES, NOT A CRITERION OF ITS OWN. A guard only suppresses findings, so it has no population, no coverage ratio, and no verdict -- giving it a row of its own would put a denominator on something that cannot have one. `## VERIFICATION` applies the guard to that criterion's candidates before anything is filed, the shape the credential classifier already uses.
+
+| id | dimension | criterion | tier | guard | why this tier |
+|---|---|---|---|---|---|
+| `cc-existing` | correctness and control flow | boundary, off-by-one, null dereference, empty-collection or unchecked-optional access, inverted or non-exhaustive branch | in-file | none | the whole comparison sits in one expression |
+| `cc-error-path` | correctness and control flow | fallible call with no error path | in-file | a call whose failure is handled by an enclosing construct | the call and its missing handler are in one function body |
+| `cc-stub` | correctness and control flow | stub or partial implementation left on a live path | in-file | a stub behind an unreached feature flag | the placeholder and its caller sit together |
+| `so-existing` | state, ordering, and idempotency | missing await, async call in a sync path, shared state mutated without a guard | in-file | none | the ordering is visible in one control flow |
+| `so-idempotency` | state, ordering, and idempotency | retry path with no idempotency key | in-file | a retry whose operation is naturally idempotent | the retry and its payload are written together |
+| `so-two-layers` | state, ordering, and idempotency | the same business rule enforced differently in two layers | cross-file | a deliberate defence in depth, where both enforcements agree | neither file is wrong alone; the disagreement is the defect |
+| `so-migration` | state, ordering, and idempotency | migration disagrees with the ORM or model definition | cross-file | a migration superseded by a later one in the same series | the schema and the model must be read together |
+| `ib-existing` | input boundaries and untrusted data | query or command built by string concatenation, untrusted value reaching a rendering or eval sink | in-file | a constant-only concatenation with no untrusted input | source and sink sit in one expression |
+| `ib-leak` | input boundaries and untrusted data | credential or personal data in a log or error response | in-file | a redacted or hashed value | the value and the sink are in one statement |
+| `ib-fail-open` | input boundaries and untrusted data | fail-open or permissive default in configuration | in-file | a permissive default overridden at every call site | the default and its effect are declared together |
+| `ib-authz` | input boundaries and untrusted data | entry point with no authorization check | cross-file | an entry point whose framework applies a global guard | the route and its absent guard live in different files |
+| `rl-existing` | resource lifecycle and unbounded growth | resource acquired without release on the error path, cache or queue or buffer with no bound | in-file | a scope-bound construct that releases on unwind | acquisition and release belong to one scope |
+| `rl-timeout` | resource lifecycle and unbounded growth | outbound call with no timeout | in-file | a client configured with a default timeout at construction | the call site is where the timeout is absent |
+| `rl-loop-query` | resource lifecycle and unbounded growth | query issued inside a loop over rows | in-file | a loop over a bounded constant set | the loop and the query are one construct |
+| `id-signature` | interface and contract drift | caller does not match the callee's current signature | cross-file | a caller reaching the callee through a compatible adapter | the caller and the callee are the two files |
+| `id-unregistered` | interface and contract drift | handler, service, or route defined and never registered | cross-file | registration performed by a discovery convention rather than a call | the definition and the absent registration are in different files |
+| `id-doc-drift` | interface and contract drift | route, serializer, and published document disagree | cross-file | a document generated from the route at build time | the route and the document are the two files |
+| `id-dead-config` | interface and contract drift | configuration key declared and read nowhere | cross-file | a key read through a dynamic lookup | the declaration and the absent read are in different files |
+| `ti-vacuous` | test integrity and vacuous passes | assertion that cannot fail | in-file | an assertion deliberately asserting a constant as documentation | the assertion is self-contained |
+| `ti-mock-only` | test integrity and vacuous passes | test asserting only against its own mock | in-file | a contract test whose subject is the mock boundary | the test and its mock sit together |
+| `ti-skipped` | test integrity and vacuous passes | test skipped or disabled with no stated reason | in-file | a skip carrying a linked reason | the skip marker is one line |
+| `ti-untested` | test integrity and vacuous passes | source file with no corresponding test | cross-file | a file the repository's own rules exempt | the source and the absent test are the two paths |
+| `dd-unreached` | dead and duplicated code | exported symbol with no caller, unreachable branch, or code after an unconditional exit | in-file | symbol reached only dynamically -- through a registry, a decorator, or a reflective lookup | the unreachability is visible in one file's control flow |
+| `dd-duplicated` | dead and duplicated code | duplicated logic across files | in-file | a duplication the repository's rules accept, such as generated code | each copy is a defect in its own file |
+| `dd-rename-orphan` | dead and duplicated code | caller left behind by a rename or move | cross-file | a caller reaching the new name through a compatibility alias | the caller and the moved definition are the two files |
+| `dd-dead-reexport` | dead and duplicated code | re-export pointing at a deleted module | cross-file | a re-export resolved by a path alias | the re-export and the absent target are the two paths |
+| `rr-contradicts` | the repository's own stated rules | code contradicts a rule the repository states | in-file | a rule the repository itself scopes to exclude that path | the rule is instantiated against the file preflight resolved it for |
+| `rr-comment-drift` | the repository's own stated rules | comment or docstring contradicting the code beneath it | in-file | a comment describing an intentionally different future state and saying so | the comment and the code are adjacent |
+| `rr-doc-claim` | the repository's own stated rules | documentation claiming behaviour the code does not have | cross-file | documentation explicitly marked aspirational | the document and the code are the two files |
+| `dc-advisory` | dependency and configuration hygiene | advisory published against a pinned dependency | advisory | none | the verdict rests on facts outside the repository, so no recipe over repository bytes reproduces it |
+| `dc-lockfile` | dependency and configuration hygiene | lockfile and manifest disagree | cross-file | a lockfile regenerated by a tool that reorders without changing resolution | the two files are the disagreement |
+| `dc-dead-script` | dependency and configuration hygiene | pipeline configuration referencing a script that does not exist | cross-file | a script provided by the runner image rather than the repository | the configuration and the absent script are the two paths |
+
+WHAT IS NOT HERE IS NOT AN OVERSIGHT. The set is bounded by what one subagent can carry: a dimension's criteria share the `PATTERNS_PER_DIM` patterns and the one call budget that dimension already had, so at most FOUR criteria per dimension ship, of which at most ONE declares the `advisory` tier. Raising either cap raises the chance an agent is abandoned at `WAVE_DEADLINE`, and an abandoned agent costs its whole dimension rather than one criterion.
 
 ## FAN-OUT
 
@@ -623,12 +676,13 @@ EVERY INVALIDATION RULE, IN ONE PLACE. A ledger row does not authorize a skip wh
 | this skill itself changed | all dimensions |
 | that dimension's most recent verdict was `uncovered` | that dimension |
 | the roster digest recorded beside the verdict differs from the current one | that dimension |
+| that criterion left the criterion roster, or its tier, guard, or meaning changed | that criterion |
 | the verdict is older than `EXTERNAL_VERDICT_AGE`, for a dimension grounded in facts outside the repository | that dimension |
 | the verdict is older than `INREPO_VERDICT_AGE`, for every other dimension | that dimension |
 
 EVERY VERDICT EXPIRES, and the two ages are different for a reason. A dimension resting on facts outside the repository can go stale without a commit. Every other dimension expires too, more slowly, because the PROCESS that produced a clean verdict -- the model, the host, the fan-out width, the threshold -- changes even when the code does not.
 
-THE ROSTER DIGEST is recorded beside each verdict, over the dimension roster's and the classifier roster's definitions together. Changing what a dimension means invalidates what it concluded; that is what makes the roster safe to change.
+THE ROSTER DIGEST is recorded beside each verdict, over the dimension roster's, the CRITERION ROSTER's and the classifier roster's definitions together. Changing what a dimension or a criterion means invalidates what it concluded; that is what makes either roster safe to change. A criterion's `guard` is part of its definition, so loosening a guard invalidates the verdicts taken under the tighter one.
 
 A FORCED FULL AUDIT, ignoring the ledger entirely, is ALWAYS AVAILABLE. It is MANDATORY on the first run against a repository, and on any run whose ledger is older than the maximum age.
 

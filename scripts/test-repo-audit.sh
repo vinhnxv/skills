@@ -272,6 +272,166 @@ else
     fail "the line-ending variant carries no CR; the LF normalization is untested"
 fi
 
+# ---------------------------------------------------------------------------
+# THE PROCEDURE READERS AND THE REPLAY HARNESS.
+#
+# These live in PART 1 and not in PART 2 because CI runs `--fixtures-only` and
+# nothing else. A criterion-level rule asserted below the exit is asserted on a
+# path no push ever takes, which is a rule nothing checks. Everything here is a
+# read of the procedure plus `awk` over canned text: no model, no host CLI, no
+# tracker, no network. PART 2 keeps only what genuinely needs a live model.
+#
+# PART 2 consumes the values parsed here rather than re-parsing them, so the
+# deadline math and the emit assertions cannot drift apart.
+# ---------------------------------------------------------------------------
+const_val() { # NAME -> the first integer on its line in the constants block
+    sed -n "s/^$1 *= *\([0-9][0-9]*\).*/\1/p" "$skill" | head -n 1
+}
+
+wave_min=$(const_val WAVE_DEADLINE)
+pop_min=$(const_val POPULATION_DEADLINE)
+max_rounds=$(const_val MAX_ROUNDS)
+fanout_floor=$(const_val FANOUT_FLOOR)
+
+for pair in "WAVE_DEADLINE:$wave_min" "POPULATION_DEADLINE:$pop_min" \
+            "MAX_ROUNDS:$max_rounds" "FANOUT_FLOOR:$fanout_floor"; do
+    [ -n "${pair#*:}" ] || {
+        echo "FAIL: ${pair%%:*} did not parse out of the constants block."
+        exit 1
+    }
+done
+
+# The two rosters, each read from its own table. The dimension table is matched
+# on its exact header line and terminated by the blank line after it, so a
+# second table below it -- the criterion roster -- cannot inflate this count.
+roster_size=$(sed -n '/^| class | dimension | cacheable | why |$/,/^$/p' "$skill" \
+    | grep -c '^| \(latent defect\|health\|conformance\) |' || true)
+[ "${roster_size:-0}" -ge 1 ] || { echo "FAIL: the dimension roster did not parse; the emit counts would be empty."; exit 1; }
+
+criterion_rows=$(sed -n '/^| id | dimension | criterion | tier | guard | why this tier |$/,/^$/p' "$skill" \
+    | grep '^| `[a-z][a-z]-[a-z0-9-]*` |' || true)
+criterion_size=$(printf '%s' "$criterion_rows" | grep -c . || true)
+
+pass "the dimension roster parses to $roster_size dimension(s)"
+
+[ "${criterion_size:-0}" -ge 1 ] \
+    && pass "the criterion roster parses to $criterion_size criteria" \
+    || fail "the criterion roster did not parse; every criterion-level count below would be empty"
+
+# ---------------------------------------------------------------------------
+# THE CRITERION ROSTER'S OWN RULES. Every one is a static read of the
+# procedure, so every one runs on the push path.
+# ---------------------------------------------------------------------------
+# A single-character FS is taken literally by awk; a bracketed-pipe regex is
+# not, and ` *\| *` reads as an alternation of two space runs, which splits
+# every row on whitespace instead. Trim in the action rather than the FS.
+crit_field() { # column number (1-based, ignoring the leading empty field)
+    printf '%s\n' "$criterion_rows" \
+        | awk -F'|' -v c="$1" '{ f = $(c + 1); gsub(/^[ \t]+|[ \t]+$/, "", f); print f }' \
+        | tr -d '`'
+}
+
+bad_tier=$(crit_field 4 | grep -vc '^\(in-file\|cross-file\|advisory\)$' || true)
+[ "$bad_tier" -eq 0 ] \
+    && pass "every criterion declares a tier from the closed set" \
+    || fail "$bad_tier criterion row(s) declare a tier outside in-file/cross-file/advisory"
+
+sed -n '/^| class | dimension | cacheable | why |$/,/^$/p' "$skill" \
+    | awk -F'|' '/^\| (latent defect|health|conformance) \|/ { d = $3; gsub(/^[ \t]+|[ \t]+$/, "", d); print d }' \
+    > "$work/dim-names"
+
+crit_field 2 | sort -u > "$work/crit-dims"
+sort -u "$work/dim-names" > "$work/dim-sorted"
+comm -23 "$work/crit-dims" "$work/dim-sorted" > "$work/orphan-dims"
+orphans=$(grep -c . "$work/orphan-dims" || true)
+[ "$orphans" -eq 0 ] \
+    && pass "every criterion names a dimension the roster carries" \
+    || fail "$orphans criterion row(s) name a dimension outside the roster: $(tr '\n' ' ' < "$work/orphan-dims")"
+
+over_cap=$(crit_field 2 | sort | uniq -c | awk '$1 > 4' | grep -c . || true)
+[ "$over_cap" -eq 0 ] \
+    && pass "no dimension carries more than four criteria" \
+    || fail "$over_cap dimension(s) carry more than the four-criteria cap"
+
+crit_field 2 > "$work/crit-dim-col"
+crit_field 4 > "$work/crit-tier-col"
+over_advisory=$(paste -d'\t' "$work/crit-dim-col" "$work/crit-tier-col" \
+    | awk -F'\t' '$2 == "advisory" { print $1 }' | sort | uniq -c | awk '$1 > 1' | grep -c . || true)
+[ "$over_advisory" -eq 0 ] \
+    && pass "no dimension carries more than one advisory-tier criterion" \
+    || fail "$over_advisory dimension(s) carry more than one advisory-tier criterion"
+
+blank_guard=$(crit_field 5 | grep -cx '' || true)
+[ "$blank_guard" -eq 0 ] \
+    && pass "every criterion states a guard or the literal none" \
+    || fail "$blank_guard criterion row(s) leave the guard column empty"
+
+dup_ids=$(crit_field 1 | sort | uniq -d | grep -c . || true)
+[ "$dup_ids" -eq 0 ] \
+    && pass "every criterion id is unique" \
+    || fail "$dup_ids criterion id(s) appear more than once"
+
+# ---------------------------------------------------------------------------
+# THE REPLAY HARNESS. Canned orchestrator-side text, asserted against the same
+# rules a live run is asserted against. `field_count_violations` is pure awk
+# over an emitted record, so it belongs here rather than beside the host runs.
+# ---------------------------------------------------------------------------
+field_count_violations() {
+    awk -F' \\| ' '
+        /^audit-run /{ if (NF != 9) print "audit-run has " NF " fields, wanted 9" }
+        /^dimension /{ if (NF != 6) print "dimension has " NF " fields, wanted 6" }
+        /^criterion /{ if (NF != 7) print "criterion has " NF " fields, wanted 7" }
+        /^finding /  { if (NF != 6) print "finding has " NF " fields, wanted 6" }
+        { for (i = 1; i <= NF; i++) if ($i ~ /^[[:space:]]*$/) print "blank field " i " in: " $0 }
+    '
+}
+
+prefix_count() { # prefix, record -> how many lines carry that prefix
+    printf '%s\n' "$2" | grep -c "^$1 " || true
+}
+
+# A well-formed record for one dimension carrying two criteria. Every field is
+# populated, because NO FIELD IS EVER BLANK is the rule being replayed.
+replay_good='audit-run tok-1 | abc1234 | write | 3 | none | 1/0 | 2 | 0 | none
+dimension correctness and control flow | clean | 2/2/9 | 0.22 | 0.22 | full
+criterion cc-missing-error-path | correctness and control flow | in-file | clean | 0.22 | 0.22 | 9
+criterion cc-unreachable-branch | correctness and control flow | in-file | clean | 0.20 | 0.20 | 10
+finding a1b2c3 | correctness and control flow | P2 | filed | bd-7 | src/a.py:10-12'
+
+violations=$(printf '%s\n' "$replay_good" | field_count_violations)
+[ -z "$violations" ] \
+    && pass "replay: a well-formed record has no field-count or blank-field violation" \
+    || fail "replay: a well-formed record was rejected: $violations"
+
+[ "$(prefix_count criterion "$replay_good")" -eq 2 ] \
+    && pass "replay: the criterion lines are counted by their own prefix" \
+    || fail "replay: the criterion prefix count is wrong"
+
+# A criterion line one field short is caught, the same way a short dimension
+# line already is. Without this the new prefix would be unchecked text.
+replay_short=$(printf '%s\n' "$replay_good" | sed 's/^criterion cc-unreachable-branch.*/criterion cc-unreachable-branch | correctness and control flow | in-file | clean | 0.20 | 10/')
+printf '%s\n' "$replay_short" | field_count_violations | grep -q 'criterion has 6 fields' \
+    && pass "replay: a criterion line one field short is caught" \
+    || fail "replay: a short criterion line passed the field-count check"
+
+replay_blank=$(printf '%s\n' "$replay_good" | sed 's/| in-file | clean | 0.22/|  | clean | 0.22/')
+printf '%s\n' "$replay_blank" | field_count_violations | grep -q '^blank field' \
+    && pass "replay: a blank field in a criterion line is caught" \
+    || fail "replay: a blank criterion field passed the no-blank-field check"
+
+# COUNT THE EMIT, replayed. A record one criterion line short of the roster is
+# the failure U5 exists to make loud, and it is asserted here rather than in a
+# live run because a live run is not on the push path.
+emitted_criteria=$(prefix_count criterion "$replay_good")
+short_record=$(printf '%s\n' "$replay_good" | grep -v '^criterion cc-unreachable-branch')
+[ "$(prefix_count criterion "$short_record")" -lt "$emitted_criteria" ] \
+    && pass "replay: a record missing a criterion line counts one fewer than the record that carries it" \
+    || fail "replay: dropping a criterion line did not change the criterion count"
+
+[ "$(prefix_count dimension "$replay_good")" -eq 1 ] \
+    && pass "replay: the dimension count is unaffected by the criterion lines beside it" \
+    || fail "replay: criterion lines disturbed the dimension count"
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
@@ -326,26 +486,9 @@ fi
 # clock. The full-roster bound is computed too, and printed, so the cost this
 # suite is declining to spend is visible rather than assumed.
 # ---------------------------------------------------------------------------
-const_val() { # NAME -> the first integer on its line in the constants block
-    sed -n "s/^$1 *= *\([0-9][0-9]*\).*/\1/p" "$skill" | head -n 1
-}
-
-wave_min=$(const_val WAVE_DEADLINE)
-pop_min=$(const_val POPULATION_DEADLINE)
-max_rounds=$(const_val MAX_ROUNDS)
-fanout_floor=$(const_val FANOUT_FLOOR)
-roster_size=$(sed -n '/^| class | dimension | cacheable | why |$/,/^$/p' "$skill" \
-    | grep -c '^| \(latent defect\|health\|conformance\) |' || true)
-
-for pair in "WAVE_DEADLINE:$wave_min" "POPULATION_DEADLINE:$pop_min" \
-            "MAX_ROUNDS:$max_rounds" "FANOUT_FLOOR:$fanout_floor"; do
-    [ -n "${pair#*:}" ] || {
-        echo "FAIL: ${pair%%:*} did not parse out of the constants block; every deadline below would be empty."
-        exit 1
-    }
-done
-[ "${roster_size:-0}" -ge 1 ] || { echo "FAIL: the dimension roster did not parse; the emit counts would be empty."; exit 1; }
-
+# The constants and both rosters were parsed and validated in PART 1, which is
+# the part CI runs. Re-parsing them here would let the deadline math and the
+# emit assertions drift apart.
 case_deadline=$((wave_min * 60))
 waves=$(((roster_size + fanout_floor - 1) / fanout_floor))
 full_deadline=$((max_rounds * waves * (wave_min + pop_min) * 60))
@@ -486,15 +629,6 @@ normalize_findings() {
             id = $5; if (id != "none") { id = "ID" }
             printf "finding #%d | %s | %s | %s | %s | %s\n", seen[fp], $2, $3, $4, id, $6
         }
-    '
-}
-
-field_count_violations() {
-    awk -F' \\| ' '
-        /^audit-run /{ if (NF != 9) print "audit-run has " NF " fields, wanted 9" }
-        /^dimension /{ if (NF != 6) print "dimension has " NF " fields, wanted 6" }
-        /^finding /  { if (NF != 6) print "finding has " NF " fields, wanted 6" }
-        { for (i = 1; i <= NF; i++) if ($i ~ /^[[:space:]]*$/) print "blank field " i " in: " $0 }
     '
 }
 
