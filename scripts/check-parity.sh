@@ -32,9 +32,28 @@ REQUIRED_KEYS="name description"
 # Code's explicit-invocation marker, which Codex's validator would reject.
 CLAUDE_ONLY_KEY="disable-model-invocation"
 
-# Paths a host tree is allowed to carry alone, relative to the skill directory.
-# Everything else must exist in both copies and be byte-identical.
-CODEX_ONLY_FILES="./agents/openai.yaml"
+# Every path each host's copy of a skill is allowed to carry, relative to the
+# skill directory. Checked per host against these sets, not only copy against
+# copy: a third file added identically to BOTH copies passes a copy-to-copy
+# comparison, so that check alone leaves the shape unbounded in exactly the
+# direction a careless edit takes it.
+CLAUDE_ALLOWED_FILES="./SKILL.md"
+CODEX_ALLOWED_FILES="./SKILL.md ./agents/openai.yaml"
+
+# Paths a host tree is allowed to carry alone, one per line: everything Codex
+# may carry that Claude may not. Everything else must exist in both copies and
+# be byte-identical. Derived from the two sets above rather than written out a
+# third time, so the three cannot drift apart. A function rather than a plain
+# assignment because bash 3.2 -- what `sh` is on macOS -- mis-parses a `case`
+# inside `$( )`, taking the first pattern's `)` for the substitution's close.
+codex_only_files() {
+    for f in $CODEX_ALLOWED_FILES; do
+        case " $CLAUDE_ALLOWED_FILES " in
+            *" $f "*) ;;
+            *) echo "$f" ;;
+        esac
+    done
+}
 
 root="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
 claude_root="$root/skills/claude"
@@ -105,6 +124,19 @@ list_files() {
     ( CDPATH= cd -- "$1" && find . -type f | LC_ALL=C sort )
 }
 
+# Files under directory $1 that the space-separated allowed set $2 does not
+# name. Prints nothing when the directory is clean.
+disallowed_files() {
+    allowed="$2"
+    list_files "$1" | while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        case " $allowed " in
+            *" $rel "*) ;;
+            *) echo "$rel" ;;
+        esac
+    done
+}
+
 # Union of both host trees, so a skill added to only one host is reported
 # rather than silently skipped.
 skills=$(
@@ -137,7 +169,7 @@ while IFS= read -r skill; do
 
     # 1. Both copies carry the same files, apart from the host-only ones.
     list_files "$claude_dir" > "$scratch/claude-files"
-    list_files "$codex_dir" | grep -v -x -F "$CODEX_ONLY_FILES" > "$scratch/codex-files" || true
+    list_files "$codex_dir" | grep -v -x -F "$(codex_only_files)" > "$scratch/codex-files" || true
     if ! diff -q "$scratch/claude-files" "$scratch/codex-files" >/dev/null; then
         only_claude=$(comm -23 "$scratch/claude-files" "$scratch/codex-files" | tr '\n' ' ')
         only_codex=$(comm -13 "$scratch/claude-files" "$scratch/codex-files" | tr '\n' ' ')
@@ -152,6 +184,20 @@ while IFS= read -r skill; do
         diff -q "$claude_dir/$rel" "$codex_dir/$rel" >/dev/null ||
             fail "$skill: $rel differs between the two host copies"
     done < "$scratch/claude-files"
+
+    # 2a. Each copy carries nothing its host does not allow. Checks 1 and 2
+    #     compare the two copies against each other only, so a third file added
+    #     identically to both -- a stray reference, script, or editor leftover
+    #     shipped to both hosts, which is how such a file actually arrives --
+    #     is invisible to both. Ordered after check 2 rather than before it so
+    #     that a file present in both copies but differing between them still
+    #     reports the difference, which is the more specific fault of the two.
+    extra=$(disallowed_files "$claude_dir" "$CLAUDE_ALLOWED_FILES" | tr '\n' ' ')
+    [ -z "$extra" ] ||
+        fail "$skill: skills/claude/$skill carries file(s) outside the allowed set: $extra"
+    extra=$(disallowed_files "$codex_dir" "$CODEX_ALLOWED_FILES" | tr '\n' ' ')
+    [ -z "$extra" ] ||
+        fail "$skill: skills/codex/$skill carries file(s) outside the allowed set: $extra"
 
     # 3. Frontmatter must actually be frontmatter in both copies.
     frontmatter_is_well_formed "$claude_md" ||
