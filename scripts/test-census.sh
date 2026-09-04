@@ -34,6 +34,17 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 contract_only=0
 [ "${1:-}" = "--contract-only" ] && contract_only=1
 
+# Every tracker command names its store with `-C`, so bd runs with this
+# suite's working directory -- the repository -- rather than the store's. bd
+# reads `beads.role` from git config and warns once per invocation when it is
+# unset, which would bury the check output in a CI log. Supplying it through
+# the environment answers the warning without touching the user's git config
+# and without redirecting stderr, which would hide real errors too.
+GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}
+GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-beads.role}
+GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-contributor}
+export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/test-census.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
@@ -46,6 +57,11 @@ fail() { checks=$((checks + 1)); failures=$((failures + 1)); printf '  FAIL: %s\
 # One empty Beads store per case. Each gets its own directory so a case cannot
 # see another's issues; ids are prefix-scoped, so a shared store would also
 # make the expected tables order-dependent.
+#
+# `bd init` is the one command that rejects the global `-C` flag, so it -- and
+# only it -- runs in a subshell. Every other tracker command below names its
+# store with `-C`, which keeps this suite's working directory fixed and stops a
+# case from reading whichever store the previous one happened to leave as cwd.
 fresh_store() {
     dir=$(mktemp -d "$work/store.XXXXXX")
     ( cd "$dir" && bd init --prefix cx >/dev/null 2>&1 )
@@ -56,7 +72,44 @@ fresh_store() {
 # Keeping the query in exactly one place here is deliberate: if the procedure's
 # command and the suite's command drift apart, the suite proves nothing.
 enumerate() {
-    ( cd "$1" && bd list --all --limit 0 --include-gates --json )
+    bd -C "$1" list --all --limit 0 --include-gates --json
+}
+
+# Every id in a `bd ... --json` payload, sorted and space-separated, ready for
+# the `case " $ids " in *" $id "*)` membership tests below. bd returns a bare
+# list from some subcommands and an object keyed by "issues" from others, so
+# both shapes are accepted rather than pinned to one.
+sorted_ids_json() {
+    python3 -c 'import json,sys
+d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("issues",d)
+print(" ".join(sorted(r["id"] for r in rows)))'
+}
+
+# `bd gate create` has no --silent form, so a new gate's id has to be read out
+# of its prose confirmation. Every caller checks the result for empty: if that
+# wording ever changes -- exactly the drift this suite exists to catch -- sed
+# prints nothing and still exits 0, and an unchecked empty id would leave the
+# native-gate assertions comparing against "" instead of failing.
+gate_id() {
+    sed -n 's/^.*Created gate \([A-Za-z0-9-]*\).*$/\1/p'
+}
+
+# Assert that `missing` is absent from the id list `ids` while `baseline` is
+# still present. The baseline half is what makes the check mean anything: these
+# assertions pass on ABSENCE, so a query that came back empty for any reason
+# unrelated to the flag under test would otherwise report that flag
+# load-bearing while having proved nothing at all.
+assert_hidden_without() {
+    ids=$1; missing=$2; baseline=$3; ok_msg=$4; bad_msg=$5
+    case " $ids " in
+        *" $baseline "*) : ;;
+        *) fail "$bad_msg -- the comparison query returned no baseline row, so it proves nothing"
+           return ;;
+    esac
+    case " $ids " in
+        *" $missing "*) fail "$bad_msg" ;;
+        *) pass "$ok_msg" ;;
+    esac
 }
 
 if ! command -v bd >/dev/null 2>&1; then
@@ -67,74 +120,72 @@ fi
 echo "PART 1 - tracker contract"
 
 store=$(fresh_store)
-cd "$store"
 
-ready_issue=$(bd create "ready work" --silent)
-gate=$(bd create "[HUMAN] provision the deploy account" -l human-gate --silent)
-dependent=$(bd create "ship the deploy step" --silent)
-prefix_only=$(bd create "[HUMAN] rotate the signing key" --silent)
-legacy_block=$(bd create "left blocked by an earlier run" --silent)
-pinned=$(bd create "pinned work" --silent)
-deferred=$(bd create "deferred work" --silent)
-native_target=$(bd create "step behind a native gate" --silent)
+ready_issue=$(bd -C "$store" create "ready work" --silent)
+gate=$(bd -C "$store" create "[HUMAN] provision the deploy account" -l human-gate --silent)
+dependent=$(bd -C "$store" create "ship the deploy step" --silent)
+prefix_only=$(bd -C "$store" create "[HUMAN] rotate the signing key" --silent)
+legacy_block=$(bd -C "$store" create "left blocked by an earlier run" --silent)
+pinned=$(bd -C "$store" create "pinned work" --silent)
+deferred=$(bd -C "$store" create "deferred work" --silent)
+native_target=$(bd -C "$store" create "step behind a native gate" --silent)
 
-bd dep "$gate" --blocks "$dependent" >/dev/null
-bd update "$legacy_block" --status=blocked --set-metadata backlog_loop_run=OLD-RUN \
+bd -C "$store" dep "$gate" --blocks "$dependent" >/dev/null
+bd -C "$store" update "$legacy_block" --status=blocked --set-metadata backlog_loop_run=OLD-RUN \
     --append-notes "merge blocked: trunk moved | none" >/dev/null
-bd update "$pinned" --status=pinned >/dev/null
-bd update "$deferred" --status=deferred --defer "+30d" >/dev/null
-native_gate=$(bd gate create --type=human --blocks "$native_target" 2>/dev/null \
-    | sed -n 's/^.*Created gate \([A-Za-z0-9-]*\).*$/\1/p')
+bd -C "$store" update "$pinned" --status=pinned >/dev/null
+bd -C "$store" update "$deferred" --status=deferred --defer "+30d" >/dev/null
+native_gate=$(bd -C "$store" gate create --type=human --blocks "$native_target" 2>/dev/null | gate_id)
+[ -n "$native_gate" ] \
+    || fail "could not read a gate id out of 'bd gate create'; the native-gate checks below cannot run"
 
 # The enumeration must hide nothing. Every flag in it is load-bearing, so each
 # one is asserted against the query that drops it rather than against a count
 # the suite could satisfy by accident.
-all_ids=$(enumerate "$store" | python3 -c 'import json,sys
-d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("issues",d)
-print(" ".join(sorted(r["id"] for r in rows)))')
+all_ids=$(enumerate "$store" | sorted_ids_json)
 
+omitted=0
 for id in "$ready_issue" "$gate" "$dependent" "$prefix_only" "$legacy_block" \
           "$pinned" "$deferred" "$native_target" "$native_gate"; do
+    # An id the guards above already reported as unreadable is skipped here
+    # rather than reported a second time as an omission of "".
+    [ -n "$id" ] || continue
     case " $all_ids " in
         *" $id "*) : ;;
-        *) fail "enumeration omitted $id" ;;
+        *) fail "enumeration omitted $id"; omitted=1 ;;
     esac
 done
-pass "enumeration surfaces every seeded issue, gates and pinned included"
+if [ "$omitted" -eq 0 ]; then
+    pass "enumeration surfaces every seeded issue, gates and pinned included"
+fi
 
-without_all=$(bd list --limit 0 --include-gates --json | python3 -c 'import json,sys
-d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("issues",d)
-print(" ".join(sorted(r["id"] for r in rows)))')
-case " $without_all " in
-    *" $pinned "*) fail "--all is not needed for a pinned issue; the procedure over-explains" ;;
-    *) pass "--all is load-bearing: a pinned issue is hidden without it" ;;
-esac
+without_all=$(bd -C "$store" list --limit 0 --include-gates --json | sorted_ids_json)
+assert_hidden_without "$without_all" "$pinned" "$ready_issue" \
+    "--all is load-bearing: a pinned issue is hidden without it" \
+    "--all is not needed for a pinned issue; the procedure over-explains"
 
-without_gates=$(bd list --all --limit 0 --json | python3 -c 'import json,sys
-d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("issues",d)
-print(" ".join(sorted(r["id"] for r in rows)))')
-case " $without_gates " in
-    *" $native_gate "*) fail "--include-gates is not needed; the procedure over-explains" ;;
-    *) pass "--include-gates is load-bearing: a native gate is hidden without it" ;;
-esac
+if [ -n "$native_gate" ]; then
+    without_gates=$(bd -C "$store" list --all --limit 0 --json | sorted_ids_json)
+    assert_hidden_without "$without_gates" "$native_gate" "$ready_issue" \
+        "--include-gates is load-bearing: a native gate is hidden without it" \
+        "--include-gates is not needed; the procedure over-explains"
 
-# A native gate is a gate by type and carries no labels, which is exactly why
-# the repair rule must never fire on one: its blocking edge is what it is for,
-# and it has nothing to declare that edge with.
-gate_shape=$(enumerate "$store" | python3 -c "import json,sys
+    # A native gate is a gate by type and carries no labels, which is exactly why
+    # the repair rule must never fire on one: its blocking edge is what it is for,
+    # and it has nothing to declare that edge with.
+    gate_shape=$(enumerate "$store" | python3 -c "import json,sys
 d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get('issues',d)
 r=[x for x in rows if x['id']=='$native_gate'][0]
 print(r.get('issue_type'), len(r.get('labels') or []))")
-[ "$gate_shape" = "gate 0" ] \
-    && pass "a native gate reports issue_type=gate and carries no labels" \
-    || fail "native gate shape changed: got '$gate_shape', expected 'gate 0'"
+    [ "$gate_shape" = "gate 0" ] \
+        && pass "a native gate reports issue_type=gate and carries no labels" \
+        || fail "native gate shape changed: got '$gate_shape', expected 'gate 0'"
+fi
 
 # The motivating defect, asserted directly: a human gate is open with no
 # blocker, so the tracker offers it as ready work. Nothing in bd withholds it;
 # only the CENSUS section does.
-ready_ids=$(bd ready --json --exclude-type=epic | python3 -c 'import json,sys
-d=json.load(sys.stdin); rows=d if isinstance(d,list) else d.get("issues",d)
-print(" ".join(sorted(r["id"] for r in rows)))')
+ready_ids=$(bd -C "$store" ready --json --exclude-type=epic | sorted_ids_json)
 case " $ready_ids " in
     *" $gate "*) pass "bd ready offers a labeled human gate; withholding it is the procedure's job" ;;
     *) fail "bd ready no longer offers an unblocked human gate; the census rule may be obsolete" ;;
@@ -151,7 +202,7 @@ esac
 # The dependency explanation covers dependency-blocked open issues only. The
 # self-block the loop writes has no edge, so it appears in neither bucket --
 # the reason every other category is read from stored status instead.
-explain_ids=$(bd ready --explain --json | python3 -c 'import json,sys
+explain_ids=$(bd -C "$store" ready --explain --json | python3 -c 'import json,sys
 d=json.load(sys.stdin)
 ids=[r["id"] for k in ("ready","blocked") for r in (d.get(k) or [])]
 print(" ".join(sorted(ids)))')
@@ -166,9 +217,9 @@ esac
 
 # Acceptance replaces rather than appends, and unlike description and design it
 # has no file form. Both are why the repair reads back before it removes an edge.
-bd update "$gate" --acceptance "ORIGINAL AUTHOR TEXT" >/dev/null
-bd update "$gate" --acceptance "SECOND WRITE" >/dev/null
-acc=$(bd show "$gate" --json | python3 -c 'import json,sys
+bd -C "$store" update "$gate" --acceptance "ORIGINAL AUTHOR TEXT" >/dev/null
+bd -C "$store" update "$gate" --acceptance "SECOND WRITE" >/dev/null
+acc=$(bd -C "$store" show "$gate" --json | python3 -c 'import json,sys
 d=json.load(sys.stdin)
 r = d[0] if isinstance(d, list) else d
 print(r.get("acceptance_criteria") or "")')
@@ -177,7 +228,7 @@ case "$acc" in
     *SECOND*) pass "--acceptance replaces the field, so the repair must round-trip it" ;;
     *) fail "could not read acceptance_criteria back: got '$acc'" ;;
 esac
-if bd update --help 2>&1 | grep -q -- '--acceptance-file'; then
+if bd -C "$store" update --help 2>&1 | grep -q -- '--acceptance-file'; then
     fail "--acceptance-file now exists; the one-shell-argument warning is obsolete"
 else
     pass "--acceptance has no file form, unlike --body-file and --design-file"
@@ -185,33 +236,32 @@ fi
 
 # Read-only mode is a tracker guarantee, not a promise in prose. The diagnostic
 # entry point depends on it.
-if bd --readonly update "$ready_issue" --set-metadata probe=1 >/dev/null 2>&1; then
+if bd --readonly -C "$store" update "$ready_issue" --set-metadata probe=1 >/dev/null 2>&1; then
     fail "--readonly permitted a write; the diagnostic entry point has no enforcement"
 else
     pass "--readonly refuses a write"
 fi
-bd --readonly list --limit 5 >/dev/null 2>&1 && bd --readonly show "$ready_issue" >/dev/null 2>&1 \
+bd --readonly -C "$store" list --limit 5 >/dev/null 2>&1 \
+    && bd --readonly -C "$store" show "$ready_issue" >/dev/null 2>&1 \
     && pass "--readonly still permits the reads the census needs" \
     || fail "--readonly blocked a read the census needs"
 
 # bd export is the non-mutation oracle. A filesystem diff is not: a plain read
 # rewrites tracker bookkeeping without changing any issue field, so a suite
 # built on file comparison fails on its first case for no real reason.
-bd export > "$work/export.before" 2>/dev/null
-bd show "$ready_issue" >/dev/null 2>&1
-bd list --all --limit 0 >/dev/null 2>&1
-bd export > "$work/export.after" 2>/dev/null
+bd -C "$store" export > "$work/export.before" 2>/dev/null
+bd -C "$store" show "$ready_issue" >/dev/null 2>&1
+bd -C "$store" list --all --limit 0 >/dev/null 2>&1
+bd -C "$store" export > "$work/export.after" 2>/dev/null
 cmp -s "$work/export.before" "$work/export.after" \
     && pass "bd export is unchanged by reads, so it is a valid non-mutation oracle" \
     || fail "bd export changed across reads; the census has no non-mutation oracle"
 
-if find .beads -newer "$work/export.before" -type f 2>/dev/null | grep -q .; then
+if find "$store/.beads" -newer "$work/export.before" -type f 2>/dev/null | grep -q .; then
     pass "reads do touch tracker files, so a filesystem diff is not an oracle"
 else
     fail "reads no longer touch tracker files; a filesystem diff may now be valid"
 fi
-
-cd "$repo_root"
 
 if [ "$contract_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [contract only]\n' "$checks" "$failures"
@@ -272,15 +322,15 @@ expect_category() {
 
 echo "  case: mixed backlog, one category per issue"
 c1=$(fresh_store)
-c1_ready=$( cd "$c1" && bd create "ready work" --silent )
-c1_gate=$( cd "$c1" && bd create "[HUMAN] provision the deploy account" -l human-gate --silent )
-c1_dep=$( cd "$c1" && bd create "ship the deploy step" --silent )
-c1_prefix=$( cd "$c1" && bd create "[HUMAN] rotate the signing key" --silent )
-c1_block=$( cd "$c1" && bd create "left blocked by an earlier run" --silent )
-( cd "$c1" && bd dep "$c1_gate" --blocks "$c1_dep" >/dev/null )
-( cd "$c1" && bd update "$c1_block" --status=blocked --set-metadata backlog_loop_run=OLD-RUN \
+c1_ready=$(bd -C "$c1" create "ready work" --silent)
+c1_gate=$(bd -C "$c1" create "[HUMAN] provision the deploy account" -l human-gate --silent)
+c1_dep=$(bd -C "$c1" create "ship the deploy step" --silent)
+c1_prefix=$(bd -C "$c1" create "[HUMAN] rotate the signing key" --silent)
+c1_block=$(bd -C "$c1" create "left blocked by an earlier run" --silent)
+bd -C "$c1" dep "$c1_gate" --blocks "$c1_dep" >/dev/null
+bd -C "$c1" update "$c1_block" --status=blocked --set-metadata backlog_loop_run=OLD-RUN \
     --set-metadata backlog_loop_cause=needs-person --set-metadata backlog_loop_attempts=1 \
-    --append-notes "post-merge verification failed: lint | none" >/dev/null )
+    --append-notes "post-merge verification failed: lint | none" >/dev/null
 
 out=$(run_census "$c1" diagnostic)
 if [ -z "$out" ]; then
@@ -306,50 +356,50 @@ fi
 
 echo "  case: a native gate is a gate and is never repaired"
 c2=$(fresh_store)
-c2_target=$( cd "$c2" && bd create "step behind a native gate" --silent )
-c2_gate=$( cd "$c2" && bd gate create --type=human --blocks "$c2_target" 2>/dev/null \
-    | sed -n 's/^.*Created gate \([A-Za-z0-9-]*\).*$/\1/p' )
-( cd "$c2" && bd create "unrelated ready work" --silent >/dev/null )
-( cd "$c2" && bd export > "$work/c2.before" 2>/dev/null )
+c2_target=$(bd -C "$c2" create "step behind a native gate" --silent)
+c2_gate=$(bd -C "$c2" gate create --type=human --blocks "$c2_target" 2>/dev/null | gate_id)
+[ -n "$c2_gate" ] || fail "could not read a gate id out of 'bd gate create' for this case"
+bd -C "$c2" create "unrelated ready work" --silent >/dev/null
+bd -C "$c2" export > "$work/c2.before" 2>/dev/null
 
 out=$(run_census "$c2" loop)
 expect_category "$out" "$c2_gate"   human-gate  "a native gate classifies as a human gate"
 expect_category "$out" "$c2_target" dep-blocked "the step behind it stays dependency-blocked"
 
-( cd "$c2" && bd export > "$work/c2.after" 2>/dev/null )
+bd -C "$c2" export > "$work/c2.after" 2>/dev/null
 cmp -s "$work/c2.before" "$work/c2.after" \
     && pass "a loop-mode census removed no native gate edge" \
     || fail "a loop-mode census mutated the tracker around a native gate"
 
 echo "  case: adoption gate holds the first run back"
 c3=$(fresh_store)
-c3_gate=$( cd "$c3" && bd create "[HUMAN] approve the production rollout" -l human-gate --silent )
-c3_dep=$( cd "$c3" && bd create "wire the rollout flag" --silent )
-( cd "$c3" && bd dep "$c3_gate" --blocks "$c3_dep" >/dev/null )
-( cd "$c3" && bd export > "$work/c3.before" 2>/dev/null )
+c3_gate=$(bd -C "$c3" create "[HUMAN] approve the production rollout" -l human-gate --silent)
+c3_dep=$(bd -C "$c3" create "wire the rollout flag" --silent)
+bd -C "$c3" dep "$c3_gate" --blocks "$c3_dep" >/dev/null
+bd -C "$c3" export > "$work/c3.before" 2>/dev/null
 
 out=$(run_census "$c3" loop)
 expect_category "$out" "$c3_gate" human-gate  "the labeled gate is recognized"
 expect_category "$out" "$c3_dep"  dep-blocked "its dependent stays blocked while the convention is unadopted"
 
-( cd "$c3" && bd export > "$work/c3.after" 2>/dev/null )
+bd -C "$c3" export > "$work/c3.after" 2>/dev/null
 cmp -s "$work/c3.before" "$work/c3.after" \
     && pass "no hard-blocker label anywhere means no edge is removed" \
     || fail "the first run removed a gate edge with no hard-blocker label in the tracker"
 
 echo "  case: a diagnostic run writes nothing"
 c4=$(fresh_store)
-c4_gate=$( cd "$c4" && bd create "[HUMAN] grant registry access" -l human-gate --silent )
-c4_dep=$( cd "$c4" && bd create "publish the image" --silent )
-c4_other=$( cd "$c4" && bd create "[HUMAN] declared hard blocker" -l human-gate,hard-blocker --silent )
-( cd "$c4" && bd dep "$c4_gate" --blocks "$c4_dep" >/dev/null )
-( cd "$c4" && bd export > "$work/c4.before" 2>/dev/null )
+c4_gate=$(bd -C "$c4" create "[HUMAN] grant registry access" -l human-gate --silent)
+c4_dep=$(bd -C "$c4" create "publish the image" --silent)
+c4_other=$(bd -C "$c4" create "[HUMAN] declared hard blocker" -l human-gate,hard-blocker --silent)
+bd -C "$c4" dep "$c4_gate" --blocks "$c4_dep" >/dev/null
+bd -C "$c4" export > "$work/c4.before" 2>/dev/null
 
 out=$(run_census "$c4" diagnostic)
 expect_category "$out" "$c4_gate"  human-gate "the undeclared gate is recognized in diagnostic mode"
 expect_category "$out" "$c4_other" human-gate "the declared gate is recognized too"
 
-( cd "$c4" && bd export > "$work/c4.after" 2>/dev/null )
+bd -C "$c4" export > "$work/c4.after" 2>/dev/null
 cmp -s "$work/c4.before" "$work/c4.after" \
     && pass "a diagnostic run left the tracker's issue records unchanged" \
     || fail "a diagnostic run mutated the tracker"
