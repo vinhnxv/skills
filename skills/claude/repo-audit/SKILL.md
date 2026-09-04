@@ -138,7 +138,35 @@ What this run audits: the audited SHA, the restriction that bounds it, and the r
 
 ## DIMENSION ROSTER
 
-The dimensions, their classes, and which of them a ledger row may ever authorize a skip on.
+Nine dimensions in three classes. This list is the roster: a dimension named here is audited or explicitly skipped on every run, and a dimension not named here is not audited at all. Every row carries the reason for its cacheability, because cacheability is not a convenience label -- it is a claim about where the defect lives, and a wrong claim silently stops auditing a whole class of defect on every run after the first.
+
+| class | dimension | cacheable | why |
+|---|---|---|---|
+| latent defect | correctness and control flow | yes | the defect is inside one file |
+| latent defect | state, ordering, and idempotency | yes | as above |
+| latent defect | input boundaries and untrusted data | yes | as above |
+| latent defect | resource lifecycle and unbounded growth | yes | as above |
+| health | interface and contract drift | no | the defect IS the disagreement between caller and callee, so an unchanged callee proves nothing |
+| health | test integrity and vacuous passes | yes | the test and its assertion sit together |
+| health | dead and duplicated code | no | reachability and duplication are whole-tree properties |
+| conformance | the repository's own stated rules | yes | the rule set is re-derived every run and invalidates the ledger when it changes |
+| conformance | dependency and configuration hygiene | with a maximum age | the truth can change while the repository does not |
+
+The conformance dimensions audit against the slots preflight filled, not against any rule set shipped in this file. No per-language or per-framework pattern pack ships here; what ships is the list of what to look for, instantiated against the repository each run.
+
+CACHEABILITY DECIDES ONLY WHETHER A LEDGER ROW MAY AUTHORIZE A SKIP. A non-cacheable dimension is scheduled `full` on every run, including a run where nothing changed and including the run after that one. `dependency and configuration hygiene` is cacheable only while its recorded verdict is younger than `EXTERNAL_VERDICT_AGE`, because its truth rests on facts outside the repository -- an advisory published against an unchanged dependency is a defect that arrived without a commit. Every other cacheable dimension expires at `INREPO_VERDICT_AGE`.
+
+RESIDUE. For a cacheable dimension the audited residue is the files changed since the SHA the ledger recorded, plus their reverse-dependency closure. Where the repository exposes no import graph this procedure can read, the affected dimensions are declared NON-CACHEABLE for that run and audited in full; an empty closure is not computed and never stands in for one. `## THE COVERAGE LEDGER` owns the rows, their digest, and when a change to this roster invalidates them.
+
+## FAN-OUT
+
+One dimension per subagent, one subagent per dimension, per round. Dimensions do not overlap, and no subagent is ever given an open-ended remit across all of them: an agent asked to look at everything reports what it noticed, and nothing downstream can tell that from what it covered.
+
+Dimensions with residue are dispatched in waves of at most `<fanout>`. Dimensions beyond that width wait for the next wave; they are never merged into one assignment to make the count fit. Nine dimensions against `FANOUT_FLOOR` is three waves of three, which is why every wave's agents are closed before the next is spawned -- `## ROUND ONE` owns that rule, and it is load-bearing rather than hygiene at this width.
+
+EXCLUSIVE ALLOCATION, at the level of the search pattern and not the file. Before a wave is dispatched, the orchestrator allocates each dimension at most `PATTERNS_PER_DIM` search patterns, and no pattern is allocated to two dimensions in the same round. The file is the wrong unit: two dimensions legitimately read the same file for different defects, so allocating by file either starves one of them or lets both re-derive the same evidence and return it twice. The pattern is what makes the same evidence the same work.
+
+The orchestrator resolves each allocated pattern's match count itself, before dispatch, and that count is the dimension's `<population>`. It is the denominator coverage is measured against, so it cannot come from the agent whose coverage it judges. The whole allocation pass is bounded by `POPULATION_DEADLINE` per wave, spent before the wave is spawned and therefore outside `WAVE_DEADLINE`.
 
 ## FAN-OUT
 
