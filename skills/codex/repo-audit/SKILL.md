@@ -125,7 +125,69 @@ Stating both is what lets collapse be accounted for rather than read as loss. A 
 
 ## THE INDEX ISSUE
 
-The one tracker-resident issue carrying the fingerprint table, the coverage ledger, and the suppression list across runs. It is a cache: every row it authorizes a skip on is re-proven before the skip is taken.
+One issue the audit owns, holding the fingerprint record, the coverage ledger, and the suppression list in its body. Every lookup reads it WHOLE.
+
+THE AUDIT'S METADATA NAMESPACE, every key underscore-only because the tracker's keys admit no `-` and no `:`:
+
+| key | on | value |
+|---|---|---|
+| `repo_audit_index` | the index issue, and nothing else | `1` |
+| `repo_audit_authored` | every issue the audit creates, every note it appends | `1` |
+| `repo_audit_run` | the same | the run token that wrote it |
+| `repo_audit_fingerprint` | every finding issue | that finding's fingerprint |
+| `repo_audit_dims` | every finding issue | its dimension list |
+| `repo_audit_sha` | every finding issue | the SHA it was audited at |
+| `repo_audit_heartbeat` | the index issue | `<run-token>` and an ISO timestamp |
+
+No other key is written, ever. `## WRITE ORDER` states the rule about the consumer's namespace, and it is absolute.
+
+FINDING IT. An exact metadata-field match on `repo_audit_index`, listed WITH CLOSED ISSUES INCLUDED and with NO ROW LIMIT, unioned with the explicit gate-type query. Every listing the audit performs carries those flags: a default listing hides closed rows and truncates, so the plain form omits precisely the issues a previous run closed, and a gate-type issue is invisible to it entirely. One flat query answers the whole backlog, where reading the same fact per issue would be one read per issue and would put the audit's cost on the tracker's size.
+
+MORE THAN ONE ISSUE CARRYING THE INDEX KEY IS A STATED ERROR. The run names both ids and stops. It does not pick one: picking one silently discards the other's suppression rows, and a suppression that vanishes is a finding that gets refiled against a person's explicit judgement.
+
+CREATING IT when absent. One create call, DEFERRED to a far-future date. Deferred and not any other status, because every other status puts it in the consumer's claimable set, and a claimed index is an index that gets implemented and closed -- destroying every run's cross-run state. A deferred issue leaves `bd ready` while staying findable by an all-inclusive metadata-key lookup, and the consumer classifies `deferred` outside the set it clears.
+
+THIS CREATION IS THE ONE TRACKER WRITE A FIRST RUN MAKES. It carries the ledger this run earned and a recorded marker saying the run that created it FILED NOTHING. The rule terminates only because of that carve-out: the index's existence is the only thing that ends first-run status, so a first run that wrote nothing at all would make every later run a first run, and the audit could never file anything. The creation carries its own heartbeat in the same write, because the exclusion the heartbeat provides lives on an index that does not yet exist. The run then re-reads by the index key with closed issues included; if more than one index comes back, the run that LOSES a deterministic tie-break on issue id removes its own and continues without filing. A bootstrap race degrades; it does not stop.
+
+THE BODY. A header, then three tables, and nothing else:
+
+```
+repo-audit-index v1
+generation: <n>
+rows: fingerprints=<n> ledger=<n> suppressions=<n>
+
+## FINGERPRINTS
+<fingerprint> | <issue-id> | <dims> | <path>:<lines> | <sha> | open|closed
+
+## LEDGER
+<dimension> | <path-or-directory> | <verdict> | <sha> | <roster-digest> | <recorded-at>
+
+## SUPPRESSIONS
+<fingerprint> | <issue-id> | <evidence-hash> | <recorded-at>
+```
+
+READ WHOLE, REWRITTEN WHOLE, THROUGH THE TRACKER'S FILE FORM AND NEVER THROUGH AN INLINE VALUE. On update the inline form accepts an empty body silently while the file form refuses one and names its bypass flag. That asymmetry is an UPDATE-path behaviour only: on create both forms accept an empty body just as silently. So the index's CREATION -- the one index write with no prior version to fall back on -- is guarded instead by rendering a non-empty body first and by the read-back below, which is what actually protects that write.
+
+EVERY INDEX WRITE IS FOLLOWED BY A READ-BACK requiring the stored body to match what was rendered. A failed read-back STOPS THE RUN before any ledger row is advanced.
+
+THE GENERATION CHECK. A rewrite refuses to write when the generation has changed since the one it read. This DETECTS a lost update; it does not prevent one. The tracker offers no conditional write, so read-compare-write is check-then-act with a window between the two, and two runs that read the same generation can both pass the check. The heartbeat in `## HEARTBEAT AND DEGRADATION` is what actually excludes a concurrent audit run; this narrows what remains, and the distinction is stated so nobody reads it as a lock.
+
+A PARSE THAT FAILS STOPS THE RUN. A parse that cannot find a declared table, or that yields FEWER rows than the header declares, ends it: the run completes its audit and its report, writes nothing, and names the line that failed. An index that did not parse is NEVER REWRITTEN, because rewriting it deletes exactly the rows the parse missed. The declared row count exists for this: without it, a table truncated to its first line parses cleanly as a short table.
+
+THE REBUILD, next to that rule because they are the two halves of one answer. The fingerprint and suppression tables are RECONSTRUCTIBLE from the issues themselves -- every filed issue carries its own fingerprint, dimension list, SHA and run token. So an absent or unrebuildable index costs a FULL AUDIT, never a corrupted backlog. Only the ledger has one copy, and losing it costs exactly one full audit.
+
+THE SIZE CAP. The rendered body stays under `INDEX_CAP`. Above `COMPACT_ABOVE` files, ledger rows collapse to directory granularity. Fingerprint rows for issues closed longer ago than the ledger's maximum age are dropped, being recoverable from the issues. SUPPRESSION ROWS ARE NEVER COMPACTED AWAY FOR SIZE; they leave the table only by expiring, and `## STALE-CLOSE SWEEP` owns that expiry. A run that cannot get under the cap STOPS rather than writing a truncated body.
+
+RECONCILIATION, BEFORE ANY DIMENSION IS DISPATCHED. List audit-owned issues by their fingerprint key -- unioned with the gate-type query, since gates are invisible to the ordinary listing -- read their metadata back, and then:
+
+- ADD index rows the last run did not record.
+- DELETE rows whose issue does not exist, or whose issue's own recorded fingerprint disagrees with the row.
+
+IT RUNS IN BOTH DIRECTIONS, and that is the point. A repair that only adds leaves a wrong row standing, and one wrong row silently resolves a real finding to an unrelated issue: it is never filed and never reported as new. A deletion at worst costs a duplicate, which is visible.
+
+THE REBUILD PREFERS THE ISSUES. Both halves live in the same committed file and neither authenticates its writer, so neither is trustworthy in the sense the word usually carries. What separates them is CORROBORATION, not provenance: an index row is one unwitnessed assertion, while an issue's recorded fingerprint sits beside that issue's own dimension list, SHA and run token, and a forgery has to keep all of them consistent to pass. Where the two disagree beyond repair the finding is FILED rather than deduplicated -- a visible duplicate, and the opposite of a silent disappearance.
+
+WHERE A FINGERPRINT RESOLVES TO MORE THAN ONE AUDIT-OWNED ISSUE, THE OPEN ONE WINS -- in the rebuild, in the direct re-check, and in the fingerprint tier alike. That is the ordinary result of a relink, which leaves the closed original and its open replacement both carrying the fingerprint. Without the tie-break, a rebuild that picked the closed one would re-fire the relink rule every run and file a fresh duplicate into `bd ready` forever.
 
 ## STALE-CLOSE SWEEP
 
@@ -362,7 +424,33 @@ The order every tracker write happens in, and what makes a run that dies mid-wri
 
 ## THE COVERAGE LEDGER
 
-Recording per dimension what this run actually covered, so the next run can subtract it.
+Each run records, PER DIMENSION AND PER FILE, the SHA audited and the verdict reached.
+
+A LATER RUN SKIPS A FILE FOR A DIMENSION ONLY WHEN BOTH HOLD:
+
+1. The recorded verdict was a COVERED CLEAN result -- never `uncovered`, never `skipped`.
+2. The run INDEPENDENTLY PROVES THE ROW'S OWN FACTS: the recorded SHA is an ancestor of the current HEAD, and the file is unchanged between them.
+
+A row whose SHA does not resolve to an ancestor is INVALID, and its dimension is audited in full. The row is a claim, and this is the proof; a cache that is trusted without re-proof is not a cache, it is a second source of truth that nothing checks.
+
+EVERY INVALIDATION RULE, IN ONE PLACE. A ledger row does not authorize a skip when any of these holds:
+
+| rule | scope |
+|---|---|
+| the repository's stated rules changed | all dimensions |
+| this skill itself changed | all dimensions |
+| that dimension's most recent verdict was `uncovered` | that dimension |
+| the roster digest recorded beside the verdict differs from the current one | that dimension |
+| the verdict is older than `EXTERNAL_VERDICT_AGE`, for a dimension grounded in facts outside the repository | that dimension |
+| the verdict is older than `INREPO_VERDICT_AGE`, for every other dimension | that dimension |
+
+EVERY VERDICT EXPIRES, and the two ages are different for a reason. A dimension resting on facts outside the repository can go stale without a commit. Every other dimension expires too, more slowly, because the PROCESS that produced a clean verdict -- the model, the host, the fan-out width, the threshold -- changes even when the code does not.
+
+THE ROSTER DIGEST is recorded beside each verdict, over the dimension roster's and the classifier roster's definitions together. Changing what a dimension means invalidates what it concluded; that is what makes the roster safe to change.
+
+A FORCED FULL AUDIT, ignoring the ledger entirely, is ALWAYS AVAILABLE. It is MANDATORY on the first run against a repository, and on any run whose ledger is older than the maximum age.
+
+THE RESIDUE, per cacheable dimension: the files changed between the recorded SHA and `<sha>`, plus their reverse-dependency closure. A dimension whose residue is empty and whose every row re-proves is emitted with verdict `skipped` and scope `skipped-ledger`, and no subagent is dispatched for it. A dimension carried forward in part is `clean` with scope `residue`. Where no import graph is readable, that dimension takes the FORCED-FULL path for this run and says so.
 
 ## HEARTBEAT AND DEGRADATION
 
