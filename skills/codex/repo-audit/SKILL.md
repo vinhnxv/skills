@@ -366,6 +366,8 @@ Dimensions with residue are dispatched in waves of at most `<fanout>`. Dimension
 
 EXCLUSIVE ALLOCATION, at the level of the search pattern and not the file. Before a wave is dispatched, the orchestrator allocates each dimension at most `PATTERNS_PER_DIM` search patterns, and no pattern is allocated to two dimensions in the same round. The file is the wrong unit: two dimensions legitimately read the same file for different defects, so allocating by file either starves one of them or lets both re-derive the same evidence and return it twice. The pattern is what makes the same evidence the same work.
 
+THE DIMENSION'S ALLOCATION IS THEN DIVIDED ACROSS ITS CRITERIA, and no pattern is allocated to two criteria of the same dimension in the same round. EVERY CRITERION IN THE ROSTER RECEIVES AT LEAST ONE PATTERN; a criterion allocated none has no population, cannot be investigated, and would report a verdict about a search that never ran. Exclusivity holds one level down for the same reason it holds one level up: a pattern serving two criteria makes one search count twice, and the second count is a numerator the agent did not earn.
+
 The orchestrator resolves each allocated pattern's match count itself, before dispatch, and that count is the dimension's `<population>`. It is the denominator coverage is measured against, so it cannot come from the agent whose coverage it judges. The whole allocation pass is bounded by `POPULATION_DEADLINE` per wave, spent before the wave is spawned and therefore outside `WAVE_DEADLINE`.
 
 ## SUBAGENT CONTRACT
@@ -383,7 +385,8 @@ THE BRIEF. Exactly these fields, and no field outside this table:
 | `dimension` | one roster dimension | the agent's whole remit; never a list |
 | `sha` | `<sha>` | every citation and receipt resolves against this commit, not against the working tree |
 | `rules` | the filled slots from preflight | the conformance dimensions have nothing to audit against without them |
-| `patterns` | that dimension's allocated patterns, at most `PATTERNS_PER_DIM` | exclusive to this dimension for this round |
+| `criteria` | that dimension's criteria from `## CRITERION ROSTER`, each with its id, tier, guard, and the patterns allocated to it | the agent's remit is the criteria, not the dimension's name; without the ids it cannot name the criterion a receipt was taken under |
+| `patterns` | that dimension's allocated patterns, at most `PATTERNS_PER_DIM`, divided across its criteria | exclusive to this dimension for this round, and to one criterion within it |
 | `scope` | the file scope: residue or full, minus `<excluded-paths>` | a dirty path is not in the repository |
 | `budget` | `TOOL_CALL_CEILING` calls, of which `OUTPUT_RESERVE` are reserved for writing the return | so a return exists even when the search does not finish |
 | `return-path` | a path unique to this dimension and round, carrying `<run-token>` and a nonce disclosed only to this agent | two concurrent agents must not be able to address each other's return; the nonce is ADDRESSING, never confidentiality -- a co-resident agent can list the path, so what may be written there is bounded by `obligations` instead |
@@ -400,17 +403,17 @@ THE RETURN. A delimited block whose TERMINATOR IS ITS LAST LINE, so truncation i
 
 | field | value |
 |---|---|
-| `candidates` | each with its dimension-local identifier, path, line range, and a verbatim citation -- or, for a region the classifier roster matches, the classifier id in place of the citation and no quoted bytes at all |
+| `candidates` | each with its dimension-local identifier, THE CRITERION ID IT WAS SURFACED UNDER, path, line range, and a verbatim citation -- or, for a region the classifier roster matches, the classifier id in place of the citation and no quoted bytes at all |
 | `searched-empty` | the regions searched with nothing found |
 | `unpursued` | hot spots seen and not pursued, which is what round two is dispatched against |
 | `files-read` | repository-relative paths |
 | `searches-run` | the patterns actually run |
-| `receipts` | one per candidate INVESTIGATED: the candidate's identifier, the repository-relative path and line range read, and what was concluded |
-| `investigated-count` | the agent's own declared integer |
+| `receipts` | one per candidate INVESTIGATED: the candidate's identifier, THE CRITERION ID IT WAS TAKEN UNDER, the repository-relative path and line range read, and what was concluded |
+| `investigated-count` | the agent's own declared integers, ONE PER CRITERION, not one for the dimension |
 | `budget-exhausted` | `yes` or `no`; the orchestrator has no other signal for it |
 | terminator | the block's last line |
 
-A receipt's read region is a PATH AND LINE RANGE, never prose. The orchestrator resolves a sample of `RECEIPT_SAMPLE` receipts -- or all of them when there are fewer -- against the file at `<sha>`, and against the match sites of the pattern that produced the candidate. A receipt whose region does not resolve, or which falls outside every match site of its own pattern, does not count toward the numerator; a return whose sampled receipts fail marks its dimension `uncovered`. Without that resolution the numerator is a count of prose blocks, no harder to fabricate than the integer it replaced.
+A receipt's read region is a PATH AND LINE RANGE, never prose. THE SAMPLE IS DRAWN PER CRITERION, not per return: the orchestrator resolves `RECEIPT_SAMPLE` receipts for each criterion -- or all of that criterion's receipts when there are fewer -- against the file at `<sha>`, and against the match sites of the pattern that produced the candidate, checking that pattern was allocated to the criterion the receipt names. A receipt whose region does not resolve, which falls outside every match site of its own pattern, or which names a criterion outside its dimension's set, does not count toward that criterion's numerator. A CRITERION WHOSE SAMPLED RECEIPTS FAIL IS `uncovered`, AND SO IS ONE THAT CONTRIBUTED NO RESOLVABLE RECEIPT AT ALL; its siblings in the same return keep their own verdicts. Drawn per return instead, the same five receipts would back every criterion the return carries, and the numerator would again be a count no harder to fabricate than the integer it replaced.
 
 `investigated-count` is never the value a ratio uses. The count that counts is recounted from the receipts. The declared integer survives only so that a disagreement between the two is detectable: a return whose declared count disagrees with its receipt count is DISCARDED and its dimension marked `uncovered`. That is this contract's own rule and not the prohibition check below -- a bookkeeping disagreement is not a prohibited action.
 

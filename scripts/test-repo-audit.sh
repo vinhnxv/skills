@@ -432,6 +432,58 @@ short_record=$(printf '%s\n' "$replay_good" | grep -v '^criterion cc-unreachable
     && pass "replay: the dimension count is unaffected by the criterion lines beside it" \
     || fail "replay: criterion lines disturbed the dimension count"
 
+# ---------------------------------------------------------------------------
+# THE RETURN'S OWN DISCARD PATHS, REPLAYED.
+#
+# A canned return in the shape `## SUBAGENT CONTRACT` defines, run through the
+# orchestrator-side checks that decide whether it is trusted. Every check here
+# is arithmetic over text, so it belongs on the push path rather than behind a
+# live model that CI never starts.
+#
+# receipt line: <candidate-id> | <criterion-id> | <path>:<lines> | <conclusion>
+# count line:   count <criterion-id> | <declared integer>
+# ---------------------------------------------------------------------------
+recount_disagreements() { # return-text, then the criterion ids the dimension owns
+    ret=$1; shift
+    owned=" $* "
+    printf '%s\n' "$ret" | awk -F'|' -v owned="$owned" '
+        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+        /^receipt / { c = trim($2); seen[c]++
+                      if (index(owned, " " c " ") == 0) print "receipt names " c ", outside the dimension set" }
+        /^count /   { c = trim($1); sub(/^count[ \t]+/, "", c); declared[c] = trim($2) + 0 }
+        END { for (c in declared) if (declared[c] != seen[c]) print "criterion " c " declared " declared[c] " receipt(s), carries " seen[c] + 0 }
+    '
+}
+
+return_good='receipt k1 | cc-error-path | src/a.py:10-12 | no handler on the fallible call
+receipt k2 | cc-error-path | src/b.py:40-41 | handler present, not a defect
+receipt k3 | cc-stub | src/c.py:7-9 | placeholder on a live path
+count cc-error-path | 2
+count cc-stub | 1'
+
+[ -z "$(recount_disagreements "$return_good" cc-existing cc-error-path cc-stub)" ] \
+    && pass "replay: a return whose per-criterion counts match its receipts is trusted" \
+    || fail "replay: a well-formed return was discarded"
+
+return_foreign=$(printf '%s\n' "$return_good" | sed 's/^receipt k3 | cc-stub |/receipt k3 | ib-authz |/')
+recount_disagreements "$return_foreign" cc-existing cc-error-path cc-stub | grep -q 'outside the dimension set' \
+    && pass "replay: a receipt naming a criterion outside its dimension's set is caught" \
+    || fail "replay: a foreign criterion id passed the dimension-set check"
+
+return_miscount=$(printf '%s\n' "$return_good" | sed 's/^count cc-error-path | 2/count cc-error-path | 5/')
+recount_disagreements "$return_miscount" cc-existing cc-error-path cc-stub | grep -q 'declared 5 receipt' \
+    && pass "replay: a per-criterion count that disagrees with the recount is caught" \
+    || fail "replay: an inflated per-criterion count passed the recount"
+
+# A criterion the return declares but carries no receipt for is uncovered on its
+# own, and its siblings keep their verdicts. This is the rule that stops one
+# criterion's silence from being absorbed by a sibling's sampling.
+return_silent=$(printf '%s\n%s\n' "$return_good" 'count cc-existing | 0')
+silent=$(recount_disagreements "$return_silent" cc-existing cc-error-path cc-stub)
+[ -z "$silent" ] \
+    && pass "replay: a criterion declaring zero receipts disagrees with nothing, so coverage decides it" \
+    || fail "replay: a zero-receipt criterion was mis-flagged as a count disagreement: $silent"
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
