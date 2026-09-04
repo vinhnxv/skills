@@ -174,11 +174,85 @@ How many subagents a wave carries, and how the roster's residue is divided among
 
 ## SUBAGENT CONTRACT
 
-What a dimension subagent is given, what it may touch, what it must return, and the shape its return is parsed as.
+Every dimension subagent is spawned with a CLEAN CONTEXT carrying only its own brief -- never a fork of the orchestrator's conversation. A forked context lets a dimension report as discovered what it read from the orchestrator, and nothing downstream can tell that from a real finding. The brief is the deliberate and only exception, and it carries what that dimension needs and nothing about any other.
+
+Briefs and returns both travel as FILES. The reply channel carries only the return path and the terminator, and the orchestrator reads the file rather than the reply: the two hosts disagree about how a spawned agent's text comes back, and one host's own documentation disagrees with its measured behaviour, so neither direction of that channel is relied on for content. Files also make a clean context an inspectable artifact rather than an assertion, and they let a fixture drive this procedure with no subagents at all.
+
+BOTH DIRECTORIES LIE OUTSIDE THE AUDITED WORKING TREE. The return directory, because a return inside the tree is content the next run's scan reads back as repository text. The brief directory, for that reason and one more: a brief carries the derived rules and that dimension's allocated patterns, so inside the tree it is readable by every co-resident subagent on a host that gives them one shared working directory.
+
+THE BRIEF. Exactly these fields, and no field outside this table:
+
+| field | value | why it is here |
+|---|---|---|
+| `dimension` | one roster dimension | the agent's whole remit; never a list |
+| `sha` | `<sha>` | every citation and receipt resolves against this commit, not against the working tree |
+| `rules` | the filled slots from preflight | the conformance dimensions have nothing to audit against without them |
+| `patterns` | that dimension's allocated patterns, at most `PATTERNS_PER_DIM` | exclusive to this dimension for this round |
+| `scope` | the file scope: residue or full, minus `<excluded-paths>` | a dirty path is not in the repository |
+| `budget` | `TOOL_CALL_CEILING` calls, of which `OUTPUT_RESERVE` are reserved for writing the return | so a return exists even when the search does not finish |
+| `return-path` | a path unique to this dimension and round, carrying `<run-token>` and a nonce disclosed only to this agent | two concurrent agents must not be able to address each other's return |
+| `return-schema` | the return contract below | so the orchestrator parses rather than interprets |
+| `obligations` | one investigation receipt per candidate investigated; a verbatim citation per candidate | the receipt is the numerator of coverage and the citation is what verification re-resolves |
+| `prohibitions` | no write outside `return-path`; no tracker command; no network; no branch, commit, or push | stated so the return can be checked against them |
+| `envelope` | `<envelope-nonce>` | repository content reaches the agent only inside it |
+
+`<envelope-nonce>` is a declared field of the brief and appears in no path, no return file, no tracker field, and no report line. It is not the return-path nonce and the two are never substituted: the return-path nonce lives in a path, and a path can be listed.
+
+THE RETURN. A delimited block whose TERMINATOR IS ITS LAST LINE, so truncation is detectable by absence rather than by parsing. A return missing its terminator marks that dimension `uncovered`, never empty -- a truncated return is not an empty one, and reading it as empty converts a host failure into a clean bill of health.
+
+| field | value |
+|---|---|
+| `candidates` | each with its dimension-local identifier, path, line range, and a verbatim citation |
+| `searched-empty` | the regions searched with nothing found |
+| `unpursued` | hot spots seen and not pursued, which is what round two is dispatched against |
+| `files-read` | repository-relative paths |
+| `searches-run` | the patterns actually run |
+| `receipts` | one per candidate INVESTIGATED: the candidate's identifier, the repository-relative path and line range read, and what was concluded |
+| `investigated-count` | the agent's own declared integer |
+| `budget-exhausted` | `yes` or `no`; the orchestrator has no other signal for it |
+| terminator | the block's last line |
+
+A receipt's read region is a PATH AND LINE RANGE, never prose. The orchestrator resolves a sample of `RECEIPT_SAMPLE` receipts -- or all of them when there are fewer -- against the file at `<sha>`, and against the match sites of the pattern that produced the candidate. A receipt whose region does not resolve, or which falls outside every match site of its own pattern, does not count toward the numerator; a return whose sampled receipts fail marks its dimension `uncovered`. Without that resolution the numerator is a count of prose blocks, no harder to fabricate than the integer it replaced.
+
+`investigated-count` is never the value a ratio uses. The count that counts is recounted from the receipts. The declared integer survives only so that a disagreement between the two is detectable: a return whose declared count disagrees with its receipt count is DISCARDED and its dimension marked `uncovered`. That is this contract's own rule and not the prohibition check below -- a bookkeeping disagreement is not a prohibited action.
+
+Round-one agents ENUMERATE AND EVIDENCE ONLY. They do not conclude that a dimension is clean. That conclusion is the orchestrator's, and it is made from the numbers in `## COVERAGE ADJUDICATION`, never from an agent's opinion of its own thoroughness.
 
 ## ROUND ONE
 
-The first wave over every dimension with residue.
+Dispatch every dimension that has residue, in waves of at most `<fanout>`, one dimension per agent. A wave's agents are spawned in one message.
+
+A WAVE'S CLOCK STARTS WHEN THAT WAVE IS DISPATCHED and runs for `WAVE_DEADLINE`. A subagent that has not returned by its own wave's bound is abandoned, any later return from it is discarded, and its dimension is marked `uncovered`. The round's bound is `WAVE_DEADLINE` times the number of waves. The bound is scoped to the wave and not to the round because nine dimensions against `FANOUT_FLOOR` is three sequential waves: one agent spending `TOOL_CALL_CEILING` can consume most of a single bound by itself, so a round-scoped clock would abandon waves two and three for time wave one spent, and mark six of nine dimensions uncovered for no reason but the clock.
+
+A ROUND IS COMPLETE WHEN EVERY DISPATCHED RETURN FILE IS READABLE AND TERMINATED. Determine that by POLLING those files, never by a single wait that returns on the first agent to finish -- that wait reports a wave complete while most of it is still running.
+
+CLOSE EVERY AGENT THIS WAVE SPAWNED, finished ones included, BEFORE dispatching the next wave or round. A finished agent that is not closed keeps its concurrency slot on at least one host, so an unclosed wave silently narrows every wave after it until the fan-out is one.
+
+## SNAPSHOT
+
+Taken by the orchestrator before and after every wave. It does not consult the agent, and it is the only containment layer that does not.
+
+THREE LAYERS, RANKED, and the ranking is the point:
+
+1. PREVENTIVE -- the host's own tool-set restriction, applied at dispatch under the strongest level preflight resolved. Required where the host offers it, never merely preferred, because it is the only layer that stops a mutation rather than noticing one.
+2. INDEPENDENT -- this snapshot. It observes the world, not the agent.
+3. THE AGENT'S OWN ACCOUNT -- the prohibition post-condition below. The weakest of the three, and never the control: it reads the suspect's own report, after the fact, about agents that on one host share an unisolated working directory.
+
+THE SNAPSHOT'S DOMAIN is stated literally, because the obvious domain is blind exactly where it matters. An issue count sees no in-place mutation that leaves the count unchanged -- a rewritten index body, an appended note, a flipped status, an added metadata key -- and that is the whole class that matters here, since this audit's cross-run state lives in one issue body. An ordinary working-tree status sees nothing in `.git/hooks`, nothing in ignored paths, and nothing outside the repository at all.
+
+- tracked, untracked AND ignored paths
+- the HEAD SHA
+- the contents of `.git/hooks` and `.git/config`
+- the brief directory and the return directory
+- a digest over the tracker, built from: the all-inclusive ordinary issue listing, UNIONED with the explicit gate-type query, plus one metadata-key listing per key this audit and the consumer own -- covering bodies, statuses and metadata together, not counts
+
+The gate-type query is not optional: a gate-type issue is absent from the default listing, so a union that omits it cannot see one being created, edited, or closed. The listing is the same query every audit lookup already makes, so the tracker half of the snapshot costs one extra read per wave.
+
+ANY CHANGE OUTSIDE THAT WAVE'S DECLARED RETURN PATHS IS A PROVEN PROHIBITED MUTATION. What the snapshot provably cannot cover is anything outside the paths above, which is why the preventive layer is required rather than preferred.
+
+A PROVEN PROHIBITED MUTATION ENDS THE RUN'S TRACKER WRITES ENTIRELY -- not that dimension's, the run's. An agent that reached outside its remit once could have reached anywhere, so the run's evidence is invalidated rather than one dimension's. The run completes its audit, completes its report, states what changed and when it was detected, sets `<mode>` to `readonly` for the remainder, and writes nothing.
+
+THE PROHIBITION POST-CONDITION. Check each return against the `prohibitions` field of its own brief. A return that SHOWS a prohibited action is discarded and its dimension marked `uncovered`. This fires on the agent's confession only; a return that confesses nothing while the snapshot shows a change is the snapshot's finding, and the snapshot's consequence is the one that applies.
 
 ## SNAPSHOT
 
@@ -186,7 +260,27 @@ Proving that no dispatched subagent mutated anything outside its return path, ta
 
 ## COVERAGE ADJUDICATION
 
-Deciding per dimension whether its round-one return covered the dimension or merely sampled it.
+Per dimension, on recorded numbers only. Every input is a lookup over a recorded field; none is a reading of prose.
+
+THE DENOMINATOR IS THE ORCHESTRATOR'S. `## FAN-OUT` resolved each dimension's allocated patterns to a match-site count before the wave was dispatched. That count is `<population>`, and the agent whose coverage is being judged had no part in choosing it.
+
+- COVERED requires investigated-receipts over `<population>` to reach `COVERAGE_FLOOR`.
+- `<population>` below `POPULATION_FLOOR` is an UNCOVERED verdict whatever the ratios say. Otherwise a narrow pattern set produces a small denominator, a ratio of one, and a clean verdict for a dimension that looked at almost nothing -- the same shortcut one level up.
+- surfaced-over-`<population>` is recorded beside it as the enumeration-completeness measure. Both appear on the dimension line.
+
+WHY THE DENOMINATOR IS EXTERNAL. The obvious ratio -- investigated over surfaced -- measures depth over whatever the agent chose to surface, and never the completeness of what it searched. Its gradient runs the wrong way: surfacing twelve candidates and investigating two reads as uncovered, while surfacing one and investigating one reads as clean. The cheapest route to a clean verdict would then be to search narrowly, which is the exact behaviour this gate exists to catch. An agent that checks one of seven equivalent surfaces and misses six defects surfaces one candidate, investigates it, and passes any self-referential ratio cleanly. It fails an orchestrator-run population count.
+
+SEARCH BREADTH. A return surfacing NO candidates at all is `uncovered`, unless the return proves the searched population was empty. Nothing else distinguishes a dimension with no defects from a dimension nobody looked at.
+
+Every other route to `uncovered` is stated where it arises: a missing terminator, a declared-count disagreement, failed sampled receipts, an abandoned agent, and a confessed prohibited action. They all land here, on the same verdict, and none of them is reported as `clean`.
+
+## ROUND TWO
+
+Dispatched against the uncovered dimensions and their `unpursued` hot spots, AND ONLY THOSE, proportionally to the gaps adjudication recorded.
+
+ROUND TWO CONSUMES CANDIDATES; IT DOES NOT GENERATE THEM. A run has at most `MAX_ROUNDS` rounds and there is no third. A round-two return proposing candidates outside its assigned gaps has them IGNORED -- not escalated, not carried, and never a reason to dispatch again. Without that rule a dimension that keeps finding new ground never terminates, and the run's cost is unbounded in the one place an operator cannot see it.
+
+STILL UNCOVERED AFTER ROUND TWO is a verdict, not a failure. That dimension files its confirmed findings, records `uncovered` in the ledger rather than a clean verdict, and is named as unfinished in the report. It does NOT block the dimensions that were covered: eight covered dimensions deliver eight ledger advances and their findings while the ninth says plainly that it did not finish. A run that let one thin dimension withhold the other eight would be a run that reports nothing on the day it found the most.
 
 ## ROUND TWO
 
