@@ -366,6 +366,241 @@ case " $pp_blocked " in
     *) fail "--explain did not report $pp_child blocked; blocked set was '$pp_blocked'" ;;
 esac
 
+# ---------------------------------------------------------------------------
+# PART 1b - tracker contract for repo-audit's write protocol.
+#
+# Everything above is a `bd` behaviour, not `backlog-loop` content, and this
+# block adds to that same skill-agnostic half. A second always-skipping script
+# and a second always-green CI step would prove the same thing twice and be
+# read half as often.
+#
+# ALREADY PINNED ABOVE, and deliberately not repeated here: the metadata key
+# charset (a key may hold no `-` or `:`, which is why the audit's fingerprint
+# table lives in an issue body rather than in queryable metadata); `--readonly`
+# refusing a write, which the audit's read-only mode rests on exactly as the
+# census's diagnostic run does; `--has-metadata-key` returning exactly the
+# issues carrying the key, which every audit-owned-issue listing uses;
+# `--acceptance` replacing rather than appending and having no file form, which
+# is why the audit composes the recipe and the re-verify instruction into one
+# write; `bd dep remove` no-opping on the reversed argument order; and the
+# `bd`-absent skip at the top of this file.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "PART 1b - tracker contract for the audit's write protocol"
+
+ra=$(fresh_store)
+
+# A baseline the absence tests are read against. Concluding anything from an
+# empty result without one is the failure mode this whole file exists to stop:
+# a query that returns nothing because the store is empty satisfies every
+# "X is absent" assertion ever written against it.
+ra_open=$(bd -C "$ra" create "an ordinary open issue" --silent)
+[ -n "$ra_open" ] || fail "could not create a baseline issue; every absence check below would be vacuous"
+
+# --- closed rows and the default listing ---
+ra_closed=$(bd -C "$ra" create "will be closed" --silent)
+bd -C "$ra" close "$ra_closed" >/dev/null 2>&1
+ra_default=$(bd -C "$ra" list --limit 0 --json 2>/dev/null | sorted_ids_json)
+ra_allinc=$(bd -C "$ra" list --all --limit 0 --include-gates --json 2>/dev/null | sorted_ids_json)
+case " $ra_default " in
+    *" $ra_open "*) : ;;
+    *) fail "the default listing omitted the baseline open issue; the closed-row check below is vacuous" ;;
+esac
+assert_hides_exactly "$ra_open $ra_closed" "$ra_default" "$ra_closed" \
+    "a default listing hides a closed issue, and only it" \
+    "a default listing no longer hides exactly the closed issue"
+case " $ra_allinc " in
+    *" $ra_closed "*) pass "an all-inclusive listing returns the closed issue, which is how the audit reconciles" ;;
+    *) fail "an all-inclusive listing no longer returns a closed issue; reconciliation cannot see its own closures" ;;
+esac
+
+# --- --metadata-field matches a value exactly, never a prefix of it ---
+bd -C "$ra" update "$ra_open" --set-metadata repo_audit_probe=alpha >/dev/null
+mf_exact=$(bd -C "$ra" list --all --limit 0 --metadata-field repo_audit_probe=alpha --json 2>/dev/null | sorted_ids_json)
+mf_partial=$(bd -C "$ra" list --all --limit 0 --metadata-field repo_audit_probe=alph --json 2>/dev/null | sorted_ids_json)
+[ "$mf_exact" = "$ra_open" ] \
+    && pass "--metadata-field matches an exact value" \
+    || fail "--metadata-field did not return the issue carrying the exact value (got '$mf_exact')"
+[ -z "$mf_partial" ] \
+    && pass "--metadata-field does not match a prefix of the value, so a run token cannot collide with a longer one" \
+    || fail "--metadata-field matched a prefix of the value (got '$mf_partial'); run-token queries can collide"
+
+# --- the P0-P4 band round-trips, since severity maps directly onto it ---
+band_ok=1
+for band in P0 P1 P2 P3 P4; do
+    bd -C "$ra" update "$ra_open" --priority "$band" >/dev/null 2>&1 || { band_ok=0; break; }
+    got=$(bd -C "$ra" show "$ra_open" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print(r.get("priority",""))')
+    case "$got" in
+        "$band"|"${band#P}") : ;;
+        *) band_ok=0; break ;;
+    esac
+done
+[ "$band_ok" -eq 1 ] \
+    && pass "--priority round-trips every value in the P0-P4 band" \
+    || fail "--priority did not round-trip '$band' (read back '$got'); severity has no mapping"
+
+# --- --estimate and --parent round-trip ---
+bd -C "$ra" update "$ra_open" --estimate 45 >/dev/null 2>&1
+est=$(bd -C "$ra" show "$ra_open" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print(r.get("estimated_minutes") or "")')
+[ "$est" = "45" ] \
+    && pass "--estimate round-trips, so the audit can size an issue for the consumer's batch budget" \
+    || fail "--estimate did not round-trip (read back '$est')"
+
+ra_epic=$(bd -C "$ra" create "durable per-dimension epic" --type epic --silent)
+ra_child=$(bd -C "$ra" create "a finding under that epic" --parent "$ra_epic" --silent)
+par=$(bd -C "$ra" show "$ra_child" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print(r.get("parent_id") or r.get("parent") or "")')
+[ "$par" = "$ra_epic" ] \
+    && pass "--parent round-trips, so a finding lands under its dimension epic" \
+    || fail "--parent did not round-trip (read back '$par', wanted '$ra_epic')"
+
+# --- --deps discovered-from: makes the provenance edge without withholding ---
+ra_disc=$(bd -C "$ra" create "found while auditing" --deps "discovered-from:$ra_open" --silent)
+case " $(deps_of "$ra" "$ra_disc") " in
+    *" $ra_open "*) pass "--deps discovered-from: creates the provenance edge" ;;
+    *) fail "--deps discovered-from: created no edge to $ra_open" ;;
+esac
+ra_ready=$(bd -C "$ra" ready --json 2>/dev/null | sorted_ids_json)
+case " $ra_ready " in
+    *" $ra_disc "*) pass "a discovered-from edge does not withhold the new issue from a ready listing" ;;
+    *) fail "a discovered-from edge withheld $ra_disc from ready; every filed finding would be blocked" ;;
+esac
+
+# --- a multi-line acceptance value survives as ONE shell argument ---
+bd -C "$ra" update "$ra_open" --acceptance "first line
+second line
+third line" >/dev/null
+acc_lines=$(acc_of "$ra" "$ra_open" | wc -l | tr -d " ")
+[ "$acc_lines" -ge 3 ] \
+    && pass "--acceptance preserves a multi-line value passed as one argument" \
+    || fail "--acceptance collapsed a multi-line value to $acc_lines line(s); the recipe cannot share the field"
+
+# --- appending a note changes no other field ---
+bd -C "$ra" export > "$work/ra.before" 2>/dev/null
+before_acc=$(acc_of "$ra" "$ra_open")
+bd -C "$ra" update "$ra_open" --append-notes "a note the audit appended" >/dev/null
+bd -C "$ra" export > "$work/ra.after" 2>/dev/null
+after_acc=$(acc_of "$ra" "$ra_open")
+if cmp -s "$work/ra.before" "$work/ra.after"; then
+    fail "appending a note left the export unchanged; the oracle cannot see a note at all"
+elif [ "$before_acc" = "$after_acc" ] && [ -n "$before_acc" ]; then
+    pass "appending a note changes the export and leaves acceptance intact"
+else
+    fail "appending a note altered acceptance_criteria ('$before_acc' -> '$after_acc')"
+fi
+
+# --- the empty-description asymmetry the index write is built around ---
+if bd -C "$ra" update "$ra_open" --description "" >/dev/null 2>&1; then
+    pass "update accepts an empty description inline, silently"
+else
+    fail "update now refuses an empty inline description; the index write's guard is obsolete"
+fi
+: > "$work/empty-body"
+if bd -C "$ra" update "$ra_open" --body-file "$work/empty-body" >/dev/null 2>&1; then
+    fail "update now accepts an empty body file; the asymmetry the index write guards against is gone"
+else
+    bd -C "$ra" update "$ra_open" --body-file "$work/empty-body" 2>&1 | grep -q -- "--allow-empty-description" \
+        && pass "update refuses an empty body file and names --allow-empty-description as the bypass" \
+        || fail "update refused an empty body file without naming the bypass flag"
+fi
+ec_inline=$(bd -C "$ra" create "created with an empty inline description" --description "" --silent 2>/dev/null || true)
+ec_file=$(bd -C "$ra" create "created with an empty body file" --body-file "$work/empty-body" --silent 2>/dev/null || true)
+if [ -n "$ec_inline" ] && [ -n "$ec_file" ]; then
+    pass "CREATE accepts an empty body through both forms, which is why the index create is guarded by a read-back"
+else
+    fail "create no longer accepts an empty body through both forms (inline '$ec_inline', file '$ec_file'); the guard may be removable"
+fi
+
+# --- a deferred issue leaves ready and stays in an all-inclusive listing ---
+ra_defer=$(bd -C "$ra" create "the audit index issue" --silent)
+bd -C "$ra" update "$ra_defer" --set-metadata repo_audit_index=1 >/dev/null
+bd -C "$ra" update "$ra_defer" --status=deferred --defer "+3650d" >/dev/null
+ra_ready2=$(bd -C "$ra" ready --json 2>/dev/null | sorted_ids_json)
+case " $ra_ready2 " in
+    *" $ra_disc "*) : ;;
+    *) fail "the ready listing lost an unrelated issue; the deferral check below is vacuous" ;;
+esac
+case " $ra_ready2 " in
+    *" $ra_defer "*) fail "a deferred issue is still offered as ready; the index would be claimed and built" ;;
+    *) pass "a deferred issue leaves the ready listing, which is what parks the index outside the consumer's reach" ;;
+esac
+ra_bykey=$(bd -C "$ra" list --all --limit 0 --include-gates --has-metadata-key repo_audit_index --json 2>/dev/null | sorted_ids_json)
+[ "$ra_bykey" = "$ra_defer" ] \
+    && pass "a deferred issue is still returned by an all-inclusive metadata-key listing, which is how the index is found" \
+    || fail "an all-inclusive metadata-key listing returned '$ra_bykey', wanted exactly '$ra_defer'; the index becomes unfindable"
+
+# --- a body at the index size cap round-trips byte-identically ---
+python3 -c "import sys; sys.stdout.write('x' * (256 * 1024))" > "$work/big-body"
+bd -C "$ra" update "$ra_open" --body-file "$work/big-body" >/dev/null 2>&1
+bd -C "$ra" show "$ra_open" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+sys.stdout.write(r.get("description") or "")' > "$work/big-readback"
+if cmp -s "$work/big-body" "$work/big-readback"; then
+    pass "a body at the index size cap round-trips byte-identically through the file form"
+else
+    fail "a body at the index size cap did not round-trip ($(wc -c < "$work/big-body" | tr -d " ") bytes written, $(wc -c < "$work/big-readback" | tr -d " ") read back)"
+fi
+
+# --- what the two gate forms actually do ---
+#
+# The ordinary create form takes a gate type ALONGSIDE labels and metadata in
+# one command. That is pinned explicitly because the gate type is absent from
+# `--type`'s own help text, which makes it the behaviour here most likely to
+# move without anyone meaning to move it -- and the audit files every `[HUMAN]`
+# gate through this form.
+ra_gate=$(bd -C "$ra" create "[HUMAN] rotate the credential at rc-1" \
+    --type gate --labels human-gate --metadata '{"repo_audit_gate":"1"}' --silent 2>/dev/null || true)
+if [ -z "$ra_gate" ]; then
+    fail "bd create no longer accepts --type gate; every [HUMAN] gate the audit files has no write form"
+else
+    gate_row=$(bd -C "$ra" show "$ra_gate" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print("%s|%s|%s|%s" % (r.get("issue_type"), ",".join(sorted(r.get("labels") or [])), r.get("dependency_count", 0), (r.get("metadata") or {}).get("repo_audit_gate","")))')
+    [ "$gate_row" = "gate|human-gate|0|1" ] \
+        && pass "one create call makes a gate carrying its label and metadata and NO dependency edge" \
+        || fail "the one-call gate form changed shape: got '$gate_row', wanted 'gate|human-gate|0|1'"
+
+    ra_default2=$(bd -C "$ra" list --all --limit 0 --json 2>/dev/null | sorted_ids_json)
+    case " $ra_default2 " in
+        *" $ra_open "*) : ;;
+        *) fail "the default listing lost the baseline issue; the gate-visibility checks are vacuous" ;;
+    esac
+    case " $ra_default2 " in
+        *" $ra_gate "*) fail "a gate-type issue now appears in the default listing; the audit's own reconciliation would double-count it" ;;
+        *) pass "a gate-type issue is absent from the default listing, so every audit lookup must query it separately" ;;
+    esac
+    case " $(bd -C "$ra" ready --json 2>/dev/null | sorted_ids_json) " in
+        *" $ra_gate "*) fail "a gate-type issue is offered as ready work; the consumer would build it" ;;
+        *) pass "a gate-type issue is withheld from ready by the tracker itself" ;;
+    esac
+    case " $(bd -C "$ra" list --type gate --json 2>/dev/null | sorted_ids_json) " in
+        *" $ra_gate "*) pass "an explicit gate-type query returns it, which is the only way the audit sees its own gates" ;;
+        *) fail "an explicit gate-type query no longer returns a gate; the audit cannot enumerate what it filed" ;;
+    esac
+fi
+
+# The dedicated subcommand is NOT what the audit uses, and this pins why: it
+# requires an issue to block and offers no way to set a title, a label, a body,
+# a parent, or metadata -- so a gate created through it could carry neither the
+# operator's instructions nor the audit's own marker.
+gate_help=$(bd gate create --help 2>&1)
+gc_missing=""
+for flag in --title --labels --description --parent --metadata; do
+    printf '%s' "$gate_help" | grep -q -- "$flag" || gc_missing="$gc_missing $flag"
+done
+printf '%s' "$gate_help" | grep -q -- "--blocks" \
+    && pass "bd gate create still requires an issue to block" \
+    || fail "bd gate create no longer takes --blocks; the reason the audit avoids it may be gone"
+[ "$gc_missing" = " --title --labels --description --parent --metadata" ] \
+    && pass "bd gate create offers no title, label, body, parent or metadata flag, which is why the audit uses create instead" \
+    || fail "bd gate create's flag set changed; it now offers$(printf '%s' " --title --labels --description --parent --metadata" | tr " " "\n" | grep -vx "$(printf '%s' "$gc_missing" | tr " " "\n")" | tr "\n" " ")"
+
 if [ "$contract_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [contract only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1

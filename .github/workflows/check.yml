@@ -62,10 +62,13 @@ jobs:
       # `--contract-only` is load-bearing: the other half of that suite drives
       # a model through the host CLI, which is slow, non-deterministic, and has
       # no place on a push path. The contract half is pure shell and pins the
-      # `bd` behaviours the skill's CENSUS section is built on -- which flags
-      # hide rows, what a native gate looks like, that a human gate is offered
-      # as ready work, that `--readonly` refuses a write, and that `bd export`
-      # rather than a file diff is the non-mutation oracle.
+      # `bd` behaviours BOTH skills are built on -- which flags hide rows, what
+      # a native gate looks like, that a human gate is offered as ready work,
+      # that `--readonly` refuses a write, and that `bd export` rather than a
+      # file diff is the non-mutation oracle, plus the write-protocol behaviours
+      # `repo-audit` rests on: the empty-description asymmetry, the one-call
+      # gate form, exact metadata-value matching, and a deferred issue staying
+      # findable while it leaves the ready listing.
       #
       # `bd` is absent from a stock runner, so on this repository's own CI this
       # step SKIPS and proves nothing -- the step name says so, because a green
@@ -74,7 +77,7 @@ jobs:
       # it on a runner with `bd` installed, a tracker change that invalidated
       # the procedure fails here instead of inside an unattended loop that has
       # already claimed a batch. Install `bd` on the runner to turn it on.
-      - name: Tracker contract (skipped unless bd is installed)
+      - name: Tracker contract for both skills (skipped unless bd is installed)
         run: sh scripts/test-census.sh --contract-only
 
   install:
