@@ -158,6 +158,21 @@ CACHEABILITY DECIDES ONLY WHETHER A LEDGER ROW MAY AUTHORIZE A SKIP. A non-cache
 
 RESIDUE. For a cacheable dimension the audited residue is the files changed since the SHA the ledger recorded, plus their reverse-dependency closure. Where the repository exposes no import graph this procedure can read, the affected dimensions are declared NON-CACHEABLE for that run and audited in full; an empty closure is not computed and never stands in for one. `## THE COVERAGE LEDGER` owns the rows, their digest, and when a change to this roster invalidates them.
 
+THE CLASSIFIER ROSTER sits here, beside the dimension roster, and is digested and invalidated the same way. It is the closed set of things `## VERIFICATION` may conclude a quoted region is, and no other classifier name is admissible anywhere in this procedure.
+
+| id | matches |
+|---|---|
+| `rc-1` | high-entropy token or key material |
+| `rc-2` | a structured provider credential in a recognizable prefixed key format |
+| `rc-3` | a private key block |
+| `rc-4` | a connection string carrying an embedded secret |
+| `rc-5` | a password or passphrase assignment |
+| `rc-6` | an email address |
+| `rc-7` | a telephone number |
+| `rc-8` | a government or national identifier |
+
+THE IDS ARE DELIBERATELY CLASS-NEUTRAL. A classifier id travels into a `[HUMAN]` rotation gate body, and on a public target that body is committed and published. An id reading `aws-access-key` in a published gate discloses in the gate exactly what the redaction withheld from the finding.
+
 ## FAN-OUT
 
 One dimension per subagent, one subagent per dimension, per round. Dimensions do not overlap, and no subagent is ever given an open-ended remit across all of them: an agent asked to look at everything reports what it noticed, and nothing downstream can tell that from what it covered.
@@ -288,7 +303,51 @@ The second and final round, over the dimensions adjudication left uncovered.
 
 ## VERIFICATION
 
-Confirming each surviving candidate against the tree at the audited SHA, collapsing the duplicates, assigning severity, and redacting what must not be written to a tracker.
+A pass THAT DID NOT PRODUCE THE FINDING examines every candidate and classifies it `confirmed`, `refuted`, or `unevaluable`. Only `confirmed` findings ever reach the tracker; `refuted` and `unevaluable` findings appear in the report and nowhere else.
+
+EVERY QUOTED REGION REACHING THIS PASS ARRIVES INSIDE THE RUN'S ENVELOPE. This pass is the last gate before an issue enters `bd ready`, so it is the hop where a crafted comment in the audited repository would pay best: a sentence that reads as a refutation retires a real defect, and a sentence that reads as a severity retires it more quietly. A refutation or a severity assignment that cites text from inside an envelope is itself DISCARDED, and the finding keeps the classification it would have had without it.
+
+Four gates, each with its own disposition, and a candidate that fails one is not carried to the next:
+
+- CITATION. Every finding cites a repository-relative path and line range and quotes the code verbatim as read at `<sha>`. Re-resolve that quote against the file at `<sha>`. It does not resolve -> `citation-unresolved`, discarded, no issue.
+- RECEIPT. Every finding carries a receipt naming what was checked to establish it. No receipt -> `no-receipt`, not filed.
+- RECIPE. Every finding carries a detection recipe, parsed into the grammar below before anything is filed. It does not parse -> `recipe-unparseable`, reported and not filed.
+- PROOF AT FILE TIME. Evaluate the recipe about to be recorded, at `<sha>`, and file only if it reproduces the finding. A recipe that cannot be proven sends its finding to the report. Without this, both revalidation and the stale-close sweep act destructively on an artifact nothing ever validated.
+
+THE RECIPE GRAMMAR is closed. Five fields, in this order:
+
+```
+<repository-relative path> | <line anchor> | <form> | <polarity> <count> | <sha>
+```
+
+`<polarity>` is `matches` or `absent`. `<form>` takes one of three shapes and NO OTHER:
+
+1. `literal:<fixed string>` -- matched as bytes, never as a pattern.
+2. `re2:<pattern>` -- one named non-backtracking syntax, over an explicitly admitted character set, at most `RECIPE_MAX_LEN` characters.
+3. `classifier:<roster id>` -- one member of the classifier roster, carrying no repository-derived bytes at all.
+
+The syntax is NAMED because that is what makes the parse gate expressible. A gate stated as rejecting shell metacharacters would reject nearly every working pattern -- regular-expression syntax is very largely shell metacharacters -- and an implementer who discovered that would loosen the gate with nothing to loosen it toward. No maximum evaluation time is stated, and the omission is deliberate: a non-backtracking syntax and a length cap bound evaluation cost by construction, and a procedure that forbids a shell invocation has no way to enforce a clock. A constant that enforces nothing is worse than no constant.
+
+EVALUATING A RECIPE IS A FILE READ AND A PATTERN MATCH. It is never a shell invocation, a network request, a redirection, a command substitution, an environment read, or a write. A recipe whose path leaves the repository, or which requires any of those, is `recipe-unparseable`.
+
+THE CREDENTIAL AND PERSONAL-DATA TEST runs on every quoted region BEFORE any write. Classify the region against the classifier roster. A MATCHING REGION IS NEVER QUOTED ANYWHERE. Its finding carries the path, the line range, and the classifier id, and its recipe takes form 3: an assertion that the region at those lines STILL MATCHES the named classifier.
+
+- NO DIGEST OF THE VALUE IS WRITTEN. A plain digest is a redaction only for a high-entropy secret. Over an email address, a telephone number, a national identifier, or a short password the search space is small enough that an unsalted digest committed to `.beads/*.jsonl` -- and published outright on a public repository -- is a lookup-table entry, which is precisely the outcome the redaction exists to prevent.
+- Where a genuine same-value check across runs is needed, the digest is SALTED with a per-repository value stored outside the tracker. A run without that salt records `unevaluable` rather than falling back to an unsalted form.
+- A credential-class finding is filed as a `[HUMAN]` ROTATION GATE, because a pull request that deletes a live secret neither rotates it nor removes it from history. `## ISSUE SHAPE` owns writing it.
+- On a PUBLIC target that gate carries the classifier id and the stated action only, and refers to its location by an opaque finding id the tracker does not resolve. The path and line range go to the VCS-ignored security section the report owns. Otherwise the gate is a committed, published, machine-readable index of live unrotated credentials -- accurate, and worse than the digest it replaced.
+- On a PUBLIC target, security-class findings generally carry LOCATION AND CLASS ONLY: no exploit detail, and no recipe literal or pattern. Form 3 is the only admissible form there, which is what keeps the recipe requirement satisfiable without publishing a reproduction.
+
+COLLAPSE, BEFORE ANY TRACKER LOOKUP. Findings describing the same defect become one, including findings surfaced by different dimensions. The survivor RECORDS EVERY DIMENSION that produced it, and that dimension list is what the emit self-count sums to the pre-collapse count. Collapsing after a tracker lookup would file the same defect twice and then deduplicate the second against the first, leaving the owner an issue that closes as a duplicate of an issue filed one second earlier.
+
+SEVERITY IS THIS PASS'S OUTPUT, in the `P0`-`P4` band, mapped directly onto the tracker's priority values. A severity proposed by the subagent that produced the finding is INPUT to this pass and never its output: the agent that found something is the last party that should rank it.
+
+UNEVALUABLE HAS CONSEQUENCES. A file carrying a finding classified `unevaluable` records `uncovered` for that dimension. Two escalations, both at `ESCALATE_AFTER` consecutive runs, and both recorded here for `## ISSUE SHAPE` to write:
+
+- A dimension returning `unevaluable` findings for the SAME stated reason on that many consecutive runs is recorded for filing as a `[HUMAN]` issue naming the reason.
+- A dimension recording `uncovered` on that many consecutive runs is recorded for filing as a `[HUMAN]` issue naming the dimension, the reason recorded each time, and the cost it is consuming.
+
+Without them the state is self-perpetuating: an uncovered dimension's ledger rows are invalidated, so it is re-audited in full at full fan-out on every later run, reaches the same verdict, and surfaces only as one line in a report -- in a procedure whose whole premise is that a report is where findings go to be forgotten.
 
 ## DEDUPLICATION AND DISPOSITION
 
