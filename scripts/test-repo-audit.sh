@@ -561,6 +561,103 @@ tier_disposition() { # tier, classifier-match (yes/no) -> disposition
     && pass "replay: an in-file finding's disposition is unchanged by the tier rule" \
     || fail "replay: the tier rule changed a non-advisory disposition"
 
+# ---------------------------------------------------------------------------
+# COVERAGE ADJUDICATION AT THE CRITERION, AND THE DIMENSION'S ROLL-UP.
+#
+# Coverage is arithmetic over recorded numbers, so the whole adjudication is
+# replayable here. The two floors guard different things and are both checked:
+# CRITERION_POPULATION_FLOOR stops one criterion earning a clean verdict on two
+# match sites, POPULATION_FLOOR stops a whole dimension being allocated too
+# narrowly to see anything.
+# ---------------------------------------------------------------------------
+# COVERAGE_FLOOR is a fraction, so it needs a reader that does not stop at the
+# decimal point. const_val would return 0 for 0.6 and make every ratio pass.
+const_ratio() { # NAME -> the decimal value on its line in the constants block
+    sed -n "s/^$1 *= *\([0-9][0-9.]*\).*/\1/p" "$skill" | head -n 1
+}
+coverage_floor=$(const_ratio COVERAGE_FLOOR)
+awk -v f="$coverage_floor" 'BEGIN { exit !(f > 0 && f < 1) }' \
+    && pass "constants: COVERAGE_FLOOR reads back as a fraction between 0 and 1" \
+    || fail "constants: COVERAGE_FLOOR parsed as '$coverage_floor', which no ratio can fail"
+
+crit_floor=$(const_val CRITERION_POPULATION_FLOOR)
+case "$crit_floor" in
+    ''|*[!0-9]*) fail "CRITERION_POPULATION_FLOOR is absent from the constants block or is not a count: '$crit_floor'" ;;
+    *) [ "$crit_floor" -lt "$(const_val POPULATION_FLOOR)" ] \
+        && pass "constants: CRITERION_POPULATION_FLOOR sits below the dimension's POPULATION_FLOOR" \
+        || fail "constants: a criterion floor at or above the dimension floor makes the dimension floor unreachable" ;;
+esac
+
+criterion_verdict() { # population, investigated, exhaustive(yes/no) -> clean|uncovered|skipped
+    cpop=$1; cinv=$2; cexh=$3
+    if [ "$cpop" -eq 0 ]; then
+        [ "$cexh" = yes ] && echo skipped || echo uncovered
+        return
+    fi
+    if [ "$cpop" -lt "$crit_floor" ]; then
+        [ "$cexh" = yes ] && echo clean || echo uncovered
+        return
+    fi
+    awk -v i="$cinv" -v p="$cpop" -v f="$coverage_floor" \
+        'BEGIN { print (i / p >= f) ? "clean" : "uncovered" }'
+}
+
+[ "$(criterion_verdict 10 6 no)" = clean ] \
+    && pass "coverage: a criterion meeting COVERAGE_FLOOR on its own population is clean" \
+    || fail "coverage: a criterion at the floor was not clean"
+[ "$(criterion_verdict 10 5 no)" = uncovered ] \
+    && pass "coverage: a criterion below COVERAGE_FLOOR on its own population is uncovered" \
+    || fail "coverage: a criterion under the floor escaped an uncovered verdict"
+[ "$(criterion_verdict 2 2 no)" = uncovered ] \
+    && pass "coverage: a ratio of one over a population under CRITERION_POPULATION_FLOOR is still uncovered" \
+    || fail "coverage: a criterion earned a clean verdict on almost nothing"
+[ "$(criterion_verdict 2 2 yes)" = clean ] \
+    && pass "coverage: the exhaustive-search escape lets a genuinely rare criterion be clean" \
+    || fail "coverage: a rare criterion is permanently uncovered, which no return can fix"
+[ "$(criterion_verdict 0 0 yes)" = skipped ] \
+    && pass "coverage: a criterion proving its population empty is skipped, not clean" \
+    || fail "coverage: an empty population produced the wrong verdict"
+[ "$(criterion_verdict 0 0 no)" = uncovered ] \
+    && pass "coverage: an unproven empty population is uncovered -- no defects and nobody looking read alike" \
+    || fail "coverage: silence passed as an empty population"
+
+dimension_rollup() { # dimension population, then one criterion verdict per argument
+    dpop=$1; shift
+    any_uncovered=0; any_clean=0; any_other=0
+    for v in "$@"; do
+        case "$v" in
+            uncovered) any_uncovered=1 ;;
+            clean)     any_clean=1 ;;
+            *)         any_other=1 ;;
+        esac
+    done
+    [ "$any_uncovered" -eq 1 ] && { echo uncovered; return; }
+    [ "$any_clean" -eq 0 ] && [ "$any_other" -eq 1 ] && { echo skipped; return; }
+    [ "$dpop" -lt "$(const_val POPULATION_FLOOR)" ] && { echo uncovered; return; }
+    echo clean
+}
+
+# AE3: three of four criteria covered, the fourth not -- the dimension does not
+# report clean as a whole, and the three keep their own clean verdicts.
+[ "$(dimension_rollup 40 clean clean clean uncovered)" = uncovered ] \
+    && pass "roll-up: one uncovered criterion denies its dimension a clean verdict" \
+    || fail "roll-up: a starved criterion was absorbed by its covered siblings"
+[ "$(dimension_rollup 40 clean clean clean clean)" = clean ] \
+    && pass "roll-up: a dimension whose every criterion is clean is clean" \
+    || fail "roll-up: a fully covered dimension did not report clean"
+[ "$(dimension_rollup 40 clean skipped clean skipped)" = clean ] \
+    && pass "roll-up: a criterion that proved its population empty does not hold its dimension back" \
+    || fail "roll-up: a skipped criterion denied a clean dimension"
+[ "$(dimension_rollup 0 skipped skipped skipped skipped)" = skipped ] \
+    && pass "roll-up: a dimension is skipped only when all of its criteria are" \
+    || fail "roll-up: an all-skipped dimension reported something else"
+[ "$(dimension_rollup 4 clean clean clean clean)" = uncovered ] \
+    && pass "roll-up: the dimension's POPULATION_FLOOR still overrides clean criteria" \
+    || fail "roll-up: a dimension allocated too narrowly to see anything reported clean"
+[ "$(dimension_rollup 4 uncovered skipped skipped skipped)" = uncovered ] \
+    && pass "roll-up: an uncovered criterion is read before either floor or the skip rule" \
+    || fail "roll-up: the resolution order let an uncovered criterion be masked"
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1

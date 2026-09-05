@@ -43,8 +43,9 @@ DIAGNOSTIC RUN. A read-only run chooses a `<run-token>` and an `<envelope-nonce>
 Every bound this procedure enforces, declared once here and referenced by name everywhere else. A bare literal below, where one of these names exists, is a defect. The names are distinctive on purpose: the values include `2`, `3`, `4`, `8`, `10`, `12`, `20` and `30`, digits that appear throughout ordinary prose, so nothing can check this file for stray literals by their values.
 
 ```
-COVERAGE_FLOOR       = 0.6              # below this ratio a dimension is uncovered whatever it surfaced
+COVERAGE_FLOOR       = 0.6              # below this ratio a criterion is uncovered whatever it surfaced
 POPULATION_FLOOR     = 8 match sites    # below this a dimension is uncovered regardless of its ratio
+CRITERION_POPULATION_FLOOR = 3 match sites # below this a criterion needs an exhaustive search to be clean
 PATTERNS_PER_DIM     = 12 patterns      # allocated per dimension; also bounds the orchestrator's population pass
 POPULATION_DEADLINE  = 5 minutes        # per wave, spent during allocation and therefore outside WAVE_DEADLINE
 RECEIPT_SAMPLE       = 5 receipts       # or the whole set when it is smaller
@@ -458,17 +459,27 @@ THE PROHIBITION POST-CONDITION. Check each return against the `prohibitions` fie
 
 ## COVERAGE ADJUDICATION
 
-Per dimension, on recorded numbers only. Every input is a lookup over a recorded field; none is a reading of prose.
+PER CRITERION, on recorded numbers only. Every input is a lookup over a recorded field; none is a reading of prose. The dimension's verdict is then DERIVED from its criteria rather than measured on its own.
 
-THE DENOMINATOR IS THE ORCHESTRATOR'S. `## FAN-OUT` resolved each dimension's allocated patterns to a match-site count before the wave was dispatched. That count is `<population>`, and the agent whose coverage is being judged had no part in choosing it.
+THE DENOMINATOR IS THE ORCHESTRATOR'S. `## FAN-OUT` resolved each criterion's allocated patterns to a match-site count before the wave was dispatched. That count is the criterion's `<population>`, and the agent whose coverage is being judged had no part in choosing it. A dimension's `<population>` is the sum over its criteria.
 
-- COVERED requires investigated-receipts over `<population>` to reach `COVERAGE_FLOOR`.
-- `<population>` below `POPULATION_FLOOR` is an UNCOVERED verdict whatever the ratios say. Otherwise a narrow pattern set produces a small denominator, a ratio of one, and a clean verdict for a dimension that looked at almost nothing -- the same shortcut one level up.
-- surfaced-over-`<population>` is recorded beside it as the enumeration-completeness measure. Both appear on the dimension line.
+- COVERED requires a criterion's investigated-receipts over ITS OWN `<population>` to reach `COVERAGE_FLOOR`.
+- A criterion's `<population>` below `CRITERION_POPULATION_FLOOR` is UNCOVERED UNLESS the return proves that criterion's own searched population exhaustive, in which case it is `clean`. Both halves are load-bearing. Without the floor, roughly three patterns define a criterion's whole denominator, and a ratio of one over two match sites reads as a clean verdict for a criterion that looked at almost nothing -- the same shortcut two levels up. Without the exhaustive-search escape, a criterion that is genuinely rare in this repository is permanently `uncovered` and its dimension can never be clean.
+- The DIMENSION's `<population>` below `POPULATION_FLOOR` is an UNCOVERED verdict for that dimension whatever its criteria reported. This is unchanged, and it stays at the dimension because it guards against a narrow ALLOCATION across the dimension as a whole, which no per-criterion ratio can see.
+- surfaced-over-`<population>` is recorded beside each of them as the enumeration-completeness measure. Both ratios appear on the criterion line, and the dimension's own pair appears on the dimension line.
+
+THE DIMENSION IS A ROLL-UP, NOT A SECOND MEASUREMENT. Resolve it in this order, and stop at the first line that fires:
+
+1. ANY criterion `uncovered` -> the dimension is `uncovered`.
+2. ALL criteria `skipped` -> the dimension is `skipped`.
+3. The dimension's `<population>` below `POPULATION_FLOOR` -> `uncovered`.
+4. Otherwise -> `clean`. Every criterion is `clean` or `skipped`, and at least one is `clean`.
+
+The order is the rule. A `skipped` criterion proved its own population empty, so it must not hold its dimension back; an `uncovered` one must, which is why it is read first. A dimension that measured its own ratio beside its criteria would be a second source of truth for the same question, and the two would disagree the first time a single criterion was starved.
 
 WHY THE DENOMINATOR IS EXTERNAL. The obvious ratio -- investigated over surfaced -- measures depth over whatever the agent chose to surface, and never the completeness of what it searched. Its gradient runs the wrong way: surfacing twelve candidates and investigating two reads as uncovered, while surfacing one and investigating one reads as clean. The cheapest route to a clean verdict would then be to search narrowly, which is the exact behaviour this gate exists to catch. An agent that checks one of seven equivalent surfaces and misses six defects surfaces one candidate, investigates it, and passes any self-referential ratio cleanly. It fails an orchestrator-run population count.
 
-SEARCH BREADTH. A return surfacing NO candidates at all is `uncovered`, unless the return proves the searched population was empty. Nothing else distinguishes a dimension with no defects from a dimension nobody looked at.
+SEARCH BREADTH. A criterion surfacing NO candidates at all is `uncovered`, unless the return proves ITS searched population was empty, in which case that criterion is `skipped` and its siblings keep their own verdicts. Nothing else distinguishes a criterion with no defects from a criterion nobody looked at.
 
 Every other route to `uncovered` is stated where it arises: a missing terminator, a declared-count disagreement, failed sampled receipts, an abandoned agent, and a confessed prohibited action. They all land here, on the same verdict, and none of them is reported as `clean`.
 
