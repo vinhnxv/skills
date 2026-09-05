@@ -371,6 +371,23 @@ dup_ids=$(crit_field 1 | sort | uniq -d | grep -c . || true)
     && pass "every criterion id is unique" \
     || fail "$dup_ids criterion id(s) appear more than once"
 
+# Reachability. `## FAN-OUT` gives every criterion at least one allocated
+# pattern, which is only possible while a dimension's criteria fit inside its
+# pattern budget. A criterion nothing can search for is a row that reports
+# uncovered forever.
+widest=$(crit_field 2 | sort | uniq -c | awk 'NR == 1 || $1 > m { m = $1 } END { print m + 0 }')
+[ "$(const_val PATTERNS_PER_DIM)" -ge "$widest" ] \
+    && pass "every criterion is reachable: PATTERNS_PER_DIM covers the widest dimension's $widest criteria" \
+    || fail "the widest dimension carries $widest criteria but PATTERNS_PER_DIM is $(const_val PATTERNS_PER_DIM), so some criterion gets no pattern"
+
+# No unused tier value. A tier nothing declares is scaffolding: it has a name,
+# a documented disposition, and no way to ever be exercised.
+for tier in in-file cross-file advisory; do
+    crit_field 4 | grep -qx "$tier" \
+        && pass "the $tier tier is declared by at least one criterion" \
+        || fail "no criterion declares the $tier tier, so the value is unreachable scaffolding"
+done
+
 # ---------------------------------------------------------------------------
 # THE REPLAY HARNESS. Canned orchestrator-side text, asserted against the same
 # rules a live run is asserted against. `field_count_violations` is pure awk
@@ -440,7 +457,7 @@ emit_attribution_violations() { # record -> one line per criterion the roster co
     printf '%s\n' "$1" | grep '^criterion ' | while IFS= read -r line; do
         eid=$(printf '%s\n' "$line" | awk -F'|' '{ sub(/^criterion[ \t]+/, "", $1); gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1 }')
         edim=$(printf '%s\n' "$line" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
-        rdim=$(paste -d'|' "$work/crit-ids" "$work/crit-dims" | awk -F'|' -v k="$eid" '$1 == k { print $2 }')
+        rdim=$(paste -d'|' "$work/crit-ids" "$work/crit-dims-aligned" | awk -F'|' -v k="$eid" '$1 == k { print $2 }')
         if [ -z "$rdim" ]; then
             echo "$eid is emitted but is not in the criterion roster"
         elif [ "$rdim" != "$edim" ]; then
@@ -450,7 +467,7 @@ emit_attribution_violations() { # record -> one line per criterion the roster co
 }
 
 crit_field 1 > "$work/crit-ids"
-crit_field 2 > "$work/crit-dims"
+crit_field 2 > "$work/crit-dims-aligned"
 
 [ -z "$(emit_attribution_violations "$replay_good")" ] \
     && pass "replay: every emitted criterion is a roster criterion under its roster dimension" \
@@ -722,8 +739,17 @@ ledger_skips() { # row, unchanged-paths, current-digest -> skip | audit:<reason>
 
 row_in_file='correctness and control flow | cc-error-path | src/a.py | none | clean | abc1234 | d9 | 2026-09-01'
 row_sibling='correctness and control flow | cc-stub | src/a.py | none | uncovered | abc1234 | d9 | 2026-09-01'
-row_cross='interface and contract drift | id-route | src/route.py | docs/api.md | clean | abc1234 | d9 | 2026-09-01'
-row_cross_half='interface and contract drift | id-route | src/route.py | none | clean | abc1234 | d9 | 2026-09-01'
+row_cross='interface and contract drift | id-doc-drift | src/route.py | docs/api.md | clean | abc1234 | d9 | 2026-09-01'
+row_cross_half='interface and contract drift | id-doc-drift | src/route.py | none | clean | abc1234 | d9 | 2026-09-01'
+
+# The replay rows name real roster criteria, so a row can never describe a
+# criterion the procedure does not have -- the same grounding the emit replay
+# takes, for the same reason.
+for rid in cc-error-path cc-stub id-doc-drift; do
+    grep -qx "$rid" "$work/crit-ids" \
+        && pass "ledger: the replay row for $rid names a roster criterion" \
+        || fail "ledger: the replay rows describe $rid, which is not in the criterion roster"
+done
 
 # The column count is read from the index's own row template rather than
 # written here, so a template that gains or loses a column fails this check
