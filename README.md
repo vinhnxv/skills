@@ -158,12 +158,15 @@ you do not use Beads, this skill is not for you.
 
 ### `repo-audit`
 
-Audits a repository against a fixed roster of nine dimensions — one subagent
-per dimension, in waves — and files what survives verification into **Beads**
-as ready work. It derives its rules from the target repository each run rather
-than shipping a pattern library, measures per-dimension coverage against a
-population the orchestrator counts itself, and files nothing it did not confirm
-against the audited commit.
+Audits a repository against a fixed roster of nine dimensions, each of which
+names the specific criteria it owes — one subagent per dimension, in waves —
+and files what survives verification into **Beads** as ready work. The
+dimension is what gets dispatched; the criterion is what gets measured and
+reported, so a dimension is clean only when every criterion under it is. It
+derives its rules from the target repository each run rather than shipping a
+pattern library, measures per-criterion coverage against a population the
+orchestrator counts itself, and files nothing it did not confirm against the
+audited commit.
 
 **It is incremental across runs.** A coverage ledger records what each
 dimension proved clean and at which commit, so a later run audits the files

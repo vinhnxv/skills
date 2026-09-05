@@ -7,9 +7,9 @@ Every `bd` command carries the global `--readonly` flag, so a write is refused b
 Read-only is a property of the tracker, and only of the tracker. This run still reads the whole repository, still spawns subagents, still evaluates recipes, and still writes its report to disk. Nothing here should be read as "inert".
 
 Success means all five:
-1. Exactly one `audit-run` header line is printed, with its `<mode>` field reading `readonly`, one `dimension` line per roster dimension, and one `finding` line per surviving candidate. Both of the procedure's own counts hold.
+1. Exactly one `audit-run` header line is printed, with its `<mode>` field reading `readonly`, one `dimension` line per roster dimension, one `criterion` line per roster criterion, and one `finding` line per surviving candidate. All three of the procedure's own counts hold.
 2. Every finding the run would have filed is reported in full -- its severity, its location, its recipe, and the shape it would have taken, including whether it would have become its own issue, an entry in a dimension's sweep issue, or a `[HUMAN]` gate.
-3. Every dimension's coverage is reported: what was searched, what was investigated, the population, both ratios, and the verdict.
+3. Every criterion's coverage is reported: what was searched, what was investigated, that criterion's own population, both ratios, and the verdict -- and beside them each dimension's roll-up over the criteria it owns.
 4. No issue was created, updated, closed, relabelled, or reparented, and no epic and no gate was created. Compare `bd export` output taken before and after the run. A filesystem diff is not a valid check, because a plain `bd show` rewrites tracker bookkeeping without changing any issue field.
 5. A report exists at `docs/audits/YYYY-MM-DD-HHMM-audit.md`, carrying everything a writing run's report would carry.
 

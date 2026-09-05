@@ -5,10 +5,10 @@ The loaded repo-audit procedure is the sole execution authority. If this prompt 
 This run writes to a tracker that another autonomous process will start clearing. Everything it files becomes work, so every bound the procedure states -- the filing ceilings, the sweep's two bounds, the deduplication tiers, and the first-run carve-out -- is load-bearing rather than advisory.
 
 Success means all six:
-1. Exactly one `audit-run` header line is printed, one `dimension` line per roster dimension, and one `finding` line per surviving candidate. Both of the procedure's own counts hold: the dimension lines equal the roster size, and the `<dims>` lists across the finding lines sum to the pre-collapse candidate count.
+1. Exactly one `audit-run` header line is printed, one `dimension` line per roster dimension, one `criterion` line per roster criterion, and one `finding` line per surviving candidate. All three of the procedure's own counts hold: the dimension lines equal the dimension roster size, the criterion lines equal the criterion roster size with each attributed to its roster dimension, and the `<dims>` lists across the finding lines sum to the pre-collapse candidate count.
 2. No emitted field is blank, and every field's value comes from that field's closed vocabulary.
-3. Every dimension carries a verdict of `clean`, `uncovered`, or `skipped`, and every `uncovered` dimension is named in the report with what it did not finish. A `clean` verdict was measured; it is never the mere absence of a finding.
-4. Every finding at every severity is in the report, including the P3 and P4 findings that were never filed and the refuted and unevaluable ones. Every skipped `(dimension, file, sha)` triple is enumerated.
+3. Every criterion carries a verdict of `clean`, `uncovered`, or `skipped`, and every dimension carries the roll-up over its criteria -- `clean` only where every one of them is. Every `uncovered` criterion is named in the report with what it did not finish, and so is the dimension it denied a clean verdict to. A `clean` verdict was measured; it is never the mere absence of a finding.
+4. Every finding at every severity is in the report, including the P3 and P4 findings that were never filed and the refuted and unevaluable ones. Every skipped `(criterion, file, sha)` triple is enumerated.
 5. Every issue this run filed carries the run token and the audit-authored marker. No issue this run did not file was retitled, reprioritized, relabelled, reparented, or closed; the only write any foreign issue received is the bounded absorb note.
 6. A report exists at `docs/audits/YYYY-MM-DD-HHMM-audit.md`, and it closes with the bulk-retraction recipe -- the exact commands that would close everything this run filed.
 

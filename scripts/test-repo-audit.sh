@@ -791,6 +791,61 @@ both_clean=$(compact_criteria "$(printf '%s\n%s\n' "$row_in_file" "$(printf '%s\
     && pass "compaction: a collapsed row over uniformly clean criteria still caches, as it did before criteria existed" \
     || fail "compaction: the degraded path lost the caching it is supposed to preserve"
 
+# ---------------------------------------------------------------------------
+# THE FILING CEILING'S APPORTIONMENT, REPLAYED.
+#
+# The roster looks for far more than it did and the ceiling did not grow with
+# it, so how the budget is divided decides what a reader of the tracker sees.
+# Filed first-come, one prolific criterion spends the whole budget before a
+# later criterion files anything.
+# ---------------------------------------------------------------------------
+apportion() { # ceiling, then "<criterion>:<confirmed>" per argument -> "<criterion>:<filed>" lines
+    cap=$1; shift
+    printf '%s\n' "$@" | awk -F: -v cap="$cap" '
+        { crit[++n] = $1; want[n] = $2 + 0 }
+        END {
+            share = int(cap / n)
+            used = 0
+            for (i = 1; i <= n; i++) { got[i] = (want[i] < share) ? want[i] : share; used += got[i] }
+            left = cap - used
+            # Second pass: the unused share returns to whoever still has findings.
+            changed = 1
+            while (left > 0 && changed) {
+                changed = 0
+                for (i = 1; i <= n && left > 0; i++)
+                    if (got[i] < want[i]) { got[i]++; left--; changed = 1 }
+            }
+            for (i = 1; i <= n; i++) print crit[i] ":" got[i]
+        }
+    '
+}
+
+# One prolific criterion and three quiet ones. First-come would file 40 of the
+# prolific one's findings and none of the others.
+apportioned=$(apportion 40 a:100 b:5 c:5 d:5)
+[ "$(printf '%s\n' "$apportioned" | awk -F: '{ s += $2 } END { print s }')" -eq 40 ] \
+    && pass "apportionment: the whole ceiling is spent, and no more than the ceiling" \
+    || fail "apportionment: the filed total does not equal FILING_CEILING"
+[ "$(printf '%s\n' "$apportioned" | awk -F: '$1 == "b" { print $2 }')" -eq 5 ] \
+    && pass "apportionment: a quiet criterion files everything it confirmed rather than being crowded out" \
+    || fail "apportionment: a prolific criterion crowded out a quiet one's confirmed findings"
+[ "$(printf '%s\n' "$apportioned" | awk -F: '$1 == "a" { print $2 }')" -eq 25 ] \
+    && pass "apportionment: the unused share returns to the criterion that can still use it" \
+    || fail "apportionment: the returned share was not redistributed"
+
+# Nobody is over the ceiling, so nobody is apportioned away from.
+under=$(apportion 40 a:3 b:4)
+[ "$(printf '%s\n' "$under" | awk -F: '{ s += $2 } END { print s }')" -eq 7 ] \
+    && pass "apportionment: a run under the ceiling files every confirmed finding" \
+    || fail "apportionment: a run under the ceiling lost findings to the division"
+
+# A single criterion holding everything still gets the whole budget: the rule
+# apportions, it does not cap a criterion at its share.
+solo=$(apportion 40 a:100)
+[ "$(printf '%s\n' "$solo" | awk -F: '{ print $2 }')" -eq 40 ] \
+    && pass "apportionment: one criterion holding every confirmed finding still fills the ceiling" \
+    || fail "apportionment: the division starved the only criterion with findings"
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
