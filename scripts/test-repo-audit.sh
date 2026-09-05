@@ -292,11 +292,13 @@ wave_min=$(const_val WAVE_DEADLINE)
 pop_min=$(const_val POPULATION_DEADLINE)
 max_rounds=$(const_val MAX_ROUNDS)
 fanout_floor=$(const_val FANOUT_FLOOR)
+pop_floor=$(const_val POPULATION_FLOOR)
+patterns_per_dim=$(const_val PATTERNS_PER_DIM)
 
 for pair in "WAVE_DEADLINE:$wave_min" "POPULATION_DEADLINE:$pop_min" \
             "MAX_ROUNDS:$max_rounds" "FANOUT_FLOOR:$fanout_floor"; do
     [ -n "${pair#*:}" ] || {
-        echo "FAIL: ${pair%%:*} did not parse out of the constants block."
+        echo "FAIL: ${pair%%:*} did not parse out of the constants block; every deadline and floor below would be empty."
         exit 1
     }
 done
@@ -304,15 +306,17 @@ done
 # The two rosters, each read from its own table. The dimension table is matched
 # on its exact header line and terminated by the blank line after it, so a
 # second table below it -- the criterion roster -- cannot inflate this count.
-roster_size=$(sed -n '/^| class | dimension | cacheable | why |$/,/^$/p' "$skill" \
-    | grep -c '^| \(latent defect\|health\|conformance\) |' || true)
-[ "${roster_size:-0}" -ge 1 ] || { echo "FAIL: the dimension roster did not parse; the emit counts would be empty."; exit 1; }
+dimension_rows=$(sed -n '/^| class | dimension | cacheable | why |$/,/^$/p' "$skill" \
+    | grep '^| \(latent defect\|health\|conformance\) |' || true)
+roster_size=$(printf '%s' "$dimension_rows" | grep -c . || true)
 
 criterion_rows=$(sed -n '/^| id | dimension | criterion | tier | guard | why this tier |$/,/^$/p' "$skill" \
     | grep '^| `[a-z][a-z]-[a-z0-9-]*` |' || true)
 criterion_size=$(printf '%s' "$criterion_rows" | grep -c . || true)
 
-pass "the dimension roster parses to $roster_size dimension(s)"
+[ "${roster_size:-0}" -ge 1 ] \
+    && pass "the dimension roster parses to $roster_size dimension(s)" \
+    || { echo "FAIL: the dimension roster did not parse; the emit counts would be empty."; exit 1; }
 
 [ "${criterion_size:-0}" -ge 1 ] \
     && pass "the criterion roster parses to $criterion_size criteria" \
@@ -336,8 +340,8 @@ bad_tier=$(crit_field 4 | grep -vc '^\(in-file\|cross-file\|advisory\)$' || true
     && pass "every criterion declares a tier from the closed set" \
     || fail "$bad_tier criterion row(s) declare a tier outside in-file/cross-file/advisory"
 
-sed -n '/^| class | dimension | cacheable | why |$/,/^$/p' "$skill" \
-    | awk -F'|' '/^\| (latent defect|health|conformance) \|/ { d = $3; gsub(/^[ \t]+|[ \t]+$/, "", d); print d }' \
+printf '%s\n' "$dimension_rows" \
+    | awk -F'|' '{ d = $3; gsub(/^[ \t]+|[ \t]+$/, "", d); print d }' \
     > "$work/dim-names"
 
 crit_field 2 | sort -u > "$work/crit-dims"
@@ -348,13 +352,24 @@ orphans=$(grep -c . "$work/orphan-dims" || true)
     && pass "every criterion names a dimension the roster carries" \
     || fail "$orphans criterion row(s) name a dimension outside the roster: $(tr '\n' ' ' < "$work/orphan-dims")"
 
+# And the other direction. A dimension no criterion names is audited by nothing,
+# and its roll-up would reach the `clean` line with an empty criterion set.
+comm -13 "$work/crit-dims" "$work/dim-sorted" > "$work/barren-dims"
+barren=$(grep -c . "$work/barren-dims" || true)
+[ "$barren" -eq 0 ] \
+    && pass "every roster dimension carries at least one criterion" \
+    || fail "$barren dimension(s) carry no criterion at all, so nothing enumerates what they owe: $(tr '\n' ' ' < "$work/barren-dims")"
+
 over_cap=$(crit_field 2 | sort | uniq -c | awk '$1 > 4' | grep -c . || true)
 [ "$over_cap" -eq 0 ] \
     && pass "no dimension carries more than four criteria" \
     || fail "$over_cap dimension(s) carry more than the four-criteria cap"
 
+crit_field 1 > "$work/crit-ids"
 crit_field 2 > "$work/crit-dim-col"
 crit_field 4 > "$work/crit-tier-col"
+paste -d'|' "$work/crit-ids" "$work/crit-dim-col" > "$work/crit-id-dim"
+paste -d'|' "$work/crit-ids" "$work/crit-tier-col" > "$work/crit-id-tier"
 over_advisory=$(paste -d'\t' "$work/crit-dim-col" "$work/crit-tier-col" \
     | awk -F'\t' '$2 == "advisory" { print $1 }' | sort | uniq -c | awk '$1 > 1' | grep -c . || true)
 [ "$over_advisory" -eq 0 ] \
@@ -376,14 +391,14 @@ dup_ids=$(crit_field 1 | sort | uniq -d | grep -c . || true)
 # pattern budget. A criterion nothing can search for is a row that reports
 # uncovered forever.
 widest=$(crit_field 2 | sort | uniq -c | awk 'NR == 1 || $1 > m { m = $1 } END { print m + 0 }')
-[ "$(const_val PATTERNS_PER_DIM)" -ge "$widest" ] \
+[ "$patterns_per_dim" -ge "$widest" ] \
     && pass "every criterion is reachable: PATTERNS_PER_DIM covers the widest dimension's $widest criteria" \
-    || fail "the widest dimension carries $widest criteria but PATTERNS_PER_DIM is $(const_val PATTERNS_PER_DIM), so some criterion gets no pattern"
+    || fail "the widest dimension carries $widest criteria but PATTERNS_PER_DIM is $patterns_per_dim, so some criterion gets no pattern"
 
 # No unused tier value. A tier nothing declares is scaffolding: it has a name,
 # a documented disposition, and no way to ever be exercised.
 for tier in in-file cross-file advisory; do
-    crit_field 4 | grep -qx "$tier" \
+    grep -qx "$tier" "$work/crit-tier-col" \
         && pass "the $tier tier is declared by at least one criterion" \
         || fail "no criterion declares the $tier tier, so the value is unreachable scaffolding"
 done
@@ -393,12 +408,31 @@ done
 # rules a live run is asserted against. `field_count_violations` is pure awk
 # over an emitted record, so it belongs here rather than beside the host runs.
 # ---------------------------------------------------------------------------
+# The four field counts are read from the emit contract's own line templates,
+# so a template that gains or loses a field fails here instead of leaving the
+# checker describing an older shape.
+emit_template_fields() { # line-template prefix -> the field count that template declares
+    grep -m 1 "^$1 " "$skill" | awk -F' [|] ' '{ print NF }'
+}
+audit_run_fields=$(emit_template_fields 'audit-run <token>')
+dimension_fields=$(emit_template_fields 'dimension <name>')
+criterion_fields=$(emit_template_fields 'criterion <id>')
+finding_fields=$(emit_template_fields 'finding <fingerprint>')
+for pair in "audit-run:$audit_run_fields" "dimension:$dimension_fields" \
+            "criterion:$criterion_fields" "finding:$finding_fields"; do
+    case "${pair#*:}" in
+        ''|*[!0-9]*) echo "FAIL: the ${pair%%:*} line template did not parse out of the emit contract."; exit 1 ;;
+    esac
+done
+pass "emit: all four line templates parse to $audit_run_fields/$dimension_fields/$criterion_fields/$finding_fields fields"
+
 field_count_violations() {
-    awk -F' \\| ' '
-        /^audit-run /{ if (NF != 9) print "audit-run has " NF " fields, wanted 9" }
-        /^dimension /{ if (NF != 6) print "dimension has " NF " fields, wanted 6" }
-        /^criterion /{ if (NF != 7) print "criterion has " NF " fields, wanted 7" }
-        /^finding /  { if (NF != 6) print "finding has " NF " fields, wanted 6" }
+    awk -F' \\| ' -v ar="$audit_run_fields" -v dm="$dimension_fields" \
+                  -v cr="$criterion_fields" -v fd="$finding_fields" '
+        /^audit-run /{ if (NF != ar) print "audit-run has " NF " fields, wanted " ar }
+        /^dimension /{ if (NF != dm) print "dimension has " NF " fields, wanted " dm }
+        /^criterion /{ if (NF != cr) print "criterion has " NF " fields, wanted " cr }
+        /^finding /  { if (NF != fd) print "finding has " NF " fields, wanted " fd }
         { for (i = 1; i <= NF; i++) if ($i ~ /^[[:space:]]*$/) print "blank field " i " in: " $0 }
     '
 }
@@ -410,11 +444,40 @@ prefix_count() { # prefix, record -> how many lines carry that prefix
 # A well-formed record for one dimension carrying two criteria. Every field is
 # populated, because NO FIELD IS EVER BLANK is the rule being replayed, and the
 # ids are real roster ids so the record cannot drift from what the run emits.
-replay_good='audit-run tok-1 | abc1234 | write | 3 | none | 1/0 | 2 | 0 | none
-dimension correctness and control flow | clean | 2/2/9 | 0.22 | 0.22 | full
-criterion cc-error-path | correctness and control flow | in-file | clean | 1/2/5 | 0.40 | 0.20
-criterion cc-stub | correctness and control flow | in-file | clean | 1/2/4 | 0.50 | 0.25
+replay_good='audit-run tok-1 | abc1234 | writing | 3 | none | 1/0 | 2 | 0 | none
+dimension correctness and control flow | clean | 7/7/9 | 0.78 | 0.78 | full
+criterion cc-error-path | correctness and control flow | in-file | clean | 4/4/5 | 0.80 | 0.80
+criterion cc-stub | correctness and control flow | in-file | clean | 3/3/4 | 0.75 | 0.75
 finding a1b2c3 | correctness and control flow | P2 | filed | bd-7 | src/a.py:10-12'
+
+# The dimension line is a restatement of its criterion lines, so the three
+# numerators must add up. The blessed record shipped violating this, which is
+# how a fixture that models the rules ends up modelling none of them.
+dimension_sum_violations() { # record -> one line per dimension whose triple is not its criteria's sum
+    printf '%s\n' "$1" | awk -F' [|] ' '
+        function triple(s, out,   n, f) { n = split(s, f, "/"); out[1] = f[1] + 0; out[2] = f[2] + 0; out[3] = f[3] + 0 }
+        /^dimension / { d = $1; sub(/^dimension[ \t]+/, "", d); triple($3, v); ds[d] = v[1]; di[d] = v[2]; dp[d] = v[3]; order[++n] = d }
+        /^criterion /  { triple($5, v); cs[$2] += v[1]; ci[$2] += v[2]; cp[$2] += v[3] }
+        END { for (i = 1; i <= n; i++) { d = order[i]
+                if (ds[d] != cs[d] || di[d] != ci[d] || dp[d] != cp[d])
+                    print d " declares " ds[d] "/" di[d] "/" dp[d] ", its criteria sum to " cs[d] + 0 "/" ci[d] + 0 "/" cp[d] + 0 } }
+    '
+}
+[ -z "$(dimension_sum_violations "$replay_good")" ] \
+    && pass "replay: the dimension line's three numbers are the sum over its criterion lines" \
+    || fail "replay: the blessed record's dimension line does not restate its criteria: $(dimension_sum_violations "$replay_good")"
+skewed=$(printf '%s\n' "$replay_good" | sed 's|^dimension correctness and control flow . clean . 7/7/9|dimension correctness and control flow \| clean \| 7/2/9|')
+[ -n "$(dimension_sum_violations "$skewed")" ] \
+    && pass "replay: a dimension line that does not add up to its criteria is caught" \
+    || fail "replay: a dimension line contradicting its own criterion lines passed"
+
+# Every value in the blessed record comes from the procedure's own closed
+# vocabulary. `write` shipped here where the table says `writing`.
+mode_vocab=$(sed -n 's/^| `<mode>` | \(.*\) |$/\1/p' "$skill" | tr -d '`' | tr ',' '\n' | tr -d ' ')
+record_mode=$(printf '%s\n' "$replay_good" | awk -F' [|] ' '/^audit-run /{ print $3 }')
+printf '%s\n' "$mode_vocab" | grep -qx "$record_mode" \
+    && pass "replay: the blessed record's <mode> is drawn from the procedure's closed vocabulary" \
+    || fail "replay: the blessed record carries mode '$record_mode', which the <mode> vocabulary does not list"
 
 violations=$(printf '%s\n' "$replay_good" | field_count_violations)
 [ -z "$violations" ] \
@@ -427,12 +490,12 @@ violations=$(printf '%s\n' "$replay_good" | field_count_violations)
 
 # A criterion line one field short is caught, the same way a short dimension
 # line already is. Without this the new prefix would be unchecked text.
-replay_short=$(printf '%s\n' "$replay_good" | sed 's/^criterion cc-stub.*/criterion cc-stub | correctness and control flow | in-file | clean | 1\/2\/4 | 0.50/')
+replay_short=$(printf '%s\n' "$replay_good" | sed 's/^criterion cc-stub.*/criterion cc-stub | correctness and control flow | in-file | clean | 3\/3\/4 | 0.75/')
 printf '%s\n' "$replay_short" | field_count_violations | grep -q 'criterion has 6 fields' \
     && pass "replay: a criterion line one field short is caught" \
     || fail "replay: a short criterion line passed the field-count check"
 
-replay_blank=$(printf '%s\n' "$replay_good" | sed 's/| in-file | clean | 1\/2\/5/|  | clean | 1\/2\/5/')
+replay_blank=$(printf '%s\n' "$replay_good" | sed 's/| in-file | clean | 4\/4\/5/|  | clean | 4\/4\/5/')
 printf '%s\n' "$replay_blank" | field_count_violations | grep -q '^blank field' \
     && pass "replay: a blank field in a criterion line is caught" \
     || fail "replay: a blank criterion field passed the no-blank-field check"
@@ -446,28 +509,55 @@ short_record=$(printf '%s\n' "$replay_good" | grep -v '^criterion cc-stub')
     && pass "replay: a record missing a criterion line counts one fewer than the record that carries it" \
     || fail "replay: dropping a criterion line did not change the criterion count"
 
+# The `<dims>` joiner. A live run picked `+` by analogy with `<flags>` while
+# the expected table wanted `,`, and the procedure had stated one joiner and
+# not the other. Stating a joiner is only half of it: the joiner must also be a
+# character no dimension name contains, and `,` is not -- `state, ordering, and
+# idempotency` carries two of its own. Both halves are checked.
+dims_joiner=$(sed -n 's/^| `<dims>` | a `\(.\)`-joined list.*/\1/p' "$skill" | head -n 1)
+[ -n "$dims_joiner" ] \
+    && pass "emit: the procedure states the <dims> joiner rather than leaving it inferred from <flags>" \
+    || fail "emit: <dims> has no stated joiner, so a reader picks one by analogy with <flags>"
+grep -F "$dims_joiner" "$work/dim-names" > /dev/null \
+    && fail "emit: the <dims> joiner '$dims_joiner' occurs inside a dimension name, so a joined list cannot be split back apart" \
+    || pass "emit: the <dims> joiner occurs in no dimension name, so a joined list splits back to the names that made it"
+
 [ "$(prefix_count dimension "$replay_good")" -eq 1 ] \
     && pass "replay: the dimension count is unaffected by the criterion lines beside it" \
     || fail "replay: criterion lines disturbed the dimension count"
+
+# COUNT THE EMIT's dimension clause, on the push path. CASE G exercises it
+# against a live run, but CI stops before PART 2, so the clause CI can reach is
+# this one. Both counts are compared against the rosters, not against the
+# record that produced them -- a record checked against itself proves nothing.
+[ "$(prefix_count criterion "$replay_good")" -ne "$criterion_size" ] \
+    && pass "count: a record carrying fewer criterion lines than the roster is not the roster's count" \
+    || fail "count: the two-criterion replay record accidentally equals the $criterion_size-criterion roster"
+full_record=$(awk -F'|' '{ id = $1; dim = $2 } { print "criterion " id " | " dim " | in-file | clean | 1/1/1 | 1.00 | 1.00" }' "$work/crit-id-dim")
+[ "$(prefix_count criterion "$full_record")" -eq "$criterion_size" ] \
+    && pass "count: a record built from the roster carries one criterion line per roster criterion" \
+    || fail "count: a record built from the roster does not match the roster's own count"
+one_short=$(printf '%s\n' "$full_record" | sed '$d')
+[ "$(prefix_count criterion "$one_short")" -ne "$criterion_size" ] \
+    && pass "count: a record one criterion line short fails the roster count, which is the stop COUNT THE EMIT owes" \
+    || fail "count: dropping a criterion line still satisfied the roster count"
+[ -z "$(emit_attribution_violations "$full_record")" ] \
+    && pass "count: every line of the roster-built record is attributed to its roster dimension" \
+    || fail "count: the roster-built record contradicts the roster it was built from"
 
 # The second half of the count clause: every emitted criterion is a roster
 # criterion, attributed to the dimension the roster gives it. A count alone
 # would accept a record that emitted the right number of the wrong criteria.
 emit_attribution_violations() { # record -> one line per criterion the roster contradicts
-    printf '%s\n' "$1" | grep '^criterion ' | while IFS= read -r line; do
-        eid=$(printf '%s\n' "$line" | awk -F'|' '{ sub(/^criterion[ \t]+/, "", $1); gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1 }')
-        edim=$(printf '%s\n' "$line" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
-        rdim=$(paste -d'|' "$work/crit-ids" "$work/crit-dims-aligned" | awk -F'|' -v k="$eid" '$1 == k { print $2 }')
-        if [ -z "$rdim" ]; then
-            echo "$eid is emitted but is not in the criterion roster"
-        elif [ "$rdim" != "$edim" ]; then
-            echo "$eid is emitted under $edim, but the roster gives it $rdim"
-        fi
-    done
+    printf '%s\n' "$1" | awk -F' [|] ' -v roster="$work/crit-id-dim" '
+        BEGIN { while ((getline r < roster) > 0) { split(r, f, "|"); rdim[f[1]] = f[2] } }
+        /^criterion / {
+            eid = $1; sub(/^criterion[ \t]+/, "", eid)
+            if (!(eid in rdim))       print eid " is emitted but is not in the criterion roster"
+            else if (rdim[eid] != $2) print eid " is emitted under " $2 ", but the roster gives it " rdim[eid]
+        }
+    '
 }
-
-crit_field 1 > "$work/crit-ids"
-crit_field 2 > "$work/crit-dims-aligned"
 
 [ -z "$(emit_attribution_violations "$replay_good")" ] \
     && pass "replay: every emitted criterion is a roster criterion under its roster dimension" \
@@ -498,11 +588,10 @@ emit_attribution_violations "$replay_unknown" | grep -q 'not in the criterion ro
 recount_disagreements() { # return-text, then the criterion ids the dimension owns
     ret=$1; shift
     owned=" $* "
-    printf '%s\n' "$ret" | awk -F'|' -v owned="$owned" '
-        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-        /^receipt / { c = trim($2); seen[c]++
+    printf '%s\n' "$ret" | awk -F' [|] ' -v owned="$owned" '
+        /^receipt / { c = $2; seen[c]++
                       if (index(owned, " " c " ") == 0) print "receipt names " c ", outside the dimension set" }
-        /^count /   { c = trim($1); sub(/^count[ \t]+/, "", c); declared[c] = trim($2) + 0 }
+        /^count /   { c = $1; sub(/^count[ \t]+/, "", c); declared[c] = $2 + 0 }
         END { for (c in declared) if (declared[c] != seen[c]) print "criterion " c " declared " declared[c] " receipt(s), carries " seen[c] + 0 }
     '
 }
@@ -537,6 +626,63 @@ silent=$(recount_disagreements "$return_silent" cc-existing cc-error-path cc-stu
     || fail "replay: a zero-receipt criterion was mis-flagged as a count disagreement: $silent"
 
 # ---------------------------------------------------------------------------
+# THE RULES THE REPLAYS MODEL, READ OUT OF THE PROCEDURE.
+#
+# Every replay below is a shell reimplementation of a rule stated in prose. A
+# reimplementation asserted only against itself passes forever, including after
+# the rule it models is deleted. These greps do not make the replays faithful --
+# they make a deleted or reversed rule fail here rather than silently.
+# ---------------------------------------------------------------------------
+grounded() { # human-readable rule name, then the literal text that must be in the procedure
+    if grep -qF "$2" "$skill"; then
+        pass "grounding: the procedure still states $1"
+    else
+        fail "grounding: the procedure no longer states $1, so the replay below models nothing"
+    fi
+}
+grounded "that a recipe is one or two clause-lines" \
+    "A RECIPE CARRIES ONE OR TWO CLAUSE-LINES"
+grounded "that a third clause is unparseable" \
+    "Three or more clause-lines is \`recipe-unparseable\`"
+grounded "that an advisory finding makes no tracker write" \
+    "it makes NO TRACKER WRITE"
+grounded "that the credential test outranks the tier" \
+    "THE CREDENTIAL AND PERSONAL-DATA TEST OUTRANKS THIS RULE"
+grounded "that every clause must reproduce before filing" \
+    "file only if EVERY clause of it reproduces the finding"
+grounded "that the filing ceiling is apportioned, not first-come" \
+    "NOT AWARDED FIRST-COME"
+grounded "that the dimension is a roll-up rather than a second measurement" \
+    "THE DIMENSION IS A ROLL-UP, NOT A SECOND MEASUREMENT"
+grounded "that a criterion under its floor needs an exhaustive search" \
+    "CRITERION_POPULATION_FLOOR"
+
+# The gate list, by name and by count. Six bullets were once introduced under a
+# sentence reading `Four gates`, and nothing caught it.
+gate_names="GUARD TIER CITATION RECEIPT RECIPE"
+for g in $gate_names; do
+    grep -q "^- $g\." "$skill" \
+        && pass "grounding: the $g verification gate is still in the gate list" \
+        || fail "grounding: the $g verification gate left the gate list"
+done
+grep -q '^- PROOF AT FILE TIME\.' "$skill" \
+    && pass "grounding: the PROOF AT FILE TIME verification gate is still in the gate list" \
+    || fail "grounding: the PROOF AT FILE TIME verification gate left the gate list"
+gate_block=$(sed -n '/^SIX GATES, APPLIED IN THIS ORDER/,/^THE RECIPE GRAMMAR/p' "$skill")
+gate_count=$(printf '%s\n' "$gate_block" | grep -c '^- ' || true)
+[ "$gate_count" -eq 6 ] \
+    && pass "grounding: the gate list carries the six gates its own sentence declares" \
+    || fail "grounding: the gate list declares six gates and carries $gate_count"
+# GUARD only removes candidates and TIER decides an advisory finding, so both
+# must precede RECIPE -- reached after it, an advisory finding is discarded as
+# recipe-unparseable for lacking evidence it was never asked for.
+gate_order=$(printf '%s\n' "$gate_block" | sed -n 's/^- \([A-Z][A-Z ]*\)\..*/\1/p' | tr '\n' ' ')
+case "$gate_order" in
+    "GUARD TIER "*) pass "grounding: GUARD and TIER are applied before the recipe gates" ;;
+    *)             fail "grounding: the gate order is '$gate_order'; an advisory finding reaches RECIPE and is discarded" ;;
+esac
+
+# ---------------------------------------------------------------------------
 # THE RECIPE'S ARITY AND THE TIER'S DISPOSITION, REPLAYED.
 #
 # A recipe is one or two clause-lines, each exactly the five-field grammar.
@@ -545,12 +691,10 @@ silent=$(recount_disagreements "$return_silent" cc-existing cc-error-path cc-stu
 # reproduced -- all of which are decidable over text.
 # ---------------------------------------------------------------------------
 recipe_verdict() { # recipe text (one clause per line) -> parseable | recipe-unparseable
-    printf '%s\n' "$1" | awk -F'|' '
-        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    printf '%s\n' "$1" | awk -F' [|] ' '
         NF > 0 { clauses++
                  if (NF != 5) bad = "field count"
-                 f = trim($3)
-                 if (f ~ /^classifier:/) classifier++
+                 if ($3 ~ /^classifier:/) classifier++
                }
         END { if (clauses < 1 || clauses > 2) print "recipe-unparseable"
               else if (bad != "")            print "recipe-unparseable"
@@ -635,7 +779,7 @@ awk -v f="$coverage_floor" 'BEGIN { exit !(f > 0 && f < 1) }' \
 crit_floor=$(const_val CRITERION_POPULATION_FLOOR)
 case "$crit_floor" in
     ''|*[!0-9]*) fail "CRITERION_POPULATION_FLOOR is absent from the constants block or is not a count: '$crit_floor'" ;;
-    *) [ "$crit_floor" -lt "$(const_val POPULATION_FLOOR)" ] \
+    *) [ "$crit_floor" -lt "$pop_floor" ] \
         && pass "constants: CRITERION_POPULATION_FLOOR sits below the dimension's POPULATION_FLOOR" \
         || fail "constants: a criterion floor at or above the dimension floor makes the dimension floor unreachable" ;;
 esac
@@ -675,6 +819,8 @@ criterion_verdict() { # population, investigated, exhaustive(yes/no) -> clean|un
 
 dimension_rollup() { # dimension population, then one criterion verdict per argument
     dpop=$1; shift
+    # Rule 0: a dimension with no criteria is audited by nothing.
+    [ "$#" -eq 0 ] && { echo uncovered; return; }
     any_uncovered=0; any_clean=0; any_other=0
     for v in "$@"; do
         case "$v" in
@@ -685,7 +831,7 @@ dimension_rollup() { # dimension population, then one criterion verdict per argu
     done
     [ "$any_uncovered" -eq 1 ] && { echo uncovered; return; }
     [ "$any_clean" -eq 0 ] && [ "$any_other" -eq 1 ] && { echo skipped; return; }
-    [ "$dpop" -lt "$(const_val POPULATION_FLOOR)" ] && { echo uncovered; return; }
+    [ "$dpop" -lt "$pop_floor" ] && { echo uncovered; return; }
     echo clean
 }
 
@@ -709,6 +855,9 @@ dimension_rollup() { # dimension population, then one criterion verdict per argu
 [ "$(dimension_rollup 4 uncovered skipped skipped skipped)" = uncovered ] \
     && pass "roll-up: an uncovered criterion is read before either floor or the skip rule" \
     || fail "roll-up: the resolution order let an uncovered criterion be masked"
+[ "$(dimension_rollup 40)" = uncovered ] \
+    && pass "roll-up: a dimension with no criteria at all is uncovered, never vacuously clean" \
+    || fail "roll-up: an empty criterion set reached the clean line"
 
 # ---------------------------------------------------------------------------
 # THE LEDGER'S SKIP DECISION, REPLAYED.
@@ -723,7 +872,7 @@ ledger_row_fields() { # a row -> its field count
 
 # unchanged-paths is a space-joined list of the paths this run re-proved
 # unchanged against an ancestor SHA; digest is the run's current roster digest.
-ledger_skips() { # row, unchanged-paths, current-digest -> skip | audit:<reason>
+ledger_skips() { # row, unchanged-paths, current-digest, is-cross-file (0/1, default 0) -> skip | audit:<reason>
     printf '%s\n' "$1" | awk -F' [|] ' -v unchanged=" $2 " -v cur="$3" '
         { crit = $2; p1 = $3; p2 = $4; verdict = $5; digest = $7 }
         END {
@@ -745,6 +894,14 @@ row_cross_half='interface and contract drift | id-doc-drift | src/route.py | non
 # The replay rows name real roster criteria, so a row can never describe a
 # criterion the procedure does not have -- the same grounding the emit replay
 # takes, for the same reason.
+crit_tier_of() { # criterion id -> its roster tier, empty when the roster has no such id
+    awk -F'|' -v k="$1" '$1 == k { print $2 }' "$work/crit-id-tier"
+}
+doc_drift_cross=$([ "$(crit_tier_of id-doc-drift)" = cross-file ] && echo 1 || echo 0)
+[ "$doc_drift_cross" -eq 1 ] \
+    && pass "ledger: id-doc-drift is cross-file in the roster, so the two-path scenario is one the ledger sees" \
+    || fail "ledger: id-doc-drift is no longer cross-file, so the two-path replay describes a case that cannot arise"
+
 for rid in cc-error-path cc-stub id-doc-drift; do
     grep -qx "$rid" "$work/crit-ids" \
         && pass "ledger: the replay row for $rid names a roster criterion" \
@@ -776,15 +933,15 @@ declared_cols=$(grep -A1 '^## LEDGER$' "$skill" | tail -n 1 | awk -F' [|] ' '{ p
     && pass "ledger: a changed roster digest invalidates rows recorded under the previous one" \
     || fail "ledger: a row survived a roster change"
 
-[ "$(ledger_skips "$row_cross" "src/route.py docs/api.md" d9 1)" = skip ] \
+[ "$(ledger_skips "$row_cross" "src/route.py docs/api.md" d9 "$doc_drift_cross")" = skip ] \
     && pass "ledger: a cross-file row skips only once both recorded paths re-prove unchanged" \
     || fail "ledger: a fully re-proved cross-file row did not skip"
 
-[ "$(ledger_skips "$row_cross" "src/route.py" d9 1)" = audit:second-path-changed ] \
+[ "$(ledger_skips "$row_cross" "src/route.py" d9 "$doc_drift_cross")" = audit:second-path-changed ] \
     && pass "ledger: a cross-file row whose second path changed is audited -- that is the defect it would hide" \
     || fail "ledger: a cross-file row cached over a changed counterpart"
 
-[ "$(ledger_skips "$row_cross_half" "src/route.py" d9 1)" = audit:no-second-path ] \
+[ "$(ledger_skips "$row_cross_half" "src/route.py" d9 "$doc_drift_cross")" = audit:no-second-path ] \
     && pass "ledger: a cross-file criterion with no recorded second path is never skip-eligible" \
     || fail "ledger: a half-recorded cross-file row authorised a skip"
 
@@ -825,6 +982,11 @@ both_clean=$(compact_criteria "$(printf '%s\n%s\n' "$row_in_file" "$(printf '%s\
 # Filed first-come, one prolific criterion spends the whole budget before a
 # later criterion files anything.
 # ---------------------------------------------------------------------------
+filing_ceiling=$(const_val FILING_CEILING)
+[ -n "$filing_ceiling" ] \
+    && pass "constants: FILING_CEILING parses, so the apportionment is checked against the real budget" \
+    || fail "constants: FILING_CEILING did not parse out of the constants block"
+
 apportion() { # ceiling, then "<criterion>:<confirmed>" per argument -> "<criterion>:<filed>" lines
     cap=$1; shift
     printf '%s\n' "$@" | awk -F: -v cap="$cap" '
@@ -846,29 +1008,44 @@ apportion() { # ceiling, then "<criterion>:<confirmed>" per argument -> "<criter
     '
 }
 
-# One prolific criterion and three quiet ones. First-come would file 40 of the
-# prolific one's findings and none of the others.
-apportioned=$(apportion 40 a:100 b:5 c:5 d:5)
-[ "$(printf '%s\n' "$apportioned" | awk -F: '{ s += $2 } END { print s }')" -eq 40 ] \
+# One prolific criterion and three quiet ones. First-come would file the whole
+# ceiling from the prolific one and nothing from the others.
+apportioned=$(apportion "$filing_ceiling" a:100 b:5 c:5 d:5)
+[ "$(printf '%s\n' "$apportioned" | awk -F: '{ s += $2 } END { print s }')" -eq "$filing_ceiling" ] \
     && pass "apportionment: the whole ceiling is spent, and no more than the ceiling" \
     || fail "apportionment: the filed total does not equal FILING_CEILING"
 [ "$(printf '%s\n' "$apportioned" | awk -F: '$1 == "b" { print $2 }')" -eq 5 ] \
     && pass "apportionment: a quiet criterion files everything it confirmed rather than being crowded out" \
     || fail "apportionment: a prolific criterion crowded out a quiet one's confirmed findings"
-[ "$(printf '%s\n' "$apportioned" | awk -F: '$1 == "a" { print $2 }')" -eq 25 ] \
+[ "$(printf '%s\n' "$apportioned" | awk -F: '$1 == "a" { print $2 }')" -eq $((filing_ceiling - 15)) ] \
     && pass "apportionment: the unused share returns to the criterion that can still use it" \
     || fail "apportionment: the returned share was not redistributed"
 
+# Both passes are severity-ordered. A criterion filling its own share out of
+# order spends it on the lesser finding and pushes the greater one over the
+# ceiling -- which is the outcome CRITICAL_CEILING exists to prevent.
+fill_in_severity_order() { # share, then "<severity>" per confirmed finding -> the severities filed
+    share=$1; shift
+    printf '%s\n' "$@" | sort | head -n "$share"
+}
+filled=$(fill_in_severity_order 2 P2 P0 P3 P1)
+[ "$(printf '%s\n' "$filled" | tr '\n' ' ')" = "P0 P1 " ] \
+    && pass "apportionment: a criterion fills its own share in severity order, P0 before P2" \
+    || fail "apportionment: a criterion's share was filled out of severity order: $(printf '%s\n' "$filled" | tr '\n' ' ')"
+printf '%s\n' "$filled" | grep -qx P0 \
+    && pass "apportionment: the P0 is inside the share rather than pushed over the ceiling" \
+    || fail "apportionment: a P0 was pushed over the ceiling by a lesser finding from the same criterion"
+
 # Nobody is over the ceiling, so nobody is apportioned away from.
-under=$(apportion 40 a:3 b:4)
+under=$(apportion "$filing_ceiling" a:3 b:4)
 [ "$(printf '%s\n' "$under" | awk -F: '{ s += $2 } END { print s }')" -eq 7 ] \
     && pass "apportionment: a run under the ceiling files every confirmed finding" \
     || fail "apportionment: a run under the ceiling lost findings to the division"
 
 # A single criterion holding everything still gets the whole budget: the rule
 # apportions, it does not cap a criterion at its share.
-solo=$(apportion 40 a:100)
-[ "$(printf '%s\n' "$solo" | awk -F: '{ print $2 }')" -eq 40 ] \
+solo=$(apportion "$filing_ceiling" a:100)
+[ "$(printf '%s\n' "$solo" | awk -F: '{ print $2 }')" -eq "$filing_ceiling" ] \
     && pass "apportionment: one criterion holding every confirmed finding still fills the ceiling" \
     || fail "apportionment: the division starved the only criterion with findings"
 
@@ -1140,17 +1317,17 @@ target_a=$(fresh_target no)
 emit_a=$(run_audit "$target_a" writing "$fixtures" first "This is the first run against this repository.")
 
 if emit_usable "$emit_a"; then
-    headers=$(printf '%s\n' "$emit_a" | grep -c '^audit-run ' || true)
+    headers=$(prefix_count audit-run "$emit_a")
     [ "$headers" -eq 1 ] \
         && pass "the run emitted exactly one audit-run header" \
         || fail "the run emitted $headers audit-run header(s), wanted 1"
 
-    dims=$(printf '%s\n' "$emit_a" | grep -c '^dimension ' || true)
+    dims=$(prefix_count dimension "$emit_a")
     [ "$dims" -eq "$roster_size" ] \
         && pass "the run emitted one dimension line per roster dimension" \
         || fail "the run emitted $dims dimension line(s), wanted $roster_size"
 
-    finds=$(printf '%s\n' "$emit_a" | grep -c '^finding ' || true)
+    finds=$(prefix_count finding "$emit_a")
     [ "$finds" -eq "$count" ] \
         && pass "the run emitted one finding line per fixture record" \
         || fail "the run emitted $finds finding line(s), wanted $count"
@@ -1169,7 +1346,7 @@ if emit_usable "$emit_a"; then
     # disposition, the resolution to an issue or not, and the location.
     cat > "$work/expected-a" <<'EXPECTED'
 finding #1 | correctness and control flow | P1 | report-only | none | src/reader.py:41-47
-finding #2 | state, ordering, and idempotency,correctness and control flow | P0 | report-only | none | src/queue.py:88-96
+finding #2 | state, ordering, and idempotency+correctness and control flow | P0 | report-only | none | src/queue.py:88-96
 finding #3 | input boundaries and untrusted data | P0 | report-only | none | src/config.py:12-12
 EXPECTED
     printf '%s\n' "$emit_a" | normalize_findings | sort > "$work/actual-a"
