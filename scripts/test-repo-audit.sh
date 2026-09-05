@@ -391,11 +391,12 @@ prefix_count() { # prefix, record -> how many lines carry that prefix
 }
 
 # A well-formed record for one dimension carrying two criteria. Every field is
-# populated, because NO FIELD IS EVER BLANK is the rule being replayed.
+# populated, because NO FIELD IS EVER BLANK is the rule being replayed, and the
+# ids are real roster ids so the record cannot drift from what the run emits.
 replay_good='audit-run tok-1 | abc1234 | write | 3 | none | 1/0 | 2 | 0 | none
 dimension correctness and control flow | clean | 2/2/9 | 0.22 | 0.22 | full
-criterion cc-missing-error-path | correctness and control flow | in-file | clean | 0.22 | 0.22 | 9
-criterion cc-unreachable-branch | correctness and control flow | in-file | clean | 0.20 | 0.20 | 10
+criterion cc-error-path | correctness and control flow | in-file | clean | 1/2/5 | 0.40 | 0.20
+criterion cc-stub | correctness and control flow | in-file | clean | 1/2/4 | 0.50 | 0.25
 finding a1b2c3 | correctness and control flow | P2 | filed | bd-7 | src/a.py:10-12'
 
 violations=$(printf '%s\n' "$replay_good" | field_count_violations)
@@ -409,12 +410,12 @@ violations=$(printf '%s\n' "$replay_good" | field_count_violations)
 
 # A criterion line one field short is caught, the same way a short dimension
 # line already is. Without this the new prefix would be unchecked text.
-replay_short=$(printf '%s\n' "$replay_good" | sed 's/^criterion cc-unreachable-branch.*/criterion cc-unreachable-branch | correctness and control flow | in-file | clean | 0.20 | 10/')
+replay_short=$(printf '%s\n' "$replay_good" | sed 's/^criterion cc-stub.*/criterion cc-stub | correctness and control flow | in-file | clean | 1\/2\/4 | 0.50/')
 printf '%s\n' "$replay_short" | field_count_violations | grep -q 'criterion has 6 fields' \
     && pass "replay: a criterion line one field short is caught" \
     || fail "replay: a short criterion line passed the field-count check"
 
-replay_blank=$(printf '%s\n' "$replay_good" | sed 's/| in-file | clean | 0.22/|  | clean | 0.22/')
+replay_blank=$(printf '%s\n' "$replay_good" | sed 's/| in-file | clean | 1\/2\/5/|  | clean | 1\/2\/5/')
 printf '%s\n' "$replay_blank" | field_count_violations | grep -q '^blank field' \
     && pass "replay: a blank field in a criterion line is caught" \
     || fail "replay: a blank criterion field passed the no-blank-field check"
@@ -423,7 +424,7 @@ printf '%s\n' "$replay_blank" | field_count_violations | grep -q '^blank field' 
 # the failure U5 exists to make loud, and it is asserted here rather than in a
 # live run because a live run is not on the push path.
 emitted_criteria=$(prefix_count criterion "$replay_good")
-short_record=$(printf '%s\n' "$replay_good" | grep -v '^criterion cc-unreachable-branch')
+short_record=$(printf '%s\n' "$replay_good" | grep -v '^criterion cc-stub')
 [ "$(prefix_count criterion "$short_record")" -lt "$emitted_criteria" ] \
     && pass "replay: a record missing a criterion line counts one fewer than the record that carries it" \
     || fail "replay: dropping a criterion line did not change the criterion count"
@@ -431,6 +432,40 @@ short_record=$(printf '%s\n' "$replay_good" | grep -v '^criterion cc-unreachable
 [ "$(prefix_count dimension "$replay_good")" -eq 1 ] \
     && pass "replay: the dimension count is unaffected by the criterion lines beside it" \
     || fail "replay: criterion lines disturbed the dimension count"
+
+# The second half of the count clause: every emitted criterion is a roster
+# criterion, attributed to the dimension the roster gives it. A count alone
+# would accept a record that emitted the right number of the wrong criteria.
+emit_attribution_violations() { # record -> one line per criterion the roster contradicts
+    printf '%s\n' "$1" | grep '^criterion ' | while IFS= read -r line; do
+        eid=$(printf '%s\n' "$line" | awk -F'|' '{ sub(/^criterion[ \t]+/, "", $1); gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1 }')
+        edim=$(printf '%s\n' "$line" | awk -F'|' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
+        rdim=$(paste -d'|' "$work/crit-ids" "$work/crit-dims" | awk -F'|' -v k="$eid" '$1 == k { print $2 }')
+        if [ -z "$rdim" ]; then
+            echo "$eid is emitted but is not in the criterion roster"
+        elif [ "$rdim" != "$edim" ]; then
+            echo "$eid is emitted under $edim, but the roster gives it $rdim"
+        fi
+    done
+}
+
+crit_field 1 > "$work/crit-ids"
+crit_field 2 > "$work/crit-dims"
+
+[ -z "$(emit_attribution_violations "$replay_good")" ] \
+    && pass "replay: every emitted criterion is a roster criterion under its roster dimension" \
+    || fail "replay: a well-formed record was contradicted by the roster: $(emit_attribution_violations "$replay_good")"
+
+replay_misattributed=$(printf '%s\n' "$replay_good" | sed 's/^criterion cc-stub | correctness and control flow/criterion cc-stub | test integrity/')
+emit_attribution_violations "$replay_misattributed" | grep -q 'the roster gives it' \
+    && pass "replay: a criterion emitted under the wrong dimension is caught" \
+    || fail "replay: a misattributed criterion line passed the roster check"
+
+replay_unknown=$(printf '%s\n' "$replay_good" | sed 's/^criterion cc-stub/criterion cc-invented/')
+emit_attribution_violations "$replay_unknown" | grep -q 'not in the criterion roster' \
+    && pass "replay: a criterion line naming no roster criterion is caught" \
+    || fail "replay: an invented criterion id passed the roster check"
+
 
 # ---------------------------------------------------------------------------
 # THE RETURN'S OWN DISCARD PATHS, REPLAYED.
@@ -818,6 +853,11 @@ $extra
 Print the audit-run header line, one dimension line per roster dimension, and
 one finding line per surviving candidate, between a line reading AUDIT-BEGIN and
 a line reading AUDIT-END, and nothing else between those markers."
+    # No criterion line is asked for. These cases spawn no subagents, so the
+    # discovery half that measures per-criterion coverage never runs, and any
+    # criterion line the model printed would be invented. The COUNT THE EMIT
+    # criterion clause is replayed in PART 1 over a canned record instead --
+    # which is also where CI can reach it.
     host_run "$prompt" 'Bash(bd:*),Read,Write,Glob,Grep'
     # Each case's transcript is named after its own target and label, so two
     # cases never overwrite one another's evidence.
