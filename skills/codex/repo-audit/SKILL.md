@@ -169,7 +169,7 @@ rows: fingerprints=<n> ledger=<n> suppressions=<n>
 <fingerprint> | <issue-id> | <dims> | <path>:<lines> | <sha> | open|closed
 
 ## LEDGER
-<dimension> | <path-or-directory> | <verdict> | <sha> | <roster-digest> | <recorded-at>
+<dimension> | <criterion> | <path-or-directory> | <second-path-or-none> | <verdict> | <sha> | <roster-digest> | <recorded-at>
 
 ## SUPPRESSIONS
 <fingerprint> | <issue-id> | <evidence-hash> | <recorded-at>
@@ -189,7 +189,7 @@ A PARSE THAT FAILS STOPS THE RUN. A parse that cannot find a declared table, or 
 
 THE REBUILD, next to that rule because they are the two halves of one answer. The fingerprint and suppression tables are RECONSTRUCTIBLE from the issues themselves -- every filed issue carries its own fingerprint, dimension list, SHA and run token. So an absent or unrebuildable index costs a FULL AUDIT, never a corrupted backlog. Only the ledger has one copy, and losing it costs exactly one full audit.
 
-THE SIZE CAP. The rendered body stays under `INDEX_CAP`. Above `COMPACT_ABOVE` files, ledger rows collapse to directory granularity. Fingerprint rows for issues closed longer ago than the ledger's maximum age are dropped, being recoverable from the issues. SUPPRESSION ROWS ARE NEVER COMPACTED AWAY FOR SIZE; they leave the table only by expiring, and `## STALE-CLOSE SWEEP` owns that expiry. A run that cannot get under the cap STOPS rather than writing a truncated body.
+THE SIZE CAP. The rendered body stays under `INDEX_CAP`. Above `COMPACT_ABOVE` files, ledger rows collapse to directory granularity; where that is still over `INDEX_CAP`, A SECOND COMPACTION LEVEL COLLAPSES A DIMENSION'S CRITERION ROWS BACK INTO ONE ROW CARRYING `all` IN THE `<criterion>` COLUMN, which authorizes a skip only where every one of that dimension's criteria was clean. The run then caches at exactly the granularity it cached at before criteria existed, rather than stopping. Carrying the criterion's short id rather than its prose name is what keeps this the rare path. Fingerprint rows for issues closed longer ago than the ledger's maximum age are dropped, being recoverable from the issues. SUPPRESSION ROWS ARE NEVER COMPACTED AWAY FOR SIZE; they leave the table only by expiring, and `## STALE-CLOSE SWEEP` owns that expiry. A run that cannot get under the cap STOPS rather than writing a truncated body.
 
 RECONCILIATION, BEFORE ANY DIMENSION IS DISPATCHED. List audit-owned issues by their fingerprint key -- unioned with the gate-type query, since gates are invisible to the ordinary listing -- read their metadata back, and then:
 
@@ -686,14 +686,18 @@ A HEARTBEAT IS PUBLISHED BEFORE EACH INDEX WRITE and RE-READ IMMEDIATELY BEFORE 
 
 ## THE COVERAGE LEDGER
 
-Each run records, PER DIMENSION AND PER FILE, the SHA audited and the verdict reached.
+Each run records, PER CRITERION AND PER FILE, the SHA audited and the verdict reached. The criterion is the unit because the verdict is: `## COVERAGE ADJUDICATION` adjudicates each criterion separately, so a row keyed only to the dimension would cache a roll-up over criteria that were not all clean.
 
-A LATER RUN SKIPS A FILE FOR A DIMENSION ONLY WHEN BOTH HOLD:
+A LATER RUN SKIPS A FILE FOR A CRITERION ONLY WHEN BOTH HOLD:
 
-1. The recorded verdict was a COVERED CLEAN result -- never `uncovered`, never `skipped`.
+1. The recorded verdict was a COVERED CLEAN result for THAT CRITERION -- never `uncovered`, never `skipped`.
 2. The run INDEPENDENTLY PROVES THE ROW'S OWN FACTS: the recorded SHA is an ancestor of the current HEAD, and the file is unchanged between them.
 
-A row whose SHA does not resolve to an ancestor is INVALID, and its dimension is audited in full. The row is a claim, and this is the proof; a cache that is trusted without re-proof is not a cache, it is a second source of truth that nothing checks.
+Both conditions are read per criterion. A row for one criterion authorizes a skip for that criterion alone; its siblings in the same dimension and the same file are audited as though the row did not exist.
+
+A CROSS-FILE CRITERION'S ROW RECORDS BOTH CLAUSE PATHS, and authorizes a skip only when BOTH re-prove unchanged against the recorded SHA. Where the second path cannot be recorded, `<second-path-or-none>` is `none` and that criterion is NEVER SKIP-ELIGIBLE: it is audited in full every run. A row that caches on one of two files skips exactly the case where the absent link between them is the defect -- the caller changed and the callee did not -- which is the failure `## DIMENSION ROSTER` already gives as the reason those dimensions are non-cacheable at all.
+
+A row whose SHA does not resolve to an ancestor is INVALID, and its criterion is audited in full. The row is a claim, and this is the proof; a cache that is trusted without re-proof is not a cache, it is a second source of truth that nothing checks.
 
 EVERY INVALIDATION RULE, IN ONE PLACE. A ledger row does not authorize a skip when any of these holds:
 
@@ -701,7 +705,8 @@ EVERY INVALIDATION RULE, IN ONE PLACE. A ledger row does not authorize a skip wh
 |---|---|
 | the repository's stated rules changed | all dimensions |
 | this skill itself changed | all dimensions |
-| that dimension's most recent verdict was `uncovered` | that dimension |
+| that criterion's most recent verdict was `uncovered` | that criterion |
+| a cross-file criterion's row records no second path, or either recorded path changed | that criterion |
 | the roster digest recorded beside the verdict differs from the current one | that dimension |
 | that criterion left the criterion roster, or its tier, guard, or meaning changed | that criterion |
 | the verdict is older than `EXTERNAL_VERDICT_AGE`, for a dimension grounded in facts outside the repository | that dimension |
