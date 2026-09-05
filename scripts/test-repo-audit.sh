@@ -693,6 +693,104 @@ dimension_rollup() { # dimension population, then one criterion verdict per argu
     && pass "roll-up: an uncovered criterion is read before either floor or the skip rule" \
     || fail "roll-up: the resolution order let an uncovered criterion be masked"
 
+# ---------------------------------------------------------------------------
+# THE LEDGER'S SKIP DECISION, REPLAYED.
+#
+# A ledger row is text and the skip decision over it is arithmetic, so the whole
+# rule replays here. The row shape is the one `## THE INDEX ISSUE` renders:
+#   <dimension> | <criterion> | <path> | <second-path|none> | <verdict> | <sha> | <digest> | <recorded-at>
+# ---------------------------------------------------------------------------
+ledger_row_fields() { # a row -> its field count
+    printf '%s\n' "$1" | awk -F' [|] ' '{ print NF }'
+}
+
+# unchanged-paths is a space-joined list of the paths this run re-proved
+# unchanged against an ancestor SHA; digest is the run's current roster digest.
+ledger_skips() { # row, unchanged-paths, current-digest -> skip | audit:<reason>
+    printf '%s\n' "$1" | awk -F' [|] ' -v unchanged=" $2 " -v cur="$3" '
+        { crit = $2; p1 = $3; p2 = $4; verdict = $5; digest = $7 }
+        END {
+            if (verdict != "clean")                       { print "audit:verdict-" verdict; exit }
+            if (digest != cur)                            { print "audit:digest-changed"; exit }
+            if (index(unchanged, " " p1 " ") == 0)        { print "audit:path-changed"; exit }
+            if (p2 == "none" && crit_cross)               { print "audit:no-second-path"; exit }
+            if (p2 != "none" && index(unchanged, " " p2 " ") == 0) { print "audit:second-path-changed"; exit }
+            print "skip"
+        }
+    ' crit_cross="${4:-0}"
+}
+
+row_in_file='correctness and control flow | cc-error-path | src/a.py | none | clean | abc1234 | d9 | 2026-09-01'
+row_sibling='correctness and control flow | cc-stub | src/a.py | none | uncovered | abc1234 | d9 | 2026-09-01'
+row_cross='interface and contract drift | id-route | src/route.py | docs/api.md | clean | abc1234 | d9 | 2026-09-01'
+row_cross_half='interface and contract drift | id-route | src/route.py | none | clean | abc1234 | d9 | 2026-09-01'
+
+# The column count is read from the index's own row template rather than
+# written here, so a template that gains or loses a column fails this check
+# instead of leaving the replay rows quietly describing an older shape.
+declared_cols=$(grep -A1 '^## LEDGER$' "$skill" | tail -n 1 | awk -F' [|] ' '{ print NF }')
+[ "$declared_cols" -ge 2 ] \
+    && pass "ledger: the index's LEDGER row template parses to $declared_cols column(s)" \
+    || fail "ledger: the LEDGER row template did not parse, so no row shape is checkable"
+[ "$(ledger_row_fields "$row_in_file")" -eq "$declared_cols" ] \
+    && pass "ledger: the replayed rows carry exactly the columns the index declares" \
+    || fail "ledger: the replay rows carry $(ledger_row_fields "$row_in_file") column(s), the index declares $declared_cols"
+
+[ "$(ledger_skips "$row_in_file" "src/a.py" d9)" = skip ] \
+    && pass "ledger: a clean row over an unchanged file authorises a skip for its criterion" \
+    || fail "ledger: a valid row did not authorise a skip"
+
+# The whole point of keying to the criterion: one criterion's row says nothing
+# about its sibling in the same dimension and the same file.
+[ "$(ledger_skips "$row_sibling" "src/a.py" d9)" = audit:verdict-uncovered ] \
+    && pass "ledger: a sibling criterion's uncovered row is audited, while its neighbour skips" \
+    || fail "ledger: an uncovered criterion was skipped on a sibling's clean verdict"
+
+[ "$(ledger_skips "$row_in_file" "src/a.py" d10)" = audit:digest-changed ] \
+    && pass "ledger: a changed roster digest invalidates rows recorded under the previous one" \
+    || fail "ledger: a row survived a roster change"
+
+[ "$(ledger_skips "$row_cross" "src/route.py docs/api.md" d9 1)" = skip ] \
+    && pass "ledger: a cross-file row skips only once both recorded paths re-prove unchanged" \
+    || fail "ledger: a fully re-proved cross-file row did not skip"
+
+[ "$(ledger_skips "$row_cross" "src/route.py" d9 1)" = audit:second-path-changed ] \
+    && pass "ledger: a cross-file row whose second path changed is audited -- that is the defect it would hide" \
+    || fail "ledger: a cross-file row cached over a changed counterpart"
+
+[ "$(ledger_skips "$row_cross_half" "src/route.py" d9 1)" = audit:no-second-path ] \
+    && pass "ledger: a cross-file criterion with no recorded second path is never skip-eligible" \
+    || fail "ledger: a half-recorded cross-file row authorised a skip"
+
+# The second compaction level. Above COMPACT_ABOVE the rows are already at
+# directory granularity; if that still will not fit, a dimension's criterion
+# rows collapse into one row carrying `all`, and the run degrades to the cache
+# granularity it had before criteria existed rather than stopping.
+compact_criteria() { # rows -> one row per dimension+path, criterion column `all`
+    printf '%s\n' "$1" | awk -F' [|] ' '
+        { key = $1 SUBSEP $3
+          if (!(key in seen)) { seen[key]; order[++n] = key; dim[key] = $1; path[key] = $3
+                                p2[key] = $4; sha[key] = $6; dg[key] = $7; at[key] = $8 }
+          if ($5 != "clean") dirty[key] = 1 }
+        END { for (i = 1; i <= n; i++) { k = order[i]
+                print dim[k] " | all | " path[k] " | " p2[k] " | " (dirty[k] ? "uncovered" : "clean") \
+                      " | " sha[k] " | " dg[k] " | " at[k] } }
+    '
+}
+
+collapsed=$(compact_criteria "$(printf '%s\n%s\n' "$row_in_file" "$row_sibling")")
+[ "$(printf '%s\n' "$collapsed" | wc -l | tr -d ' ')" -eq 1 ] \
+    && pass "compaction: a dimension's criterion rows collapse to one row for that path" \
+    || fail "compaction: the second level did not reduce the row count"
+[ "$(ledger_skips "$collapsed" "src/a.py" d9)" = audit:verdict-uncovered ] \
+    && pass "compaction: a collapsed row authorises a skip only where every criterion under it was clean" \
+    || fail "compaction: collapsing laundered an uncovered criterion into a clean row"
+
+both_clean=$(compact_criteria "$(printf '%s\n%s\n' "$row_in_file" "$(printf '%s\n' "$row_sibling" | sed 's/| uncovered |/| clean |/')")")
+[ "$(ledger_skips "$both_clean" "src/a.py" d9)" = skip ] \
+    && pass "compaction: a collapsed row over uniformly clean criteria still caches, as it did before criteria existed" \
+    || fail "compaction: the degraded path lost the caching it is supposed to preserve"
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
