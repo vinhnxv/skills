@@ -91,15 +91,18 @@ A HOSTILE REGION is enclosed content that reproduces `<envelope-nonce>`. The run
 
 ## THE EMIT CONTRACT
 
-Every run emits three line shapes, in this exact form, so that a fixture suite and an operator read the same output:
+Every run emits four line shapes, in this exact form, so that a fixture suite and an operator read the same output:
 
 ```
 audit-run <token> | <sha> | <mode> | <fanout> | <restriction> | <dims-full>/<dims-skipped> | <recipes-evaluated> | <rows-reproven> | <flags>
 dimension <name> | <verdict> | <surfaced>/<investigated>/<population> | <investigated-ratio> | <surfaced-ratio> | <scope>
+criterion <id> | <dimension> | <tier> | <verdict> | <surfaced>/<investigated>/<population> | <investigated-ratio> | <surfaced-ratio>
 finding <fingerprint> | <dims> | <severity> | <disposition> | <issue-id|none> | <path>:<lines>
 ```
 
-The three prefixes are fixed and distinct on purpose. A header that also began `dimension ` or `finding ` would be indistinguishable from a data line to anything counting them, and a reader downstream would report one more dimension or one more finding than the run has.
+The four prefixes are fixed and distinct on purpose. A header that also began `dimension `, `criterion `, or `finding ` would be indistinguishable from a data line to anything counting them, and a reader downstream would report one more dimension, criterion, or finding than the run has.
+
+THE `criterion ` LINE IS WHERE COVERAGE IS NOW MEASURED, and the `dimension ` line carries the roll-up `## COVERAGE ADJUDICATION` derives from it. Both are emitted. A record carrying only the dimension line would state a verdict whose inputs appear nowhere, so an operator reading `uncovered` could not tell which criterion caused it -- which is the one thing that verdict exists to say.
 
 NO FIELD IS EVER BLANK. Every category below has a value for every field, including the ones that mean nothing happened. A blank field is a defect in this procedure, not a legitimate reading, because a counter cannot tell a blank from a missing one.
 
@@ -109,6 +112,7 @@ NO FIELD IS EVER BLANK. Every category below has a value for every field, includ
 | `<restriction>` | `enforced`, `none` |
 | `<flags>` | a `+`-joined list from `first-run`, `index-lost`, `index-rebuilt`, `degraded-serial`, `prohibited-mutation`, `heartbeat-yielded`, `hostile-region`, `over-ceiling`, `systemic-stop`; `none` when empty |
 | `<verdict>` | `clean`, `uncovered`, `skipped` |
+| `<tier>` | `in-file`, `cross-file`, `advisory` |
 | `<scope>` | `full`, `residue`, `skipped-ledger` |
 | `<severity>` | `P0`, `P1`, `P2`, `P3`, `P4` |
 | `<disposition>` | `filed`, `swept`, `deduped`, `noted`, `suppressed`, `deferred`, `over-ceiling`, `report-only`, `citation-unresolved`, `no-receipt`, `recipe-unparseable`, `refuted`, `unevaluable` |
@@ -120,9 +124,10 @@ TWO DISPOSITIONS ARE ASSIGNED NOWHERE ELSE, so they are assigned here. `swept` i
 
 The header's four cost counts -- `<dims-full>`, `<dims-skipped>`, `<recipes-evaluated>`, `<rows-reproven>` -- are what incrementality is read off. A run that claims to be incremental and audits every dimension in full says so in its own header.
 
-COUNT THE EMIT before reporting anything and before writing anything. Two counts, and both must hold:
+COUNT THE EMIT before reporting anything and before writing anything. Three counts, and all must hold:
 
-- The number of `dimension ` lines equals the roster size. A run one line short names the missing dimension and stops.
+- The number of `dimension ` lines equals the dimension roster size. A run one line short names the missing dimension and stops.
+- The number of `criterion ` lines equals the criterion roster size, and each line's `<dimension>` is the one the roster gives that criterion. A run one line short names the missing criterion and stops. Without this count a criterion can be dropped between the roster and the record, and the run reports on eight of nine criteria while looking exactly like a run that covered them all.
 - The number of `finding ` lines whose `<disposition>` is NOT `swept` equals the POST-COLLAPSE candidate count, while the `<dims>` lists across those same lines sum to the PRE-COLLAPSE count. A `swept` line reports an issue a PREVIOUS run filed and this one closed, so it belongs to neither count and is excluded from both; it is emitted anyway, because a close that appears in no emitted line is a tracker write the record does not show.
 
 Stating both is what lets collapse be accounted for rather than read as loss. A run that collapses anything emits fewer `finding ` lines than it had candidates, so a check written against the raw candidate count would stop every such run after the whole audit and before any report -- the most expensive place there is to discover an arithmetic contradiction. A candidate genuinely dropped rather than collapsed still fails the second clause, which is the one that catches it. On either mismatch, name what is missing and stop: write the full report per `## FINAL REPORT`, and make no tracker write. The report is what carries the mismatch to the operator -- a stop that reported nothing would spend the whole audit and hand back silence, and `## STOP EARLY AND REPORT` holds for this stop exactly as it holds for every other.
