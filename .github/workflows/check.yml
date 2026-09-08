@@ -30,6 +30,25 @@ jobs:
       - name: The cross-skill check can still fail
         run: sh scripts/test-check-cross-skill.sh
 
+      # The third kind of invariant, and the only one with nowhere else to
+      # live. Parity compares a skill against its own other host copy, so it
+      # passes on two copies that are identically wrong; the cross-skill check
+      # owns only what spans two DIFFERENT skills. These rules are internal to
+      # `backlog-loop`: one part of the procedure supplies a fact another part
+      # rests on, inside one file. Each has already been deleted once, and each
+      # deletion wedged a run on the same terminal condition every invocation.
+      - name: The backlog-loop internal invariants hold
+        run: sh scripts/check-backlog-loop.sh
+
+      # Every assertion in that checker is a loop over a table matched on its
+      # exact header line, so a reformatting edit that touches no rule at all
+      # can empty the loop and leave a green run asserting nothing. This suite
+      # breaks each rule in turn and requires the right message back, then runs
+      # the whole set against a checker that cannot fail and requires every
+      # break to go undetected.
+      - name: The backlog-loop check can still fail
+        run: sh scripts/test-check-backlog-loop.sh
+
       # Supplementary gate only, and a partial one: probed against this
       # skill, `claude plugin validate --strict` catches a missing
       # `description` and a missing or empty frontmatter block, but passes a

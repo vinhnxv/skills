@@ -204,6 +204,7 @@ skills/codex/<skill-name>/     installable into ~/.codex/skills/
 prompts/                       companion launch prompts
 scripts/check-parity.sh        keeps the two host copies from drifting
 scripts/check-cross-skill.sh   keeps the two skills' shared assumptions true
+scripts/check-backlog-loop.sh  keeps backlog-loop's own internal rules in both copies
 scripts/test-*.sh              proves each checker still fails on a broken tree
 ```
 
