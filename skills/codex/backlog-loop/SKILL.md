@@ -79,7 +79,7 @@ Every fact a resumed run needs lives in tracker metadata on the batch's own memb
 | key | written at | value |
 |---|---|---|
 | `backlog_loop_run` | CLAIM | `<run-id>` |
-| `backlog_loop_phase` | each transition | `claimed`, `built`, `shipping-requested`, `pr-open`, `merge-requested`, `merged`, or `verified` |
+| `backlog_loop_phase` | each transition | `claimed`, `built`, `shipping-requested`, `pr-open`, `merge-requested`, `merged`, or `verified`. These seven are the only phase values this procedure writes. |
 | `backlog_loop_heartbeat` | CLAIM, every iteration step 1, and before CENSUS's first write | current ISO UTC time |
 | `backlog_loop_ci` | step 1, before any gate | `on` or `off`, the route this batch was gated under |
 | `backlog_loop_worktrees` | first CLEAN-TREE GATE RUN | `<worktree-root>` |
@@ -104,6 +104,7 @@ RECOVERY, by the recorded phase. Read it before touching anything; the whole poi
 - `merge-requested`: the outcome is unknown, which is exactly what this phase exists to record. Query `backlog_loop_pr`. `MERGED` -> treat as `merged` above. Any other state -> retire the PR, then reclaim.
 - `shipping-requested`: the push and PR creation were requested but their identifiers were never recorded, so a PR may exist under a URL the ledger does not hold. Search for it by the recorded branch and head - `gh pr list --head <backlog_loop_branch> --state all --json number,url,state,headRefOid,baseRefName` - and require exactly one match. `MERGED` -> treat as `merged` above. Open -> retire it, then reclaim. No match -> reclaim. More than one match -> STOP rather than guess which one this run created.
 - `pr-open`, `built`, or `claimed`: nothing shipped. Reclaim, retiring the PR first when `backlog_loop_pr` is set. Never resume a half-built branch into a merge; no gate receipt survived the interruption to say it was ever green.
+- Absent, or any value the `backlog_loop_phase` row above does not list: an unrecognized phase is a claim about a state this procedure does not define, so the value itself is never read as a phase. Decide from the ledger's other keys instead, which record what actually happened, in this order. `backlog_loop_merge` recorded -> treat as `merged` above. Else `backlog_loop_pr` recorded -> query it and follow the `merge-requested` arm's rules. Else `backlog_loop_branch` recorded -> follow the `shipping-requested` arm's search, its "more than one match -> STOP" included. Else reclaim. Name the unrecognized value, the arm taken, and the evidence key that chose it in the FINAL REPORT: an improvised value was written by something, and a recovery that swallows it leaves the next run to meet the same value with the same nothing to go on. Without this arm an unrecognized phase matches no arm at all and ends the run outright -- which is how one issue carrying one improvised value wedged every later invocation.
 
 Retiring a PR means `gh pr close <backlog_loop_pr> --comment "superseded: interrupted backlog-loop run <old-run-id>"` -- close, never merge. Reclaiming an issue while its PR stays open is how the same work ends up in two open PRs: the issue returns to `bd ready`, a later batch builds and merges a second PR for it, and the abandoned one still sits there mergeable by a human, carrying changes no current gate ever approved. Leave the branch itself in place and name both it and the closed PR in the FINAL REPORT, so nothing is silently discarded.
 
@@ -354,6 +355,10 @@ Reached only for issues CENSUS classified as neither `human-gate` nor `label-def
 ## CONSTRAINTS
 
 Preflight constraints hold on every diff. The applicable quality gate set is green before every PR, no exceptions. Everything written to repo, git, or tracker is English: identifiers, comments, error strings, test names, issue text, commits, PR bodies.
+
+This procedure writes exactly four statuses: `open`, `in_progress`, `blocked`, and `closed`. It never writes `hooked`, `pinned`, or `deferred`. Those three are a person's or a sibling skill's parking decision, and CLASSIFY reads them as one; a run that wrote one would be parking work under the authority of whoever reads that status next.
+
+A batch member this run cannot complete is written `blocked` with `backlog_loop_cause=needs-person`, plus the line `## FINAL REPORT` already requires. That is the whole disposition and there is no other: CLASSIFY files such an issue `self-blocked-needs-person`, which takes it out of the loop-responsible set, so the backlog can still be declared clear while a person owns the issue. Reporting it without writing the status would leave it in that set and in `bd ready`, so the next PICK BATCH would select it again. Nothing here decides whether an issue is actionable by reading its body, and nothing invents a fifth status for the case -- a status outside the four above reaches CLASSIFY's exclusion list and comes back as this loop's own wreckage.
 
 ## STOP EARLY AND REPORT
 
