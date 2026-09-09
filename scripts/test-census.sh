@@ -98,6 +98,25 @@ d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
 print((r.get("metadata") or {}).get(sys.argv[1], ""))' "$3"
 }
 
+# Any top-level field off an issue, empty when absent. The residue repair's
+# whole contract is that it strips metadata and leaves the parking status and
+# the note record standing, so proving it needs a reader that is not `meta_of`.
+field_of() {
+    bd -C "$1" show "$2" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print(r.get(sys.argv[1]) or "")' "$3"
+}
+
+# An ISO UTC timestamp a given number of minutes in the past. The liveness test
+# measures the heartbeat against the wall clock, so both the dead and the live
+# marker below are computed rather than written as literals: a frozen timestamp
+# would decide those cases by how long ago this suite was edited.
+iso_ago() {
+    python3 -c 'import datetime,sys
+print((datetime.datetime.now(datetime.timezone.utc)
+       - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"
+}
+
 # Every id in a `bd ... --json` payload, sorted and space-separated, ready for
 # the `case " $ids " in *" $id "*)` membership tests below. bd returns a bare
 # list from some subcommands and an object keyed by "issues" from others, so
@@ -879,6 +898,115 @@ if [ "$write_proven" -eq 1 ]; then
         || fail "a diagnostic run mutated the tracker"
 else
     fail "unproven -- a diagnostic run left the tracker's issue records unchanged: no case in this run showed the census can write at all, so an unchanged tracker proves nothing"
+fi
+
+echo "  case: a parked issue's dead ledger residue is stripped, its parking is not"
+# The wedge this fixture exists for. `deferred_watch` is a phase value the
+# ledger table does not list, and it is seeded on purpose: an improvised phase
+# must never reach classification, because the status row above
+# `abandoned-claim` answers first and never reads the phase at all.
+c6=$(fresh_store)
+c6_pr="https://github.com/example/repo/pull/4242"
+c6_parked=$(bd -C "$c6" create "recurrence watch, parked by a person" --silent)
+bd -C "$c6" create "ready work beside it" --silent >/dev/null
+bd -C "$c6" update "$c6_parked" --status=deferred \
+    --set-metadata backlog_loop_run=OLD-RUN-2026 \
+    --set-metadata backlog_loop_heartbeat="$(iso_ago 180)" \
+    --set-metadata backlog_loop_phase=deferred_watch \
+    --set-metadata backlog_loop_pr="$c6_pr" \
+    --append-notes "parked until the failure recurs" >/dev/null
+
+out=$(run_census "$c6" loop)
+census_usable "$out" || out=""
+expect_category "$out" "$c6_parked" deferred \
+    "a parked issue carrying a dead marker classifies by its status, not as wreckage"
+
+if [ "$write_proven" -eq 1 ]; then
+    c6_left=""
+    for key in backlog_loop_run backlog_loop_phase backlog_loop_heartbeat backlog_loop_pr; do
+        if [ -n "$(meta_of "$c6" "$c6_parked" "$key")" ]; then
+            c6_left="$c6_left $key"
+        fi
+    done
+    [ -z "$c6_left" ] \
+        && pass "the residue pass unset every dead ledger key on the parked issue" \
+        || fail "the parked issue still carries$c6_left"
+
+    c6_status=$(field_of "$c6" "$c6_parked" status)
+    [ "$c6_status" = "deferred" ] \
+        && pass "the repair left the parking decision standing" \
+        || fail "the repair moved a parked issue out of its status: got '${c6_status:-<none>}'"
+
+    case "$(field_of "$c6" "$c6_parked" notes)" in
+        *"$c6_pr"*) pass "the stripped PR URL survives in the issue's notes" ;;
+        *) fail "the stripped PR URL is recorded nowhere, so nobody can retire that PR" ;;
+    esac
+
+    [ -n "$(meta_of "$c6" "$c6_parked" backlog_loop_census)" ] \
+        && pass "the repair stamps backlog_loop_census, which is how the report finds it" \
+        || fail "the repaired issue carries no backlog_loop_census stamp"
+else
+    fail "unproven -- a parked issue's dead ledger residue is stripped: no case in this run showed the census can write at all, so a repair cannot be told from a denied write"
+fi
+
+echo "  case: a dead marker under a status this loop writes is still its own wreckage"
+# The control for the case above, and the only fixture that covers the
+# `abandoned-claim` row at all. Same dead marker and same improvised phase; the
+# one difference is a status this procedure does write, which is exactly what
+# that row's exclusion list has to let through.
+c7=$(fresh_store)
+c7_pr="https://github.com/example/repo/pull/4343"
+c7_abandoned=$(bd -C "$c7" create "half-built by a run that died" --silent)
+bd -C "$c7" update "$c7_abandoned" --status=in_progress \
+    --set-metadata backlog_loop_run=OLD-RUN-2026 \
+    --set-metadata backlog_loop_heartbeat="$(iso_ago 180)" \
+    --set-metadata backlog_loop_phase=deferred_watch \
+    --set-metadata backlog_loop_pr="$c7_pr" >/dev/null
+
+out=$(run_census "$c7" loop)
+census_usable "$out" || out=""
+expect_category "$out" "$c7_abandoned" abandoned-claim \
+    "a dead marker under in_progress is filed as this loop's own wreckage"
+
+if [ "$write_proven" -eq 1 ]; then
+    [ -n "$(meta_of "$c7" "$c7_abandoned" backlog_loop_run)" ] \
+        && pass "the residue pass left an abandoned claim's marker alone, because RECOVERY owns that issue" \
+        || fail "the residue pass stripped an abandoned claim's marker, which is the evidence RECOVERY decides on"
+else
+    fail "unproven -- the residue pass left an abandoned claim's marker alone: no case in this run showed the census can write at all, so an unchanged marker proves nothing"
+fi
+
+echo "  case: one live foreign heartbeat stops every write in the store"
+# This case cannot share a store with the repair above, because the WRITE GATE
+# is run-global rather than per issue: one foreign heartbeat under 30 minutes
+# old skips every mutation pass, and a repair case sharing the store would read
+# its keys back intact for a reason that has nothing to do with the pass.
+c8=$(fresh_store)
+c8_live=$(bd -C "$c8" create "held by a run that is still moving" --silent)
+c8_residue=$(bd -C "$c8" create "parked with residue, beside a live run" --silent)
+bd -C "$c8" update "$c8_live" --status=deferred \
+    --set-metadata backlog_loop_run=LIVE-RUN-2026 \
+    --set-metadata backlog_loop_heartbeat="$(iso_ago 2)" >/dev/null
+bd -C "$c8" update "$c8_residue" --status=deferred \
+    --set-metadata backlog_loop_run=OLD-RUN-2026 \
+    --set-metadata backlog_loop_heartbeat="$(iso_ago 180)" \
+    --set-metadata backlog_loop_phase=deferred_watch >/dev/null
+bd -C "$c8" export > "$work/c8.before" 2>/dev/null
+
+out=$(run_census "$c8" loop)
+census_usable "$out" || out=""
+expect_category "$out" "$c8_live" claimed-other-run \
+    "a live run's claim outranks the status row, so its issue is never reported parked"
+expect_category "$out" "$c8_residue" deferred \
+    "the parked issue beside it is still classified by its status"
+
+bd -C "$c8" export > "$work/c8.after" 2>/dev/null
+if [ "$write_proven" -eq 1 ]; then
+    cmp -s "$work/c8.before" "$work/c8.after" \
+        && pass "a live foreign heartbeat stopped every write, the residue strip included" \
+        || fail "the census wrote to a store in which another run holds a live heartbeat"
+else
+    fail "unproven -- a live foreign heartbeat stopped every write: no case in this run showed the census can write at all, so an unchanged tracker proves nothing"
 fi
 
 printf '\n%d check(s), %d failure(s)\n' "$checks" "$failures"
