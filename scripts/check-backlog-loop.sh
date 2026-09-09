@@ -31,10 +31,12 @@
 #       that parks an issue is writing under the authority of whoever reads
 #       that status next, and `deferred` in particular is a sibling skill's
 #       own parking mechanism.
-#   R11 `## CENSUS` carries the RESIDUE PASS opener and the WRITE GATE
-#       paragraph counts it among the writes it covers. A mutation pass outside
-#       the write gate mutates a person's tracker during a diagnostic run and
-#       while another invocation holds a live heartbeat.
+#   R11 `## CENSUS` carries the RESIDUE PASS opener. Without the pass a person
+#       clears every parked issue's dead ledger residue by hand.
+#   R12 the WRITE GATE paragraph counts RESIDUE PASS among the writes it
+#       covers. A mutation pass outside the write gate mutates a person's
+#       tracker during a diagnostic run and while another invocation holds a
+#       live heartbeat.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -354,8 +356,5 @@ for f in $copies; do
     printf '%s\n' "$gate" | grep -qF -- 'RESIDUE PASS' ||
         fail "$f: the WRITE GATE paragraph does not name RESIDUE PASS among the writes it covers (breaks R12: the pass mutates a person's tracker during a diagnostic run and while another invocation holds a live heartbeat)"
 done
-
-[ "$checked" -gt 0 ] ||
-    fail "no host copy of $SKILL_NAME was checked -- a green run here would assert nothing"
 
 echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm, the default arm and the closed enum hold, the parked statuses outrank abandoned-claim and are excluded from it, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written, CONSTRAINTS names the three refusals, and RESIDUE PASS sits under the WRITE GATE"

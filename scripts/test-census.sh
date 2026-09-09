@@ -87,9 +87,7 @@ print(" ".join(x["id"] for x in (r.get("dependencies") or [])))'
 # verified through these rather than through the census's own prose: the whole
 # failure this suite guards is a run that reports a repair it did not perform.
 acc_of() {
-    bd -C "$1" show "$2" --json 2>/dev/null | python3 -c 'import json,sys
-d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
-print(r.get("acceptance_criteria") or "")'
+    field_of "$1" "$2" acceptance_criteria
 }
 
 meta_of() {
