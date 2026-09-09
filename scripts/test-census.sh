@@ -907,11 +907,20 @@ c6=$(fresh_store)
 c6_pr="https://github.com/example/repo/pull/4242"
 c6_parked=$(bd -C "$c6" create "recurrence watch, parked by a person" --silent)
 bd -C "$c6" create "ready work beside it" --silent >/dev/null
+# All ten RESIDUE PASS keys, not just the four the fixture used to name -- an
+# edit that dropped one --unset-metadata flag from the procedure would not be
+# caught by a key this fixture never seeded.
 bd -C "$c6" update "$c6_parked" --status=deferred \
     --set-metadata backlog_loop_run=OLD-RUN-2026 \
     --set-metadata backlog_loop_heartbeat="$(iso_ago 180)" \
     --set-metadata backlog_loop_phase=deferred_watch \
+    --set-metadata backlog_loop_base=0ldbase1 \
+    --set-metadata backlog_loop_branch=backlog-loop/OLD-RUN-2026 \
+    --set-metadata backlog_loop_head=0ldhead22 \
     --set-metadata backlog_loop_pr="$c6_pr" \
+    --set-metadata backlog_loop_merge=0ldmerge33 \
+    --set-metadata backlog_loop_ci=on \
+    --set-metadata backlog_loop_worktrees=/tmp/backlog-loop-worktrees/OLD-RUN-2026 \
     --append-notes "parked until the failure recurs" >/dev/null
 
 out=$(run_census "$c6" loop)
@@ -921,7 +930,9 @@ expect_category "$out" "$c6_parked" deferred \
 
 if [ "$write_proven" -eq 1 ]; then
     c6_left=""
-    for key in backlog_loop_run backlog_loop_phase backlog_loop_heartbeat backlog_loop_pr; do
+    for key in backlog_loop_run backlog_loop_phase backlog_loop_heartbeat backlog_loop_base \
+        backlog_loop_branch backlog_loop_head backlog_loop_pr backlog_loop_merge \
+        backlog_loop_ci backlog_loop_worktrees; do
         if [ -n "$(meta_of "$c6" "$c6_parked" "$key")" ]; then
             c6_left="$c6_left $key"
         fi
@@ -943,6 +954,22 @@ if [ "$write_proven" -eq 1 ]; then
     [ -n "$(meta_of "$c6" "$c6_parked" backlog_loop_census)" ] \
         && pass "the repair stamps backlog_loop_census, which is how the report finds it" \
         || fail "the repaired issue carries no backlog_loop_census stamp"
+
+    # Idempotence, proved rather than asserted from prose: a second census
+    # over the now-repaired issue has no dead marker left to find, so it must
+    # classify the same and write nothing. Only meaningful here, inside the
+    # branch that already proved the first census actually stripped the
+    # residue -- a second run over a still-unrepaired issue would not be
+    # idempotence, only a repeat of the first, unproven run.
+    bd -C "$c6" export > "$work/c6.before" 2>/dev/null
+    out2=$(run_census "$c6" loop)
+    census_usable "$out2" || out2=""
+    expect_category "$out2" "$c6_parked" deferred \
+        "a second census over a repaired issue still classifies it by its status"
+    bd -C "$c6" export > "$work/c6.after" 2>/dev/null
+    cmp -s "$work/c6.before" "$work/c6.after" \
+        && pass "a second census over a repaired issue finds no marker and writes nothing" \
+        || fail "a second census over a repaired issue mutated the tracker again"
 else
     fail "unproven -- a parked issue's dead ledger residue is stripped: no case in this run showed the census can write at all, so a repair cannot be told from a denied write"
 fi
