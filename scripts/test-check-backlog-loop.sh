@@ -188,6 +188,37 @@ run_suite() { # checker path
     expect_fail "the RECOVERY claimed arm is deleted while 'reclaimed' still appears in the block" \
         'declares phase .claimed. but no RECOVERY arm' "$t"
 
+    # Whole-block substring matching stays green here too: `merged` survives
+    # in three other arms' cross-references even after the arm that CLAIMS it
+    # is deleted outright. Only opener-scoped matching sees it go.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '- `merged` or `verified`: the merge is proven. Finish the interrupted close. Post-merge verification is required unless the phase is already `verified`, and it runs under `backlog_loop_ci`, not under a fresh probe: the interrupted batch may have merged the very workflow that now makes CI look available, so re-deriving the route would skip the local gate that batch was actually merged on. Missing `backlog_loop_ci` -> run the clean-tree post-merge gate. Then the calibration note and `bd close` against `backlog_loop_pr`.
+' \
+        ''
+    expect_fail "the merged/verified RECOVERY bullet is deleted whole" \
+        'declares phase .merged. but no RECOVERY arm' "$t"
+
+    # Same shape, the other combined arm: `merge-requested` survives in the
+    # default arm's own cross-reference ("follow the `merge-requested` arm's
+    # rules"), so a whole-block test stays green after this bullet is gone.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '- `merge-requested`: the outcome is unknown, which is exactly what this phase exists to record. Query `backlog_loop_pr`. `MERGED` -> treat as `merged` above. Any other state -> retire the PR, then reclaim.
+' \
+        ''
+    expect_fail "the merge-requested RECOVERY bullet is deleted whole" \
+        'declares phase .merge-requested. but no RECOVERY arm' "$t"
+
+    # A prefix match on the default arm's opening words stays green after its
+    # trailing FINAL REPORT clause is gone -- the arm still opens the same way.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'Else reclaim. Name the unrecognized value, the arm taken, and the evidence key that chose it in the FINAL REPORT: an improvised value was written by something, and a recovery that swallows it leaves the next run to meet the same value with the same nothing to go on. Without this arm an unrecognized phase matches no arm at all and ends the run outright -- which is how one issue carrying one improvised value wedged every later invocation.' \
+        'Else reclaim.'
+    expect_fail "the default RECOVERY arm loses its FINAL REPORT naming clause" \
+        'no longer tells FINAL REPORT to name the unrecognized value' "$t"
+
     # -- DRIFT: every rule present, one moved out from under another ---------
 
     t=$(fresh_tree)
@@ -226,6 +257,80 @@ run_suite() { # checker path
     expect_fail "a CLASSIFY category loses its <cause> row" \
         "have no row in the EMIT <cause> table" "$t"
 
+    # A bare char-class pattern for `--status=` stops at an opening quote and
+    # captures nothing, so a quoted write was invisible to the old census.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'Reclaim means `bd update <id> --status=open --assignee=""' \
+        'Reclaim means `bd update <id> --status="deferred" --assignee=""'
+    expect_fail "a quoted --status=\"deferred\" write is added" \
+        'writes .--status=deferred., which is outside' "$t"
+
+    # Every token the exclusion names is still present; only the polarity
+    # flips from "is not" to "is". Token-presence matching cannot see this.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '`backlog_loop_run` present, that run is NOT live, and `status` is not `blocked`, `hooked`, `pinned` or `deferred` |' \
+        '`backlog_loop_run` present, that run is NOT live, and `status` is `blocked`, `hooked`, `pinned` or `deferred` |'
+    expect_fail "the abandoned-claim exclusion cell is inverted" \
+        "does not state the negation" "$t"
+
+    # The substring "only phase values this procedure writes" survives a
+    # negation inserted right after "are", so a substring test stays green.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'These seven are the only phase values this procedure writes.' \
+        'These seven are **not necessarily** the only phase values this procedure writes.'
+    expect_fail "the closed-enum sentence is negated rather than deleted" \
+        "no longer states that its values are the only phase values" "$t"
+
+    # Renumbered so the parked rows still outrank abandoned-claim (12 -> 13)
+    # but no longer outrank dep-blocked (14 -> 9): the wedge this reopens is
+    # a parked issue with an unmet dependency walked in as dep-blocked, which
+    # is exactly what row 3 in SKILL.md's own rationale forbids.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| 9 | `hooked` | `status=hooked` |' \
+        '| 10 | `hooked` | `status=hooked` |'
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| 10 | `pinned` | `status=pinned` |' \
+        '| 11 | `pinned` | `status=pinned` |'
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| 11 | `deferred` | `status=deferred` |' \
+        '| 12 | `deferred` | `status=deferred` |'
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| 12 | `abandoned-claim` | `backlog_loop_run` present, that run is NOT live, and `status` is not `blocked`, `hooked`, `pinned` or `deferred` |' \
+        '| 13 | `abandoned-claim` | `backlog_loop_run` present, that run is NOT live, and `status` is not `blocked`, `hooked`, `pinned` or `deferred` |'
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| 13 | `legacy-blocked` | `status=blocked`, no `backlog_loop_run`, and no unmet dependency |' \
+        '| 14 | `legacy-blocked` | `status=blocked`, no `backlog_loop_run`, and no unmet dependency |'
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        "| 14 | \`dep-blocked\` | an unmet dependency, by \`--explain\`'s verdict above |" \
+        "| 9 | \`dep-blocked\` | an unmet dependency, by \`--explain\`'s verdict above |"
+    expect_fail "CLASSIFY is renumbered so dep-blocked outranks the parked rows" \
+        'does not outrank row 9 .dep-blocked.' "$t"
+
+    # Only the two backtick tokens swap position; the surrounding prose is
+    # untouched, so this changes nothing but the evidence chain's order.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '`backlog_loop_merge` recorded -> treat as `merged` above. Else `backlog_loop_pr` recorded' \
+        '`backlog_loop_pr` recorded -> treat as `merged` above. Else `backlog_loop_merge` recorded'
+    expect_fail "the default arm's evidence chain is reordered" \
+        'as backtick tokens in that order' "$t"
+
+    # Restores the pre-katze-mh0j-equivalent unconditional sentence: RESIDUE
+    # PASS still promises the termination decision, but step 2 no longer asks.
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        "set, and no PR this census's RESIDUE PASS stripped is still \`OPEN\` -> the backlog is clear." \
+        "set -> the backlog is clear."
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        ' An outstanding stripped PR withholds that verdict on its own: report each URL with the issue it came from and stop, because a run that stripped the only record of a PR and then declared the backlog clear leaves work nobody is watching.' \
+        ''
+    expect_fail "ITERATION step 2's clear-backlog sentence drops the stripped-PR condition" \
+        "no longer carries the stripped-PR condition" "$t"
+
     # -- The Codex copy is read too -----------------------------------------
     #
     # Same break as the first case, applied to the other host only. A checker
@@ -254,6 +359,20 @@ run_suite() { # checker path
         'RECOVERY BY PHASE.'
     expect_fail "the RECOVERY opener changes shape and no arm parses" \
         "extracted no '- ' arm" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| category | `<cause>` |' \
+        '| category | `cause` |'
+    expect_fail "the EMIT <cause> table header changes shape and no row parses" \
+        "the EMIT <cause> table did not parse" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| key | written at | value |' \
+        '| key | written-at | value |'
+    expect_fail "THE RUN LEDGER's key table header changes shape and no row parses" \
+        'backlog_loop_phase. row declares no phase value' "$t"
 
     return "$case_failures"
 }

@@ -15,28 +15,62 @@
 # What is checked, and what breaks when it goes:
 #
 #   R5  every `backlog_loop_phase` value the ledger declares reaches a RECOVERY
-#       arm, and RECOVERY carries a default arm for an absent or unrecognized
-#       value. A phase with no arm ends the run outright, on every invocation,
-#       until a person edits the tracker by hand.
-#   R9  the ledger row states that its value set is closed. Without that
-#       sentence the arm list can be enumerated correctly and still be an open
-#       set, so a later run improvises an eighth value and the default arm is
-#       the only thing between it and the wedge above.
+#       arm AS A TOKEN IN THAT ARM'S OWN OPENING CLAUSE -- the text before its
+#       first colon -- and RECOVERY carries a default arm for an absent or
+#       unrecognized value. A phase with no arm ends the run outright, on
+#       every invocation, until a person edits the tracker by hand. Scoped to
+#       the opener because every arm's body cross-references sibling arms by
+#       phase token (three arms say "treat as `merged` above"), so a
+#       whole-block substring test stays green after an entire arm bullet is
+#       deleted: its token survives in another arm's prose.
+#   R6  the default RECOVERY arm's fallback evidence -- `backlog_loop_merge`,
+#       `backlog_loop_pr`, `backlog_loop_branch` -- is named in that reading
+#       order. Reading them out of order, or dropping one, lets recovery
+#       consult a weaker key before a stronger one answers, or consult none.
+#   R7  the default RECOVERY arm still tells `## FINAL REPORT` to name the
+#       unrecognized value, the arm taken, and the evidence key that chose it.
+#       Losing that sentence swallows an improvised phase value silently, and
+#       the next run meets the same value with nothing recorded about it.
+#   R9  the ledger row states that its value set is closed, ANCHORED ON THE
+#       WHOLE CLOSING CLAUSE rather than a substring: "the only phase values
+#       this procedure writes" is still a substring of a sentence negating it
+#       ("are **not necessarily** the only phase values..."). Without the
+#       intact clause the arm list can be enumerated correctly and still be an
+#       open set, so a later run improvises an eighth value and the default
+#       arm is the only thing between it and the wedge above.
 #   R1  the `hooked`, `pinned` and `deferred` rows outrank `abandoned-claim` in
-#       CLASSIFY, and `abandoned-claim` excludes all three. Below them, a
-#       parked issue carrying a dead marker is read as this loop's own wreckage
-#       and reopened into a pool a person removed it from -- on every run.
+#       CLASSIFY, and `abandoned-claim` states the NEGATED compound clause
+#       excluding all three -- not merely token presence, which survives the
+#       clause being inverted from "is not" to "is". Below `abandoned-claim`,
+#       a parked issue carrying a dead marker is read as this loop's own
+#       wreckage and reopened into a pool a person removed it from -- on every
+#       run.
+#   R3  the same three rows also outrank `dep-blocked` and `legacy-blocked`.
+#       Renumbering the table so `dep-blocked` sits below the parked rows
+#       while `abandoned-claim` stays below them too satisfies R1's
+#       comparison and still wedges the loop: a parked issue with an unmet
+#       dependency is then classified `dep-blocked` and walked transitively
+#       into the loop-responsible set, so no run can ever report the backlog
+#       clear.
 #   R8  the procedure writes only `open` and `blocked` as literal `--status=`
-#       flags, and `## CONSTRAINTS` names the three statuses it refuses. A run
-#       that parks an issue is writing under the authority of whoever reads
-#       that status next, and `deferred` in particular is a sibling skill's
-#       own parking mechanism.
+#       flags -- MATCHED WHETHER OR NOT THE VALUE IS QUOTED, because a bare
+#       char-class pattern captures nothing past an opening quote and silently
+#       drops a write such as `--status="deferred"` from the census -- and
+#       `## CONSTRAINTS` names the three statuses it refuses. A run that parks
+#       an issue is writing under the authority of whoever reads that status
+#       next, and `deferred` in particular is a sibling skill's own parking
+#       mechanism.
 #   R11 `## CENSUS` carries the RESIDUE PASS opener. Without the pass a person
 #       clears every parked issue's dead ledger residue by hand.
 #   R12 the WRITE GATE paragraph counts RESIDUE PASS among the writes it
 #       covers. A mutation pass outside the write gate mutates a person's
 #       tracker during a diagnostic run and while another invocation holds a
 #       live heartbeat.
+#   R13 `## ITERATION` step 2's clear-backlog sentence still carries the
+#       stripped-PR condition RESIDUE PASS promises: the backlog is clear only
+#       when no PR that pass stripped is still `OPEN`. Losing the condition
+#       lets a run that stripped the only record of an open PR report the
+#       backlog clear anyway.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -51,8 +85,8 @@ set -eu
 SKILL_NAME="backlog-loop"
 
 # The statuses this procedure is allowed to write with a literal `--status=`
-# flag. `in_progress` and `closed` are written too, but through `bd start` and
-# `bd close`, so they never appear in this form.
+# flag. `in_progress` and `closed` are written too, but through
+# `bd update <id> --claim` and `bd close`, so they never appear in this form.
 ALLOWED_STATUS_WRITES="open blocked"
 
 # The statuses the procedure must refuse to write, and which CLASSIFY must
@@ -214,21 +248,40 @@ for f in $copies; do
     # can enumerate every declared value into an arm and still meet a value
     # nothing declared, which is exactly the improvised `deferred_watch` that
     # wedged this loop. Deleting this sentence leaves the arm list green.
+    #
+    # Anchored on the WHOLE closing clause, "are the only phase values this
+    # procedure writes.", rather than the substring "only phase values this
+    # procedure writes": that substring survives a negation inserted right
+    # after "are" -- "are **not necessarily** the only phase values this
+    # procedure writes." -- which asserts the opposite of a closed set and
+    # would otherwise still match.
     # -----------------------------------------------------------------------
-    ledger_phase_row "$f" | grep -q 'only phase values this procedure writes' ||
+    ledger_phase_row "$f" | grep -qF -- 'are the only phase values this procedure writes.' ||
         fail "$f: THE RUN LEDGER's \`backlog_loop_phase\` row no longer states that its values are the only phase values this procedure writes (breaks R9: the enum is open again, so a later run can improvise a value no arm was written for)"
 
     # -----------------------------------------------------------------------
-    # R5, first half. Every declared phase value reaches a RECOVERY arm.
+    # R5, first half. Every declared phase value reaches a RECOVERY arm, named
+    # in that arm's own OPENING CLAUSE -- the text before its first colon.
     #
     # Matched as a WHOLE backtick-delimited token and never as a substring:
     # "reclaimed" contains "claimed", so a substring test stays green after the
     # `claimed` arm is deleted -- which is the one arm whose loss silently
     # abandons a claimed-but-unbuilt batch.
+    #
+    # Scoped to the opener and never the whole arm's body, and never the whole
+    # RECOVERY block: every arm's body cross-references sibling arms by phase
+    # token -- the default arm says "follow the `merge-requested` arm's
+    # rules" and "follow the `shipping-requested` arm's search", and three
+    # arms say "treat as `merged` above", so `merged` alone occurs four times
+    # in the unmodified block. A whole-block test therefore stays green after
+    # an entire arm bullet is deleted, because its token survives in another
+    # arm's cross-reference; only the opener is where an arm actually CLAIMS a
+    # phase.
     # -----------------------------------------------------------------------
+    openers=$(printf '%s\n' "$arms" | awk -F: '{ print $1 }')
     for phase in $phases; do
-        printf '%s\n' "$recovery" | grep -qF -- "\`$phase\`" ||
-            fail "$f: THE RUN LEDGER declares phase \`$phase\` but no RECOVERY arm names it as a backtick-delimited token (breaks R5: a run interrupted at that phase matches no arm and ends outright)"
+        printf '%s\n' "$openers" | grep -qF -- "\`$phase\`" ||
+            fail "$f: THE RUN LEDGER declares phase \`$phase\` but no RECOVERY arm names it as a backtick-delimited token in that arm's own opening clause (breaks R5: a run interrupted at that phase matches no arm and ends outright)"
     done
 
     # -----------------------------------------------------------------------
@@ -238,9 +291,42 @@ for f in $copies; do
     # already admits the phase can be ABSENT, and an earlier run wrote a value
     # the ledger never listed. Both reach this arm and nothing else.
     # -----------------------------------------------------------------------
-    printf '%s\n' "$arms" |
-        grep -qE '^- Absent, or any value the .backlog_loop_phase. row above does not list:' ||
+    default_arm=$(printf '%s\n' "$arms" |
+        grep -E '^- Absent, or any value the .backlog_loop_phase. row above does not list:' || true)
+    [ -n "$default_arm" ] ||
         fail "$f: RECOVERY carries no arm for an absent or unrecognized \`backlog_loop_phase\` (breaks R5: an absent or improvised phase reaches no arm, and one such value wedges every later invocation)"
+
+    # -----------------------------------------------------------------------
+    # R6. The default arm reads its fallback evidence in a fixed order: the
+    # merge key first, then the PR, then the branch.
+    #
+    # A prefix match on the arm's opening words (the R5 check above) proves
+    # only that the arm still exists, not that its body still says anything
+    # useful. Checked as an ORDERED sequence of backtick tokens rather than
+    # mere presence, because reordering the three sentences -- consulting
+    # `backlog_loop_pr` before `backlog_loop_merge` -- would have recovery
+    # query a weaker signal before the stronger one that should settle it
+    # first, and dropping one silently loses that whole fallback rung.
+    # -----------------------------------------------------------------------
+    evidence_order=$(printf '%s\n' "$default_arm" | grep -oE -- '`backlog_loop_(merge|pr|branch)`')
+    expected_evidence_order='`backlog_loop_merge`
+`backlog_loop_pr`
+`backlog_loop_branch`'
+    [ "$evidence_order" = "$expected_evidence_order" ] ||
+        fail "$f: the RECOVERY default arm does not name \`backlog_loop_merge\`, \`backlog_loop_pr\`, \`backlog_loop_branch\` as backtick tokens in that order (breaks R6: the fallback evidence chain is read out of order, or an evidence key is missing, so recovery from an unrecognized phase can consult a weaker signal before a stronger one answers, or consult nothing)"
+
+    # -----------------------------------------------------------------------
+    # R7. The default arm still tells FINAL REPORT what happened.
+    #
+    # `grep -qE` above matches only the arm's opening words, so deleting this
+    # trailing clause -- and with it the only record of an improvised phase
+    # value -- passed unnoticed. Anchored on the whole clause rather than a
+    # keyword, so reordering the evidence chain it closes cannot survive
+    # either: this and the R6 check above are two ends of the same sentence.
+    # -----------------------------------------------------------------------
+    printf '%s\n' "$default_arm" |
+        grep -qF -- 'Name the unrecognized value, the arm taken, and the evidence key that chose it in the FINAL REPORT:' ||
+        fail "$f: the RECOVERY default arm no longer tells FINAL REPORT to name the unrecognized value, the arm taken, and the evidence key that chose it (breaks R7: an improvised phase value is swallowed silently, and the next run meets the same value with nothing recorded about how the last one was handled)"
 
     # -----------------------------------------------------------------------
     # R1, first half. The parked rows outrank `abandoned-claim`.
@@ -254,12 +340,34 @@ for f in $copies; do
     [ -n "$abandoned" ] ||
         fail "$f: the CLASSIFY table carries no \`abandoned-claim\` row (breaks R1: the row the parked statuses must outrank is gone, so the ordering rule below has nothing to compare against)"
 
+    # -----------------------------------------------------------------------
+    # R3. The parked rows also outrank `dep-blocked` and `legacy-blocked`.
+    #
+    # A table renumbered so `dep-blocked` sits below the parked rows -- while
+    # `abandoned-claim` stays below them too, satisfying the check above --
+    # still wedges the loop: a parked issue with an unmet dependency on ready
+    # work is then classified `dep-blocked` and walked transitively into the
+    # loop-responsible set, so no run can ever report the backlog clear. That
+    # is the rationale bullet at SKILL.md naming rows 9-11 above row 12, and
+    # this is the comparison that actually enforces it.
+    # -----------------------------------------------------------------------
+    depblocked=$(classify_row_number "$f" dep-blocked)
+    [ -n "$depblocked" ] ||
+        fail "$f: the CLASSIFY table carries no \`dep-blocked\` row (breaks R3: the row the parked statuses must outrank is gone, so the ordering rule below has nothing to compare against)"
+    legacyblocked=$(classify_row_number "$f" legacy-blocked)
+    [ -n "$legacyblocked" ] ||
+        fail "$f: the CLASSIFY table carries no \`legacy-blocked\` row (breaks R3: the row the parked statuses must outrank is gone, so the ordering rule below has nothing to compare against)"
+
     for status in $PARKED_STATUSES; do
         n=$(classify_row_number "$f" "$status")
         [ -n "$n" ] ||
             fail "$f: the CLASSIFY table carries no \`$status\` row (breaks R1: a parked issue then falls through to \`abandoned-claim\` and is reopened into the pool a person removed it from)"
         [ "$n" -lt "$abandoned" ] ||
             fail "$f: CLASSIFY row $n \`$status\` does not outrank row $abandoned \`abandoned-claim\` (breaks R1: a parked issue carrying a dead marker is filed as this loop's own wreckage and RECOVERY reopens it on every run)"
+        [ "$n" -lt "$depblocked" ] ||
+            fail "$f: CLASSIFY row $n \`$status\` does not outrank row $depblocked \`dep-blocked\` (breaks R3: a parked issue with an unmet dependency is then classified dep-blocked and walked into the loop-responsible set, so no run can ever report the backlog clear)"
+        [ "$n" -lt "$legacyblocked" ] ||
+            fail "$f: CLASSIFY row $n \`$status\` does not outrank row $legacyblocked \`legacy-blocked\` (breaks R3: a parked issue is then classified legacy-blocked instead of recognized as parked, and RECOVERY never sees it)"
     done
 
     # -----------------------------------------------------------------------
@@ -276,6 +384,21 @@ for f in $copies; do
         printf '%s\n' "$test_cell" | grep -qF -- "\`$status\`" ||
             fail "$f: the \`abandoned-claim\` CLASSIFY row does not exclude \`$status\` (breaks R1: the two rows overlap, so the precedence order is the only thing keeping a parked issue out of this row)"
     done
+
+    # -----------------------------------------------------------------------
+    # R1, third check. The exclusion is a NEGATION, not merely a set of tokens
+    # that happen to be present.
+    #
+    # The loop above tests token PRESENCE only: flipping the cell from
+    # "`status` is not `blocked`, `hooked`, `pinned` or `deferred`" to
+    # "`status` is `blocked`, `hooked`, `pinned` or `deferred`" leaves every
+    # token in place and stays green, while the row's meaning inverts from an
+    # exclusion into a match -- and now files every ordinary dead-run
+    # abandoned claim as though it carried a parked status.
+    # -----------------------------------------------------------------------
+    printf '%s\n' "$test_cell" |
+        grep -qF -- '`status` is not `blocked`, `hooked`, `pinned` or `deferred`' ||
+        fail "$f: the \`abandoned-claim\` CLASSIFY row does not state the negation \`status\` is not \`blocked\`, \`hooked\`, \`pinned\` or \`deferred\` (breaks R1: the clause reads as a positive match rather than an exclusion, so an ordinary dead-run abandoned claim is misfiled as though it carried a parked status)"
 
     # -----------------------------------------------------------------------
     # The CLASSIFY-to-`<cause>` census, both directions.
@@ -306,10 +429,30 @@ for f in $copies; do
     # status this procedure does not write is a status somebody else's
     # decision owns -- `deferred` most of all, since `repo-audit` parks its own
     # index issue there precisely so this loop cannot claim it.
+    #
+    # Matched three ways -- bare, double-quoted, single-quoted -- because a
+    # quoted value such as `--status="deferred"` is invisible to a bare
+    # `[A-Za-z0-9_-]*` char class: it stops at the opening quote and captures
+    # an EMPTY value, which the old loop here then silently `continue`d past.
+    # The raw occurrence count is compared against the parsed count so any
+    # remaining unparsable form -- a quoting style this pattern does not
+    # anticipate -- fails loudly instead of vanishing from the census the
+    # same way.
     # -----------------------------------------------------------------------
-    grep -o -- '--status=[A-Za-z0-9_-]*' "$f" | sed 's/^--status=//' | LC_ALL=C sort -u > "$work/status-writes"
+    sq="'"
+    status_pattern="--status=(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
+    raw_status_writes=$(grep -o -- '--status=' "$f" | grep -c . || true)
+    status_matches=$(grep -oE -- "$status_pattern" "$f" || true)
+    parsed_status_writes=$(printf '%s\n' "$status_matches" | grep -c . || true)
+    [ "$raw_status_writes" -eq "$parsed_status_writes" ] ||
+        fail "$f: $((raw_status_writes - parsed_status_writes)) literal \`--status=\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census below, so the status it writes is never checked)"
+
+    printf '%s\n' "$status_matches" |
+        sed -e 's/^--status=//' -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/" |
+        LC_ALL=C sort -u > "$work/status-writes"
     while read -r status; do
-        [ -n "$status" ] || continue
+        [ -n "$status" ] ||
+            fail "$f: a literal \`--status=\` write carries an empty value (breaks R8: an empty status is not one of { $ALLOWED_STATUS_WRITES }, and it is invisible to the allowed-value check below unless this fails)"
         case " $ALLOWED_STATUS_WRITES " in
             *" $status "*) ;;
             *) fail "$f: writes \`--status=$status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking an issue under a status this loop does not own overrides whoever reads that status next)" ;;
@@ -355,6 +498,22 @@ for f in $copies; do
         fail "$f: '## CENSUS' carries no 'WRITE GATE,' paragraph (breaks R12: every mutation pass below it is then unguarded)"
     printf '%s\n' "$gate" | grep -qF -- 'RESIDUE PASS' ||
         fail "$f: the WRITE GATE paragraph does not name RESIDUE PASS among the writes it covers (breaks R12: the pass mutates a person's tracker during a diagnostic run and while another invocation holds a live heartbeat)"
+
+    # -----------------------------------------------------------------------
+    # R13. ITERATION step 2's clear-backlog sentence still carries the
+    # stripped-PR condition RESIDUE PASS promises.
+    #
+    # RESIDUE PASS states that a stripped PR still open reaches the
+    # termination decision; without this clause in step 2 that promise is
+    # unkept, and a run that stripped the only record of an open PR can
+    # report the backlog clear while nobody is watching that PR land.
+    # -----------------------------------------------------------------------
+    iteration=$(section_of "$f" '## ITERATION')
+    [ -n "$iteration" ] ||
+        fail "$f: no '## ITERATION' section (breaks R13: the clear-backlog decision has nowhere to live)"
+    printf '%s\n' "$iteration" |
+        grep -qF -- "and no PR this census's RESIDUE PASS stripped is still \`OPEN\` -> the backlog is clear." ||
+        fail "$f: ITERATION step 2's clear-backlog sentence no longer carries the stripped-PR condition (breaks R13: a run that stripped the only record of an open PR can report the backlog clear while nobody is watching that PR)"
 done
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm, the default arm and the closed enum hold, the parked statuses outrank abandoned-claim and are excluded from it, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written, CONSTRAINTS names the three refusals, and RESIDUE PASS sits under the WRITE GATE"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, and ITERATION step 2 still gates on a stripped-but-open PR"
