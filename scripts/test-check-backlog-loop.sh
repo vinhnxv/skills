@@ -50,8 +50,9 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/test-check-backlog-loop.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
 # A fresh copy of the real tree, one per case, so no case can see another's
-# break. Only `skills/` is copied: the checker is invoked by path and reads
-# nothing else under the root it is given.
+# break. `prompts/` is included because the backlog-loop goal shares terminal
+# authority with the skill; a correct host copy can still be deadlocked by an
+# obsolete prompt-level stop.
 #
 # The directory name comes from `mktemp` and NOT from a counter this function
 # increments. Every call site is `t=$(fresh_tree)`, which runs the function in
@@ -60,6 +61,8 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 fresh_tree() {
     tree=$(mktemp -d "$work/case-XXXXXX")
     cp -R "$repo_root/skills" "$tree/skills"
+    mkdir "$tree/prompts"
+    cp "$repo_root/prompts/backlog-loop.goal.md" "$tree/prompts/backlog-loop.goal.md"
     echo "$tree"
 }
 
@@ -193,7 +196,7 @@ run_suite() { # checker path
     # is deleted outright. Only opener-scoped matching sees it go.
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '- `merged` or `verified`: the merge is proven. Finish the interrupted close. Post-merge verification is required unless the phase is already `verified`, and it runs under `backlog_loop_ci`, not under a fresh probe: the interrupted batch may have merged the very workflow that now makes CI look available, so re-deriving the route would skip the local gate that batch was actually merged on. Missing `backlog_loop_ci` -> run the clean-tree post-merge gate. Then the calibration note and `bd close` against `backlog_loop_pr`.
+        '- `merged` or `verified`: the merge is proven. Finish the interrupted close. Post-merge verification is required unless the phase is already `verified`, and it runs under `backlog_loop_ci`, not under a fresh probe: the interrupted batch may have merged the very workflow that now makes CI look available, so re-deriving the route would skip the local gate that batch was actually merged on. Missing `backlog_loop_ci` -> run the clean-tree post-merge gate. A red post-merge gate keeps the members `in_progress` at `merged` and enters ITERATION'"'"'s TRUNK REPAIR path; it does not rebuild shipped work and does not turn the original members into human work. Once the current trunk is green, verify that current commit, write `verified`, then add the calibration note and `bd close` against `backlog_loop_pr`.
 ' \
         ''
     expect_fail "the merged/verified RECOVERY bullet is deleted whole" \
@@ -326,10 +329,45 @@ run_suite() { # checker path
         "set, and no PR this census's RESIDUE PASS stripped is still \`OPEN\` -> the backlog is clear." \
         "set -> the backlog is clear."
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        ' An outstanding stripped PR withholds that verdict on its own: report each URL with the issue it came from and stop, because a run that stripped the only record of a PR and then declared the backlog clear leaves work nobody is watching.' \
+        ' An outstanding stripped PR withholds that verdict, but it does not stop independent ready work: carry and report every URL while batches remain selectable, and stop for the required human close-or-land decision only after no agent-executable work remains.' \
         ''
     expect_fail "ITERATION step 2's clear-backlog sentence drops the stripped-PR condition" \
         "no longer carries the stripped-PR condition" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'A code-caused red trunk is recovery work, not a terminal blocker.' \
+        'A code-caused red trunk ends this run.'
+    expect_fail "TRUNK HEALTH loses the red-trunk recovery disposition" \
+        "no longer classifies a code-caused red trunk as recovery work" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'A TRUNK REPAIR batch never drops a member here.' \
+        'A TRUNK REPAIR batch follows the ordinary drop rule.'
+    expect_fail "the plan-boundary budget can split a trunk-repair batch" \
+        "plan-boundary budget may drop a TRUNK REPAIR member" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'Stop only when no legal agent-executable action remains.' \
+        'Stop after three failures.'
+    expect_fail "STOP EARLY loses the exhausted-progress gate" \
+        "STOP EARLY is not gated on exhausting legal agent-executable progress" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'Counts of failed batches or merges never substitute for the reachability decision.' \
+        'Counts of failed batches or merges never substitute for the reachability decision. 3 consecutive BATCHES end blocked or failed.'
+    expect_fail "STOP EARLY regains a failed-batch counter" \
+        "counter-shaped terminal rule '3 consecutive BATCHES'" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-loop.goal.md" \
+        'Stop the goal early only when backlog-loop has run its census and proved that no legal agent-executable action remains.' \
+        'Stop the goal early if trunk health fails.'
+    expect_fail "the companion goal loses its census reachability gate" \
+        "goal is not gated on a census proving legal progress exhausted" "$t"
 
     # -- The Codex copy is read too -----------------------------------------
     #
