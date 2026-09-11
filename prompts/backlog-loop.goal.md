@@ -9,7 +9,7 @@ Success means all three:
 
 Condition 3 is not redundant, and it is the only one of the three that can tell a finished backlog from a stuck one. `bd ready` excludes blocked, deferred, hooked, and in-progress issues, and backlog-loop marks a failed batch's members `blocked`, so conditions 1 and 2 alone are both satisfied by a run in which every issue failed and nothing merged.
 
-It is stated as a census result rather than as "no blocked issue carries a run marker" because the procedure deliberately leaves some blocked issues alone. A post-merge verification failure, or a cause that has reached its attempt ceiling, is work a person must pick up, and no later run may reopen it. A condition demanding that no such issue exist becomes unmeetable the first time one appears -- which would rebuild the trap this condition exists to close. The census separates the two: an issue the loop is responsible for is unfinished work, and an issue it is not responsible for is accounted for.
+It is stated as a census result rather than as "no blocked issue carries a run marker" because the procedure deliberately leaves some blocked issues alone. A cause that has reached its attempt ceiling, or a repair that proved it needs unavailable human input, is work a person must pick up, and no later run may reopen it. A code-caused post-merge verification failure is different: backlog-loop keeps the merged members recoverable and runs TRUNK REPAIR before deciding that a person is needed. A condition demanding that no human-owned blocked issue exist becomes unmeetable the first time one appears -- which would rebuild the trap this condition exists to close. The census separates the two: an issue the loop is responsible for is unfinished work, and an issue it is not responsible for is accounted for.
 
 The census covers **every** marker, not only this run's. Every invocation picks a fresh run id, and blocked issues are neither ready nor in progress, so a restart after a failed run sees an empty ready list, nothing in progress, and no blocked issue bearing its own new id -- and would declare the backlog cleared over work the previous run failed to land.
 
@@ -31,9 +31,6 @@ The applicable documented quality gates must be green before every PR. Merge eac
 
 Never use `--admin` or GitHub auto-merge. Honor any documented exception that requires retaining the branch.
 
-Stop the goal early and report the exact state if:
-- trunk health fails;
-- three consecutive batches are blocked or failed;
-- the same issue ID is attempted twice;
-- two consecutive merges fail;
-- backlog-loop encounters another documented terminal blocker.
+Do not stop the goal merely because trunk is red, one issue or batch failed, a merge failed, or a prior issue ID is encountered again. Follow backlog-loop's TRUNK REPAIR path for code-caused red gates, park only the scoped work that cannot complete, skip repeated IDs, and continue every independent agent-executable issue.
+
+Stop the goal early only when backlog-loop has run its census and proved that no legal agent-executable action remains. The final report must name the human action, external owner, unavailable capability, or external-state change required, and explain why it prevents every remaining issue from reaching the merge gates. Event counters are never sufficient proof of that terminal condition.

@@ -71,6 +71,18 @@
 #       when no PR that pass stripped is still `OPEN`. Losing the condition
 #       lets a run that stripped the only record of an open PR report the
 #       backlog clear anyway.
+#   R14 a code-caused red trunk enters a bounded TRUNK REPAIR batch instead of
+#       ending the run before PICK BATCH can reach the issue that fixes it.
+#       The repair is solo, limited to the observed failing gates, and must
+#       turn those gates green before the ordinary merge authority applies.
+#   R15 terminal decisions are based on exhausted legal progress, not event
+#       counters. A scoped batch or merge failure is parked and the census is
+#       consulted for independent work; only a blocker that prevents every
+#       remaining agent-executable action can end the run.
+#   R16 the companion goal prompt preserves the same authority. A prompt-level
+#       unconditional trunk or counter stop wins before the skill can reach
+#       its recovery mechanics, recreating the deadlock even when both host
+#       copies are correct.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -514,6 +526,70 @@ for f in $copies; do
     printf '%s\n' "$iteration" |
         grep -qF -- "and no PR this census's RESIDUE PASS stripped is still \`OPEN\` -> the backlog is clear." ||
         fail "$f: ITERATION step 2's clear-backlog sentence no longer carries the stripped-PR condition (breaks R13: a run that stripped the only record of an open PR can report the backlog clear while nobody is watching that PR)"
+
+    # -----------------------------------------------------------------------
+    # R14. A red trunk caused by repository code is executable recovery work.
+    #
+    # This must live in ITERATION, before ordinary selection. A sentence in a
+    # report or prompt cannot help an executor whose step 1 still says STOP.
+    # The exact phrase anchors the disposition; the named subsection anchors
+    # the mechanics that select or create repair issues and constrain scope.
+    # -----------------------------------------------------------------------
+    printf '%s\n' "$iteration" |
+        grep -qF -- 'A code-caused red trunk is recovery work, not a terminal blocker.' ||
+        fail "$f: ITERATION no longer classifies a code-caused red trunk as recovery work (breaks R14: step 1 stops before PICK BATCH can reach the issue that restores CI)"
+    printf '%s\n' "$iteration" | grep -q '^   TRUNK REPAIR\.' ||
+        fail "$f: ITERATION carries no 'TRUNK REPAIR.' procedure (breaks R14: the recovery disposition has no bounded selection, creation, or verification mechanics)"
+    printf '%s\n' "$iteration" |
+        grep -qF -- 'If any recorded failure has no matching issue, create one agent-executable P0 bug with `bd create`' ||
+        fail "$f: TRUNK REPAIR no longer creates tracked agent work for an uncovered red gate (breaks R14: an untracked code failure still ends the run before any repair can be claimed)"
+    printf '%s\n' "$iteration" |
+        grep -qF -- 'The complete repair-member set is forced into one repair batch before normal ANCHOR selection' ||
+        fail "$f: TRUNK REPAIR no longer forces the complete failure set ahead of ordinary work (breaks R14: a partial repair cannot make the full merge gate green)"
+    printf '%s\n' "$iteration" |
+        grep -qF -- 'A TRUNK REPAIR batch never drops a member here.' ||
+        fail "$f: the plan-boundary budget may drop a TRUNK REPAIR member (breaks R14: the branch can leave one recorded trunk failure red and can never ship)"
+
+    # -----------------------------------------------------------------------
+    # R15. STOP is a reachability decision, not a failure counter.
+    #
+    # Counters are tempting circuit breakers but they terminate healthy work
+    # behind one bad issue. The stop section must state the positive rule and
+    # must not reintroduce the three historical counter-shaped exits.
+    # -----------------------------------------------------------------------
+    stop_early=$(section_of "$f" '## STOP EARLY AND REPORT')
+    [ -n "$stop_early" ] ||
+        fail "$f: no '## STOP EARLY AND REPORT' section (breaks R15: terminal authority has no bounded home)"
+    printf '%s\n' "$stop_early" |
+        grep -qF -- 'Stop only when no legal agent-executable action remains.' ||
+        fail "$f: STOP EARLY is not gated on exhausting legal agent-executable progress (breaks R15: one scoped failure can terminate independent ready work)"
+    for forbidden in '3 consecutive BATCHES' 'any id appears in two attempted batches' 'two merges fail in a row'; do
+        if printf '%s\n' "$stop_early" | grep -qF -- "$forbidden"; then
+            fail "$f: STOP EARLY still contains counter-shaped terminal rule '$forbidden' (breaks R15: event count can terminate the run while independent work remains)"
+        fi
+    done
 done
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, and ITERATION step 2 still gates on a stripped-but-open PR"
+# ---------------------------------------------------------------------------
+# R16. The companion goal cannot reintroduce a stronger unconditional stop.
+#
+# Install-only trees may contain only skills/, so absence of prompts/ skips
+# this repository-level check. When prompts/ exists, the matching goal is a
+# required part of the contract and must carry both halves of the rule.
+# ---------------------------------------------------------------------------
+if [ -d "$root/prompts" ]; then
+    goal="$root/prompts/backlog-loop.goal.md"
+    [ -f "$goal" ] ||
+        fail "prompts/ exists but carries no backlog-loop.goal.md (breaks R16: the launch contract for recovery-aware execution is missing)"
+    grep -qF -- 'Do not stop the goal merely because trunk is red' "$goal" ||
+        fail "$goal: the goal no longer permits TRUNK REPAIR on a red trunk (breaks R16: prompt authority can stop before the skill reaches recovery)"
+    grep -qF -- 'Stop the goal early only when backlog-loop has run its census and proved that no legal agent-executable action remains.' "$goal" ||
+        fail "$goal: the goal is not gated on a census proving legal progress exhausted (breaks R16: a scoped failure can end the goal while independent work remains)"
+    for forbidden in '- trunk health fails;' '- three consecutive batches are blocked or failed;' '- the same issue ID is attempted twice;' '- two consecutive merges fail;'; do
+        if grep -qF -- "$forbidden" "$goal"; then
+            fail "$goal: contains obsolete unconditional stop '$forbidden' (breaks R16: prompt authority overrides the recovery-aware skill)"
+        fi
+    done
+fi
+
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, and the goal prompt preserves the same terminal authority"
