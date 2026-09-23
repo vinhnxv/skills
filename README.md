@@ -29,9 +29,9 @@ These skills are not general-purpose.
    an unprotected branch rather than stopping on it.
 3. **The `compound-engineering` plugin** for your host, providing `lfg`,
    `ce-plan`, `ce-work`, `ce-simplify-code`, `ce-code-review`,
-   `ce-test-browser`, `ce-doc-review`, `ce-commit-push-pr`, and
-   `ce-babysit-pr`. The skill's child-skill list was written against
-   **compound-engineering 3.24.0**; if a later version renames one of these,
+   `ce-test-browser`, `ce-doc-review`, `ce-commit-push-pr`,
+   `ce-babysit-pr`, and `ce-resolve-pr-feedback`. The skill's child-skill list
+   was checked against **compound-engineering 3.28.2**; if a later version renames one of these,
    preflight will stop on a skill that no longer exists — that is a bug in this
    repository, not a misconfiguration on your side. A missing plugin → preflight
    stops before any issue is claimed.
@@ -60,6 +60,11 @@ every merge-authorizing gate in a clean throwaway worktree rather than beside
 your uncommitted files, stops when your local default branch holds unpushed
 commits, and stops after repeated failures — but do not point it at a repository
 whose main branch you are not comfortable having written to.
+
+It probes trunk health and PR checks separately. A green workflow that runs
+only on `main` keeps trunk healthy but does not count as a PR check; that PR
+uses exact-commit local gates before and after merge and a bounded review
+watch. A required or observed PR check must pass before merge.
 
 **And know what the two of them are together.** `repo-audit` fills the backlog
 that `backlog-loop` clears, and every finding it files enters `bd ready` with no
