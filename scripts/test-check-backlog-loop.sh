@@ -195,9 +195,10 @@ run_suite() { # checker path
     # in three other arms' cross-references even after the arm that CLAIMS it
     # is deleted outright. Only opener-scoped matching sees it go.
     t=$(fresh_tree)
+    merged_arm=$(sed -n '/^- `merged` or `verified`:/p' "$t/$LOOP_MD_CLAUDE")
+    [ -n "$merged_arm" ] || { echo 'test bug: merged/verified arm missing before mutation' >&2; return 1; }
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '- `merged` or `verified`: the merge is proven. Finish the interrupted close. Post-merge verification is required unless the phase is already `verified`, and it runs under `backlog_loop_ci`, not under a fresh probe: the interrupted batch may have merged the very workflow that now makes CI look available, so re-deriving the route would skip the local gate that batch was actually merged on. Missing `backlog_loop_ci` -> run the clean-tree post-merge gate. A red post-merge gate keeps the members `in_progress` at `merged` and enters ITERATION'"'"'s TRUNK REPAIR path; it does not rebuild shipped work and does not turn the original members into human work. Once the current trunk is green, verify that current commit, write `verified`, then add the calibration note and `bd close` against `backlog_loop_pr`.
-' \
+        "$merged_arm" \
         ''
     expect_fail "the merged/verified RECOVERY bullet is deleted whole" \
         'declares phase .merged. but no RECOVERY arm' "$t"

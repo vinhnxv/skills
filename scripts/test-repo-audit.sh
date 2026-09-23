@@ -1049,6 +1049,50 @@ solo=$(apportion "$filing_ceiling" a:100)
     && pass "apportionment: one criterion holding every confirmed finding still fills the ceiling" \
     || fail "apportionment: the division starved the only criterion with findings"
 
+# ---------------------------------------------------------------------------
+# PART 2'S EXPECTED TABLES, CHECKED AGAINST THE ROSTER WITHOUT RUNNING PART 2.
+#
+# A `<dims>` list is `+`-joined "in roster order". An expected table that
+# instead copies the order its fixture declares is wrong about a run that was
+# right, and nothing catches it until a live PART 2 case burns hours to
+# produce the diff. This reads PART 2's own heredoc text out of this file, so
+# CI -- which stops before PART 2 -- still guards its tables.
+# ---------------------------------------------------------------------------
+grounded "that the dimension list is ordered by the roster" "in roster order"
+
+# The roster's dimension names, in order, as `<index><tab><name>`.
+printf '%s\n' "$dimension_rows" \
+    | awk -F' [|] ' '{ n = $2; gsub(/^[ \t]+|[ \t]+$/, "", n); print NR "\t" n }' \
+    > "$work/roster-order"
+
+# Every `+`-joined dimension list appearing in an expected `finding ` line in
+# this file. Field 2 of the line; the heredocs are the only source of these.
+grep '^finding #[0-9]* | .* | P[0-4] | ' "$0" \
+    | awk -F' [|] ' '{ d = $2; gsub(/^[ \t]+|[ \t]+$/, "", d); if (d ~ /[+]/) print d }' \
+    > "$work/expected-dims"
+
+if [ ! -s "$work/expected-dims" ]; then
+    fail "no expected table carries a collapsed dimension list, so the roster-order rule is modelled by nothing"
+else
+    misordered=$(awk -F'\t' '
+        FNR == NR { idx[$2] = $1; next }
+        {
+            n = split($0, part, "+")
+            prev = 0
+            for (i = 1; i <= n; i++) {
+                name = part[i]
+                gsub(/^[ \t]+|[ \t]+$/, "", name)
+                if (!(name in idx)) { print "unknown dimension: " name; next }
+                if (idx[name] <= prev) { print "out of roster order: " $0; next }
+                prev = idx[name]
+            }
+        }
+    ' "$work/roster-order" "$work/expected-dims")
+    [ -z "$misordered" ] \
+        && pass "every expected dimension list names real dimensions in roster order" \
+        || fail "an expected dimension list disagrees with the roster: $misordered"
+fi
+
 if [ "$fixtures_only" -eq 1 ]; then
     printf '\n%d check(s), %d failure(s) [fixtures only]\n' "$checks" "$failures"
     [ "$failures" -eq 0 ] || exit 1
@@ -1344,9 +1388,15 @@ if emit_usable "$emit_a"; then
     # THE EXPECTED TABLE. Fingerprints are positional and issue ids are folded
     # to ID, so what is diffed is the dimension list, the severity, the
     # disposition, the resolution to an issue or not, and the location.
+    #
+    # F2's two dimensions are listed here in ROSTER order, which is not the
+    # order the fixture declares them in. The emit contract requires it: the
+    # `<dims>` list is `+`-joined "in roster order", so a run that echoed the
+    # fixture's declaration order would be the one in the wrong. Do not
+    # "correct" this line to match the fixture.
     cat > "$work/expected-a" <<'EXPECTED'
 finding #1 | correctness and control flow | P1 | report-only | none | src/reader.py:41-47
-finding #2 | state, ordering, and idempotency+correctness and control flow | P0 | report-only | none | src/queue.py:88-96
+finding #2 | correctness and control flow+state, ordering, and idempotency | P0 | report-only | none | src/queue.py:88-96
 finding #3 | input boundaries and untrusted data | P0 | report-only | none | src/config.py:12-12
 EXPECTED
     printf '%s\n' "$emit_a" | normalize_findings | sort > "$work/actual-a"
