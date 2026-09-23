@@ -36,21 +36,20 @@ These skills are not general-purpose.
    repository, not a misconfiguration on your side. A missing plugin → preflight
    stops before any issue is claimed.
 
-### `repo-audit` needs two things
+### `repo-audit` does not need Beads
 
-1. **Beads (`bd`)**, exactly as above and for the same reason: every write it
-   makes is a literal `bd` command, and preflight stops on Beads before it
-   reads a single repository file.
-2. **A host that can spawn subagents.** `repo-audit` shards its roster one
-   dimension per subagent, and it does not stop when the host cannot: a host
-   with no spawn primitive, and a host that refuses the first spawn, both fall
-   back to auditing the roster serially in one context — and a serial run is
-   **read-only**. It reports everything it found and files none of it, because
-   the party doing the searching would otherwise be the party measuring its own
-   coverage. So on such a host the skill still works and still never writes.
+It reads a repository and writes a standalone Markdown report. A host that can
+spawn subagents audits dimensions in parallel; a host without that capability
+audits serially. Neither route calls `bd` or creates tickets. It also does not
+need a GitHub remote, `gh`, or the `compound-engineering` plugin.
 
-It does **not** need a GitHub remote, `gh`, or the `compound-engineering`
-plugin. It reads the repository and writes to the tracker; it opens nothing.
+### `source-to-beads` needs Beads
+
+`source-to-beads` creates Beads work for the current repository from an audit
+report, brainstorm, implementation plan, document, cited research, or context
+accessible in the current session. It runs independently of `repo-audit` and
+requires an initialized, working Beads tracker. It does not start
+`backlog-loop`.
 
 **Also know what you are starting.** `backlog-loop` is autonomous. It claims
 issues, opens branches and pull requests, and **merges its own PRs** without
@@ -66,16 +65,10 @@ only on `main` keeps trunk healthy but does not count as a PR check; that PR
 uses exact-commit local gates before and after merge and a bounded review
 watch. A required or observed PR check must pass before merge.
 
-**And know what the two of them are together.** `repo-audit` fills the backlog
-that `backlog-loop` clears, and every finding it files enters `bd ready` with no
-human gate in front of it. Install both and point them at the same repository
-and you have a closed loop: the audit files, the loop plans, builds, opens a
-pull request, and merges it. Nobody stands between the two. That is the design,
-not a side effect — but it is worth knowing before the first run rather than
-after it. `repo-audit` bounds its own half: a first run against a repository
-files **nothing at all**, whichever prompt invoked it, so you get a full report
-of what it would have filed before anything reaches the tracker. Every run also
-prints the exact commands that would close everything it just filed.
+After an audit, the agent saves the full report and recommends what to do next.
+You choose whether to stop with that report, fix all or selected findings, or
+create Beads issues when Beads is configured. Creating issues is a separate
+action; running `backlog-loop` is another separate action.
 
 ## Install
 
@@ -91,6 +84,9 @@ mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archiv
 
 mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/repo-audit
+
+mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/source-to-beads
 ```
 
 **Codex**
@@ -101,6 +97,9 @@ mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive
 
 mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/repo-audit
+
+mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/source-to-beads
 ```
 
 The `mkdir -p` is not optional: `tar -C` on a directory that does not exist
@@ -115,8 +114,8 @@ any file the new version dropped.
 the directories that match your host:
 
 ```sh
-mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit ~/.claude/skills/
-mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  ~/.codex/skills/
+mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads ~/.claude/skills/
+mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  ~/.codex/skills/
 ```
 
 `cp -R` into a directory that does not exist exits 0 and copies the skill's
@@ -163,43 +162,36 @@ you do not use Beads, this skill is not for you.
 
 ### `repo-audit`
 
-Audits a repository against a fixed roster of nine dimensions, each of which
-names the specific criteria it owes — one subagent per dimension, in waves —
-and files what survives verification into **Beads** as ready work. The
-dimension is what gets dispatched; the criterion is what gets measured and
-reported, so a dimension is clean only when every criterion under it is. It
-derives its rules from the target repository each run rather than shipping a
-pattern library, measures per-criterion coverage against a population the
-orchestrator counts itself, and files nothing it did not confirm against the
-audited commit.
+Audits a repository against a fixed roster of nine dimensions and writes a
+report with a versioned schema under `docs/audits/`. Each dimension names
+criteria whose coverage and findings are recorded. A report includes stable
+finding IDs, evidence, source snapshot, verification result, and coverage limits, so another
+person, Codex session, or Claude Code session can review it without the original
+chat. The audit does not require or write to Beads.
 
-**It is incremental across runs.** A coverage ledger records what each
-dimension proved clean and at which commit, so a later run audits the files
-that changed since — plus their reverse-dependency closure — instead of the
-whole tree. Dimensions whose defects are not file-local are never cached, and
-every skip it takes is enumerated in the report.
+The audit can reuse a validated local coverage cache. If the cache is missing
+or stale, it audits the full scope. Every skipped criterion and source snapshot
+is recorded in the report, so the cache is not needed to review the result.
 
-**It closes what it opened.** A run's first write is a sweep over its own
-previously filed issues: each one's recorded detection recipe is re-evaluated
-at the current commit, and only the ones that provably no longer reproduce are
-closed. It has no authority over anyone else's issues, and it never closes on a
-recipe it could not evaluate.
+**Launch it in two steps:** load the skill, then give it
+[`prompts/repo-audit.goal.md`](prompts/repo-audit.goal.md). The
+[`prompts/repo-audit-readonly.goal.md`](prompts/repo-audit-readonly.goal.md)
+companion is retained as a report-only launch alias. Both produce a report and
+leave code and tracker changes to the user's next choice.
 
-**Launch it in two steps**, the same way — load the skill, then give it one of
-the two companion prompts. Use
-[`prompts/repo-audit.goal.md`](prompts/repo-audit.goal.md) for a writing run,
-and [`prompts/repo-audit-readonly.goal.md`](prompts/repo-audit-readonly.goal.md)
-to see everything it would file without letting it file any of it — that prompt
-runs every `bd` command under `--readonly`, so a write is refused by the tracker
-rather than merely avoided. The per-host second step is identical to
-`backlog-loop`'s above.
+### `source-to-beads`
 
-**Suppressing a finding is your act, not its.** Close the issue and label it
-`audit-suppressed`; the audit re-derives its suppression list from those labels
-on every run and never writes that label itself. Remove the label or reopen the
-issue and the suppression is gone on the next run.
+Extracts actionable work into Beads from any accessible source. An audit report
+is one supported input, alongside a brainstorm, an implementation-ready plan,
+another document, cited research, or the current host's available session
+context. Brainstorm questions remain decision or discovery work; plan units
+become executable issues with justified dependencies. Every issue cites its
+source, and repeated runs check the tracker before creating duplicates.
 
-**Tracker support.** Beads only, for the same reason.
+Invoke it directly with the source and the instruction to update the current
+repository's Beads backlog. It reports created, reused, and deferred work. It
+does not claim to read a different host's private transcript unless that
+transcript was supplied, and it does not run `backlog-loop`.
 
 ## Repository layout
 
@@ -208,7 +200,7 @@ skills/claude/<skill-name>/    installable into ~/.claude/skills/
 skills/codex/<skill-name>/     installable into ~/.codex/skills/
 prompts/                       companion launch prompts
 scripts/check-parity.sh        keeps the two host copies from drifting
-scripts/check-cross-skill.sh   keeps the two skills' shared assumptions true
+scripts/check-cross-skill.sh   checks Beads writer and backlog-loop boundaries
 scripts/check-backlog-loop.sh  keeps backlog-loop's own internal rules in both copies
 scripts/test-*.sh              proves each checker still fails on a broken tree
 ```
