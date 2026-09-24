@@ -24,13 +24,14 @@ consumer_copies=$(copies_of backlog-loop)
 [ -n "$writer_copies" ] || fail "source-to-beads skill missing"
 [ -n "$consumer_copies" ] || fail "backlog-loop skill missing"
 
+bd_lines() { grep -nE '(^|[^[:alnum:]_])bd[[:space:]]+(-[^[:space:]`]+|[a-z][a-z-]*)([[:space:]`]|$)' "$1" || true; }
 # Audit may name the writer as a next action but may not invoke bd itself.
 for f in $audit_copies; do
-    calls=$(grep -nE '(^|[^[:alnum:]_])bd[[:space:]]+(--[a-z-]+|[a-z][a-z-]*)([[:space:]`]|$)' "$f" || true)
+    calls=$(bd_lines "$f")
     [ -z "$calls" ] || fail "repo-audit: $f contains a Beads command: $(printf '%s\n' "$calls" | head -n 1)"
 done
 
-bd_set_lines() { grep -nE 'bd [a-z]' "$1" | grep -E -- '--(set-)?metadata[ =]|--(add-|set-|remove-)?labels?[ =]' || true; }
+bd_set_lines() { bd_lines "$1" | grep -E -- '--(set-)?metadata[ =]|--(add-|set-|remove-)?labels?[ =]|(^|[[:space:]])-l([[:space:]=]|$)' || true; }
 declared_metadata_keys() {
     awk -F'|' '
         /^\| *key *\|/ { if ($NF ~ /^ *$/ && $(NF-1) ~ /^ *value *$/) { intable = 1; next } }

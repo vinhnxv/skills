@@ -55,8 +55,20 @@ run_suite() {
     expect_fail "audit invokes another Beads subcommand" "repo-audit: .*contains a Beads command" "$t"
 
     t=$(fresh_tree)
+    printf '\nRun `bd -C . list` before audit.\n' >> "$t/$AUDIT"
+    expect_fail "audit invokes Beads with a directory option" "repo-audit: .*contains a Beads command" "$t"
+
+    t=$(fresh_tree)
+    printf '\nRun `bd -q list` before audit.\n' >> "$t/$AUDIT"
+    expect_fail "audit invokes Beads with a quiet option" "repo-audit: .*contains a Beads command" "$t"
+
+    t=$(fresh_tree)
     printf '\nRun `bd update <id> --set-metadata backlog_loop_run=1`.\n' >> "$t/$WRITER"
     expect_fail "writer crosses consumer namespace" "reserved to 'backlog-loop'" "$t"
+
+    t=$(fresh_tree)
+    printf '\nRun `bd -C . update <id> --set-metadata backlog_loop_run=1`.\n' >> "$t/$WRITER"
+    expect_fail "writer crosses consumer namespace with a directory option" "reserved to 'backlog-loop'" "$t"
 
     t=$(fresh_tree)
     printf '\nRun `bd update <id> --set-metadata repo_audit_sha=abc`.\n' >> "$t/$WRITER"
@@ -114,6 +126,14 @@ run_suite() {
     t=$(fresh_tree)
     printf '\nRun `bd update <id> --add-label audit-suppressed`.\n' >> "$t/$WRITER"
     expect_fail "writer forges legacy suppression label" "write site for author-only label 'audit-suppressed'" "$t"
+
+    t=$(fresh_tree)
+    printf '\nRun `bd create work -l hard-blocker`.\n' >> "$t/$WRITER"
+    expect_fail "writer forges author-only label with a short flag" "write site for author-only label 'hard-blocker'" "$t"
+
+    t=$(fresh_tree)
+    printf '\nRun `bd -q create work -l audit-suppressed`.\n' >> "$t/$WRITER"
+    expect_fail "writer forges legacy label with global and short flags" "write site for author-only label 'audit-suppressed'" "$t"
 
     t=$(fresh_tree)
     replace_all "$t" "$CONSUMER" 'status=deferred' 'status=parked'
