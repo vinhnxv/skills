@@ -581,6 +581,19 @@ for f in $copies; do
         fail "$f: bounded post-merge CI wait is missing (breaks R18)"
     grep -qF -- 'Recheck the durable queue at each iteration and in the next invocation.' "$f" ||
         fail "$f: post-merge CI queue has no resumed poll (breaks R18)"
+    grep -qF -- 'If either route is `off` or missing, a missing workflow does not hold verification after the exact-merge clean-tree gate passes' "$f" ||
+        fail "$f: CI-off recovery can wait forever for a missing workflow despite a green exact-merge local gate"
+    grep -qF -- 'When either route is `off`, the exact-merge local gate is authoritative: a missing workflow does not keep the queue pending after that gate passes.' "$f" ||
+        fail "$f: CI-off post-merge verification can wait forever for a missing workflow"
+    grep -qF -- 'OPEN PR RESUME. For each linked PR' "$f" ||
+        fail "$f: a parked open PR has no later-run resume path"
+    grep -qF -- 'backlog_loop_cause=transient:pr-open' "$f" ||
+        fail "$f: a parked open PR is not recorded as recoverable"
+    grep -qF -- 'bd list --all --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' "$f" ||
+        fail "$f: CI watch cannot enumerate queue entries because bd list omits metadata"
+    residue=$(sed -n '/^RESIDUE PASS\./,/^GATE REPAIR PASS\./p' "$f")
+    printf '%s\n' "$residue" | grep -qF -- '--unset-metadata backlog_loop_postmerge_ci' ||
+        fail "$f: RESIDUE PASS leaves a parked issue in the pending CI watch"
 done
 
 # ---------------------------------------------------------------------------

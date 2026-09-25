@@ -194,6 +194,41 @@ run_suite() { # checker path
     expect_fail "the durable post-merge CI queue key is removed" \
         'durable post-merge CI queue key is missing' "$t"
 
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'If either route is `off` or missing, a missing workflow does not hold verification after the exact-merge clean-tree gate passes' \
+        'If either route is `off` or missing, keep waiting for every workflow'
+    expect_fail "CI-off recovery waits on a missing workflow" \
+        'CI-off recovery can wait forever' "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'When either route is `off`, the exact-merge local gate is authoritative: a missing workflow does not keep the queue pending after that gate passes.' \
+        'When either route is `off`, keep waiting for every missing workflow.'
+    expect_fail "CI-off verification waits on a missing workflow" \
+        'CI-off post-merge verification can wait forever' "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'OPEN PR RESUME. For each linked PR' \
+        'PARKED PR REPORT. For each linked PR'
+    expect_fail "parked PR resume path is removed" \
+        'parked open PR has no later-run resume path' "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'bd list --all --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' \
+        'bd list --all --limit 0 --json'
+    expect_fail "CI watch enumerates metadata from plain bd list" \
+        'CI watch cannot enumerate queue entries' "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '--unset-metadata backlog_loop_merge --unset-metadata backlog_loop_postmerge_ci --unset-metadata backlog_loop_ci' \
+        '--unset-metadata backlog_loop_merge --unset-metadata backlog_loop_ci'
+    expect_fail "residue pass leaves a parked CI queue entry" \
+        'RESIDUE PASS leaves a parked issue' "$t"
+
     # A substring test for `claimed` stays green here: the replacement leaves
     # "reclaimed" in the block. Only a whole-token match sees the arm go.
     t=$(fresh_tree)
