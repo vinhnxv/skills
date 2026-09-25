@@ -182,12 +182,26 @@ run_suite() { # checker path
     expect_fail "the WRITE GATE paragraph stops naming RESIDUE PASS" \
         "does not name RESIDUE PASS among the writes it covers" "$t"
 
+    t=$(fresh_tree)
+    append_line "$t" "$LOOP_MD_CLAUDE" 'Run `gh pr close <url>` after a review timeout.'
+    expect_fail "automatic PR close is reintroduced" \
+        'may close a PR automatically' "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| `backlog_loop_postmerge_ci` |' \
+        '| `backlog_loop_postmerge_ci_removed` |'
+    expect_fail "the durable post-merge CI queue key is removed" \
+        'durable post-merge CI queue key is missing' "$t"
+
     # A substring test for `claimed` stays green here: the replacement leaves
     # "reclaimed" in the block. Only a whole-token match sees the arm go.
     t=$(fresh_tree)
+    claimed_arm=$(sed -n '/^- `pr-open`, `built`, or `claimed`:/p' "$t/$LOOP_MD_CLAUDE")
+    [ -n "$claimed_arm" ] || { echo 'test bug: claimed arm missing before mutation' >&2; return 1; }
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '- `pr-open`, `built`, or `claimed`: nothing shipped. Reclaim, retiring the PR first' \
-        '- `pr-open` or `built`: nothing shipped. An issue reclaimed here is reclaimed whole. Reclaim, retiring the PR first'
+        "$claimed_arm" \
+        '- `pr-open` or `built`: an issue reclaimed here is reclaimed whole.'
     expect_fail "the RECOVERY claimed arm is deleted while 'reclaimed' still appears in the block" \
         'declares phase .claimed. but no RECOVERY arm' "$t"
 
@@ -207,10 +221,11 @@ run_suite() { # checker path
     # default arm's own cross-reference ("follow the `merge-requested` arm's
     # rules"), so a whole-block test stays green after this bullet is gone.
     t=$(fresh_tree)
+    merge_requested_arm=$(sed -n '/^- `merge-requested`:/p' "$t/$LOOP_MD_CLAUDE")
+    [ -n "$merge_requested_arm" ] || { echo 'test bug: merge-requested arm missing before mutation' >&2; return 1; }
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '- `merge-requested`: the outcome is unknown, which is exactly what this phase exists to record. Query `backlog_loop_pr`. `MERGED` -> treat as `merged` above. Any other state -> retire the PR, then reclaim.
-' \
-        ''
+        "$merge_requested_arm" \
+        '- `interrupted`: park the batch.'
     expect_fail "the merge-requested RECOVERY bullet is deleted whole" \
         'declares phase .merge-requested. but no RECOVERY arm' "$t"
 
@@ -330,7 +345,7 @@ run_suite() { # checker path
         "set, and no PR this census's RESIDUE PASS stripped is still \`OPEN\` -> the backlog is clear." \
         "set -> the backlog is clear."
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        ' An outstanding stripped PR withholds that verdict, but it does not stop independent ready work: carry and report every URL while batches remain selectable, and stop for the required human close-or-land decision only after no agent-executable work remains.' \
+        ' An outstanding stripped PR withholds that verdict, but it does not stop independent ready work: carry and report every URL while batches remain selectable, and stop and report the still-open PR only after no agent-executable work remains.' \
         ''
     expect_fail "ITERATION step 2's clear-backlog sentence drops the stripped-PR condition" \
         "no longer carries the stripped-PR condition" "$t"

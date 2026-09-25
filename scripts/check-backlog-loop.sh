@@ -568,6 +568,19 @@ for f in $copies; do
             fail "$f: STOP EARLY still contains counter-shaped terminal rule '$forbidden' (breaks R15: event count can terminate the run while independent work remains)"
         fi
     done
+
+    # An unmerged PR stays open, and a merged PR keeps a durable CI watch.
+    if grep -qF -- 'gh pr close' "$f"; then
+        fail "$f: backlog-loop may close a PR automatically (breaks R17)"
+    fi
+    grep -qF -- 'Never close a PR automatically.' "$f" ||
+        fail "$f: open-PR preservation rule is missing (breaks R17)"
+    grep -qF -- '| `backlog_loop_postmerge_ci` |' "$f" ||
+        fail "$f: durable post-merge CI queue key is missing (breaks R18)"
+    grep -qF -- 'Wait up to 30 minutes total from `<first-seen-utc>`' "$f" ||
+        fail "$f: bounded post-merge CI wait is missing (breaks R18)"
+    grep -qF -- 'Recheck the durable queue at each iteration and in the next invocation.' "$f" ||
+        fail "$f: post-merge CI queue has no resumed poll (breaks R18)"
 done
 
 # ---------------------------------------------------------------------------
