@@ -30,8 +30,8 @@ These skills are not general-purpose.
 3. **The `compound-engineering` plugin** for your host, providing `lfg`,
    `ce-plan`, `ce-work`, `ce-simplify-code`, `ce-code-review`,
    `ce-test-browser`, `ce-doc-review`, `ce-commit-push-pr`,
-   `ce-babysit-pr`, and `ce-resolve-pr-feedback`. The skill's child-skill list
-   was checked against **compound-engineering 3.28.2**; if a later version renames one of these,
+   `ce-babysit-pr`, `ce-resolve-pr-feedback`, and `ce-debug`. The skill's
+   child-skill list was checked against **compound-engineering 3.30.1**; if a later version renames one of these,
    preflight will stop on a skill that no longer exists — that is a bug in this
    repository, not a misconfiguration on your side. A missing plugin → preflight
    stops before any issue is claimed.
