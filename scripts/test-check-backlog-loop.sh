@@ -126,6 +126,17 @@ expect_fail() { # name, expected-message-ERE, tree
     echo "  ok: $name"
 }
 
+# One break applied to each host copy in turn, in its own tree. The message
+# must name the mutated copy's path, so a checker that read only one host would
+# miss the other copy's case. Used for the rules that carry a Codex-copy case.
+both_hosts() { # name, old, new, expected-message-ERE
+    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
+        t=$(fresh_tree)
+        replace_first "$t" "$md" "$2" "$3"
+        expect_fail "$1 ($md)" "$md: $4" "$t"
+    done
+}
+
 # ---------------------------------------------------------------------------
 # The suite. Every case builds its own tree, applies exactly one break, and
 # states the message it expects.
@@ -679,6 +690,106 @@ run_suite() { # checker path
         'The legacy cause is gone when'
     expect_fail "a declared cause has no REOPEN PASS proof" \
         "REOPEN PASS carries no proof for cause .transient:merge-precondition." "$t"
+
+    # -- R25: a parked PR is adopted by one status-guarded write -------------
+    #
+    # Without `--if-status blocked` two invocations can both move the parked
+    # issue to `in_progress` and both merge-request the same PR.
+
+    both_hosts "the adoption write loses its --if-status guard" \
+        'bd update <id> --if-status blocked --status=in_progress --assignee <actor>' \
+        'bd update <id> --status=in_progress --assignee <actor>' \
+        "no ADOPTION write carries the --if-status blocked guard .breaks R25"
+
+    both_hosts "the adoption write is split into a claim" \
+        'bd update <id> --if-status blocked --status=in_progress --assignee <actor>' \
+        'bd update <id> --claim --if-status blocked --assignee <actor>' \
+        "no ADOPTION write carries the --if-status blocked guard .breaks R25"
+
+    both_hosts "a nonzero adoption exit with an unchanged read-back stops meaning skip" \
+        'Any nonzero exit with an unchanged read-back means another invocation adopted it first: skip the issue and write nothing.' \
+        'Exit 13 means another invocation adopted it first: skip the issue and write nothing.' \
+        "ADOPTION no longer says any nonzero exit with an unchanged read-back means skip"
+
+    both_hosts "the adoption read-back is dropped" \
+        'Read the issue back and require status `in_progress`, assignee `<actor>`, and `backlog_loop_run=<run-id>`.' \
+        'The write is trusted.' \
+        "ADOPTION no longer reads the issue back"
+
+    both_hosts "an in_progress member under a dead run is adopted in place" \
+        'A member still `in_progress` under a dead run (RECOVERY) is parked first, never adopted in place:' \
+        'A member still `in_progress` under a dead run (RECOVERY) is re-stamped in place:' \
+        "ADOPTION no longer parks an .in_progress. member of a dead run first"
+
+    both_hosts "the disposition table's adopt row stops naming ADOPTION" \
+        'adopt the issue through ADOPTION'"'"'s guarded write; rerun' \
+        'adopt the issue: move it from `blocked` to `in_progress` in one write; rerun' \
+        "the adopt row of LINKED PR DISPOSITION no longer adopts through ADOPTION"
+
+    both_hosts "OPEN PR RESUME stops adopting through ADOPTION" \
+        'adopt every member through ADOPTION first, so no other invocation can take the PR while its gates run' \
+        'set each member in_progress once its gates pass' \
+        "OPEN PR RESUME no longer adopts through ADOPTION before its gates"
+
+    # The R8 carve-out: in_progress is a literal status flag in the adoption
+    # write only.
+
+    both_hosts "an in_progress status flag is written outside the adoption write" \
+        'and `status` is not `blocked`, `hooked`, `pinned` or `deferred` |' \
+        'and `status` is not `blocked`, `hooked`, `pinned` or `deferred`; run `bd update <id> --status=in_progress` |' \
+        "writes .--status=in_progress. 2 time.s. but the anchored adoption write appears 1 time"
+
+    # -- R26: a member that is not running never reads as live ----------------
+
+    both_hosts "step 6's park write keeps the heartbeat" \
+        '`bd update <id> --status=blocked --unset-metadata backlog_loop_heartbeat --append-notes="merge blocked;' \
+        '`bd update <id> --status=blocked --append-notes="merge blocked;' \
+        "a literal --status=blocked write does not unset .backlog_loop_heartbeat. in the same command .breaks R26"
+
+    both_hosts "step 7's blocked write keeps the heartbeat" \
+        '`bd update <id> --status=blocked --unset-metadata backlog_loop_heartbeat --append-notes="pipeline blocked:' \
+        '`bd update <id> --status=blocked --append-notes="pipeline blocked:' \
+        "a literal --status=blocked write does not unset .backlog_loop_heartbeat. in the same command .breaks R26"
+
+    both_hosts "the adoption park-first write keeps the heartbeat" \
+        '`bd update <id> --status=blocked --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open`' \
+        '`bd update <id> --status=blocked --set-metadata backlog_loop_cause=transient:pr-open`' \
+        "a literal --status=blocked write does not unset .backlog_loop_heartbeat. in the same command .breaks R26"
+
+    both_hosts "the rule that every blocked write unsets the heartbeat is deleted" \
+        'Every write that sets `blocked`, in the table above or anywhere below, carries `--unset-metadata backlog_loop_heartbeat` in that same command.' \
+        'A write that sets `blocked` may keep the heartbeat.' \
+        "no longer says every write that sets .blocked. unsets the heartbeat"
+
+    both_hosts "the verified write before the close keeps the heartbeat" \
+        '--set-metadata backlog_loop_phase=verified --unset-metadata backlog_loop_heartbeat`' \
+        '--set-metadata backlog_loop_phase=verified`' \
+        "the step 7 write that records .verified. no longer unsets the heartbeat"
+
+    both_hosts "LIVENESS stops treating a released or stale heartbeat as dead" \
+        '`released`, a stale `live`, and an absent heartbeat are dead unless such a process exists.' \
+        'A `released` heartbeat is read like any other.' \
+        "LIVENESS no longer treats a .released. heartbeat, a stale .live. one, and an absent one as dead"
+
+    both_hosts "the ledger row stops documenting the released suffix" \
+        '`<iso> | released` once it lets go at exit' \
+        'a timestamp once it lets go at exit' \
+        "the .backlog_loop_heartbeat. ledger row no longer documents both suffix values"
+
+    both_hosts "the heartbeat refresher loses its 10-minute cadence and lease renewal" \
+        'Every 10 minutes it refreshes every `in_progress` issue carrying `backlog_loop_run=<run-id>`: it writes `backlog_loop_heartbeat="<iso> | live"` and runs `bd heartbeat <id>`' \
+        'At each step boundary it writes `backlog_loop_heartbeat="<iso> | live"`' \
+        "HEARTBEAT REFRESHER no longer refreshes every 10 minutes"
+
+    both_hosts "FINAL REPORT stops releasing the members still held" \
+        'write `backlog_loop_heartbeat="<iso> | released"` on every member this run still holds `in_progress`' \
+        'leave the heartbeat on every member this run still holds `in_progress`' \
+        "FINAL REPORT no longer writes a .released. heartbeat"
+
+    both_hosts "the census WRITE GATE counts a heartbeat with no run beside it" \
+        'a `live` `backlog_loop_heartbeat` under 30 minutes old on an issue whose `backlog_loop_run` is present and is not `<run-id>`' \
+        'a `backlog_loop_heartbeat` under 30 minutes old on an issue whose `backlog_loop_run` is not `<run-id>`' \
+        "the WRITE GATE no longer counts a heartbeat only when a different .backlog_loop_run. is present"
 
     # -- The Codex copy is read too -----------------------------------------
     #

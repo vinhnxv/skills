@@ -113,6 +113,23 @@
 #   R24 every cause value the procedure names is declared in THE RUN LEDGER's
 #       cause row and has a proof in REOPEN PASS. A cause with no proof labels
 #       an issue that can neither be cleared nor escalated.
+#   R25 a parked PR is adopted by ONE write guarded with `--if-status blocked`,
+#       and every entry point that resumes a PR adopts through it. Without the
+#       guard two invocations both move the parked issue to `in_progress` and
+#       both merge-request the same PR. The adoption write is also the only text
+#       R8 lets carry a literal `--status=in_progress`, which is why this rule
+#       is evaluated before R8: a write that loses its guard must be reported
+#       as a lost guard, not as a stray status.
+#   R26 a member that is not running never reads as a live run. Every write that
+#       sets `blocked` unsets `backlog_loop_heartbeat` in the same command, the
+#       write before `bd close` does too, FINAL REPORT writes `released` on
+#       members still held, LIVENESS reads `released`, a stale `live`, and an
+#       absent heartbeat as dead, the census WRITE GATE counts a heartbeat only
+#       beside a different `backlog_loop_run`, and the refresher keeps a live
+#       run's heartbeat and claim lease fresh through a long child stage. A
+#       fresh heartbeat left on a parked or finished member stops the next
+#       invocation for 30 minutes over work nobody is doing; a stale one lets a
+#       sibling reclaim work that is still moving.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -128,8 +145,15 @@ SKILL_NAME="backlog-loop"
 
 # The statuses this procedure is allowed to write with a literal `--status=`
 # flag. `in_progress` and `closed` are written too, but through
-# `bd update <id> --claim` and `bd close`, so they never appear in this form.
+# `bd update <id> --claim` and `bd close`, so they never appear in this form --
+# except `in_progress` in ONE place, the status-guarded adoption write below.
 ALLOWED_STATUS_WRITES="open blocked"
+
+# The adoption write (R25), whole. `--claim` cannot be combined with
+# `--if-status` and `bd heartbeat` refuses a blocked issue, so adoption names the
+# status and the assignee itself. This is also the only text R8 lets carry a
+# literal `--status=in_progress`.
+ADOPTION_WRITE='bd update <id> --if-status blocked --status=in_progress --assignee <actor> --set-metadata backlog_loop_run=<run-id> --set-metadata backlog_loop_heartbeat="<iso> | live"'
 
 # The statuses the procedure must refuse to write, and which CLASSIFY must
 # reach before `abandoned-claim`.
@@ -494,7 +518,41 @@ for f in $copies; do
         fail "$f: $orphans EMIT <cause> categor(y/ies) name no CLASSIFY row, so nothing can ever emit them: $(tr '\n' ' ' < "$work/orphan-cause")"
 
     # -----------------------------------------------------------------------
-    # R8, first half. Every literal `--status=` write is one of two values.
+    # R25. A parked PR is adopted by one status-guarded write.
+    #
+    # Evaluated before R8 on purpose: R8 lets the adoption write carry the one
+    # literal `--status=in_progress`, so a write that loses `--if-status
+    # blocked` would otherwise be reported as a stray status instead of as the
+    # lost guard it is.
+    #
+    # The write is anchored WHOLE and must sit exactly once, inside the
+    # ADOPTION paragraph. The other clauses are anchored whole as well: "skip
+    # the issue" survives a sentence that restricts it to exit 13, and a second
+    # adopter that passes its own `--assignee` is refused with exit 1 before
+    # the status guard is reached, so an exit-13-only rule loses the race.
+    # -----------------------------------------------------------------------
+    adoption=$(grep '^ADOPTION\. ' "$f" || true)
+    [ -n "$adoption" ] ||
+        fail "$f: no 'ADOPTION.' paragraph (breaks R25: a parked PR has no single write that adopts it, so every entry point improvises one and two invocations can take the same PR)"
+    [ "$(grep -oF -- "$ADOPTION_WRITE" "$f" | grep -c . || true)" -eq 1 ] &&
+        printf '%s\n' "$adoption" | grep -qF -- "$ADOPTION_WRITE" ||
+        fail "$f: no ADOPTION write carries the --if-status blocked guard (breaks R25: an unguarded adoption lets two invocations both move the parked issue to in_progress and both merge-request the same PR; the write must appear exactly once, whole, inside the ADOPTION paragraph)"
+    printf '%s\n' "$adoption" |
+        grep -qF -- 'Read the issue back and require status `in_progress`, assignee `<actor>`, and `backlog_loop_run=<run-id>`.' ||
+        fail "$f: ADOPTION no longer reads the issue back (breaks R25: an exit status is not proof the write landed, and a refused second adopter would proceed as though it held the PR)"
+    printf '%s\n' "$adoption" |
+        grep -qF -- 'Any nonzero exit with an unchanged read-back means another invocation adopted it first: skip the issue and write nothing.' ||
+        fail "$f: ADOPTION no longer says any nonzero exit with an unchanged read-back means skip (breaks R25: a second adopter is refused with exit 1 before the status guard answers exit 13, so a rule keyed on exit 13 alone lets it carry on)"
+    printf '%s\n' "$adoption" |
+        grep -qF -- 'A member still `in_progress` under a dead run (RECOVERY) is parked first, never adopted in place:' ||
+        fail "$f: ADOPTION no longer parks an \`in_progress\` member of a dead run first (breaks R25: adopting in place has no blocked-to-in_progress transition to guard, so two recovering invocations both take the PR)"
+    disposition_rows "$f" | grep -F -- 'adopt the issue' |
+        grep -qF -- "adopt the issue through ADOPTION's guarded write;" ||
+        fail "$f: the adopt row of LINKED PR DISPOSITION no longer adopts through ADOPTION (breaks R25: the table's own adoption bypasses the status guard)"
+
+    # -----------------------------------------------------------------------
+    # R8, first half. Every literal `--status=` write is one of two values --
+    # plus the anchored adoption write's `in_progress`, counted below.
     #
     # Read off the whole file rather than one section, because the write that
     # matters is the one somebody adds to a procedure step years from now. A
@@ -520,8 +578,16 @@ for f in $copies; do
         fail "$f: $((raw_status_writes - parsed_status_writes)) literal \`--status=\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census below, so the status it writes is never checked)"
 
     printf '%s\n' "$status_matches" |
-        sed -e 's/^--status=//' -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/" |
-        LC_ALL=C sort -u > "$work/status-writes"
+        sed -e 's/^--status=//' -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/" > "$work/status-values"
+
+    # `in_progress` is the one carve-out: each occurrence, quoted or not, must
+    # be the anchored adoption write, so the counts have to agree.
+    in_progress_writes=$(grep -cx 'in_progress' "$work/status-values" || true)
+    adoption_writes=$(grep -oF -- "$ADOPTION_WRITE" "$f" | grep -c . || true)
+    [ "$in_progress_writes" -eq "$adoption_writes" ] ||
+        fail "$f: writes \`--status=in_progress\` $in_progress_writes time(s) but the anchored adoption write appears $adoption_writes time(s) (breaks R8: \`in_progress\` is a literal status flag in the status-guarded adoption write only, and anywhere else it writes a status the claim path owns)"
+
+    grep -vx 'in_progress' "$work/status-values" | LC_ALL=C sort -u > "$work/status-writes"
     while read -r status; do
         [ -n "$status" ] ||
             fail "$f: a literal \`--status=\` write carries an empty value (breaks R8: an empty status is not one of { $ALLOWED_STATUS_WRITES }, and it is invisible to the allowed-value check below unless this fails)"
@@ -767,6 +833,7 @@ for f in $copies; do
     # proof. Collected from every `transient:<subtype>` token in the file, so a
     # value written by any step is seen wherever it is written.
     # -----------------------------------------------------------------------
+    ledger_heartbeat_row=$(sed -n '/^| key | written at | value |$/,/^$/p' "$f" | grep '^| `backlog_loop_heartbeat` |' || true)
     cause_row=$(sed -n '/^| key | written at | value |$/,/^$/p' "$f" | grep '^| `backlog_loop_cause` |' || true)
     for cause in $(grep -oE -- 'transient:[a-z][a-z-]*' "$f" | LC_ALL=C sort -u) needs-person; do
         printf '%s\n' "$cause_row" | grep -qF -- "\`$cause\`" ||
@@ -774,6 +841,44 @@ for f in $copies; do
         printf '%s\n' "$reopen_section" | grep -qF -- "$cause" ||
             fail "$f: REOPEN PASS carries no proof for cause \`$cause\` (breaks R24: an issue labelled with it can be neither cleared nor escalated)"
     done
+
+    # R25, last clause. Placed after the paragraph-existence checks further up:
+    # deleting OPEN PR RESUME outright is reported by its own rule, not here.
+    grep '^ *OPEN PR RESUME\. ' "$f" |
+        grep -qF -- 'adopt every member through ADOPTION first, so no other invocation can take the PR while its gates run' ||
+        fail "$f: OPEN PR RESUME no longer adopts through ADOPTION before its gates (breaks R25: a PR is gated and merged by an invocation that never held it)"
+
+    # -----------------------------------------------------------------------
+    # R26. A member that is not running never reads as a live run.
+    #
+    # Every literal `--status=blocked` write is scanned, not a sample of the
+    # known ones: the next park somebody adds is the one that forgets. The
+    # span is cut at its backticks so a heartbeat unset in a neighbouring
+    # command cannot satisfy it, and the scan has to find the writes that exist
+    # today or it asserts nothing.
+    # -----------------------------------------------------------------------
+    blocked_writes=$(grep -oE -- '`[^`]*--status=blocked[^`]*`' "$f" || true)
+    [ "$(printf '%s\n' "$blocked_writes" | grep -c . || true)" -ge 3 ] ||
+        fail "$f: found fewer than three literal --status=blocked writes (breaks R26: the step 6 park, the step 7 block, and the ADOPTION park-first write are the writes the heartbeat check below scans, so finding none would pass it vacuously)"
+    printf '%s\n' "$blocked_writes" | grep -vF -- '--unset-metadata backlog_loop_heartbeat' > "$work/blocked-keep-heartbeat" || true
+    [ ! -s "$work/blocked-keep-heartbeat" ] ||
+        fail "$f: a literal --status=blocked write does not unset \`backlog_loop_heartbeat\` in the same command (breaks R26: a parked member keeps a fresh heartbeat and reads as a live run for 30 minutes, so the next invocation stops over work nobody is doing): $(head -n 1 "$work/blocked-keep-heartbeat")"
+    grep -qF -- 'Every write that sets `blocked`, in the table above or anywhere below, carries `--unset-metadata backlog_loop_heartbeat` in that same command.' "$f" ||
+        fail "$f: no longer says every write that sets \`blocked\` unsets the heartbeat in the same command (breaks R26: the rule the scan above enforces has nowhere to live, so a later park has nothing telling its author)"
+    grep -qF -- 'bd update <id> --set-metadata backlog_loop_postmerge_ci="<merge-sha> | <first-seen-utc> | passed" --set-metadata backlog_loop_phase=verified --unset-metadata backlog_loop_heartbeat' "$f" ||
+        fail "$f: the step 7 write that records \`verified\` no longer unsets the heartbeat (breaks R26: \`bd close\` takes no metadata flag, so a finished member whose close fails keeps a fresh heartbeat)"
+    grep -qF -- '`released`, a stale `live`, and an absent heartbeat are dead unless such a process exists.' "$f" ||
+        fail "$f: LIVENESS no longer treats a \`released\` heartbeat, a stale \`live\` one, and an absent one as dead (breaks R26: a finished run blocks the next invocation for 30 minutes)"
+    printf '%s\n' "$ledger_heartbeat_row" | grep -qF -- '`<iso> | live`' &&
+        printf '%s\n' "$ledger_heartbeat_row" | grep -qF -- '`<iso> | released`' ||
+        fail "$f: the \`backlog_loop_heartbeat\` ledger row no longer documents both suffix values, \`<iso> | live\` and \`<iso> | released\` (breaks R26: LIVENESS reads a state the ledger never declared)"
+    grep -qF -- 'Every 10 minutes it refreshes every `in_progress` issue carrying `backlog_loop_run=<run-id>`: it writes `backlog_loop_heartbeat="<iso> | live"` and runs `bd heartbeat <id>`' "$f" ||
+        fail "$f: HEARTBEAT REFRESHER no longer refreshes every 10 minutes, heartbeat and claim lease both (breaks R26: one long child stage outlasts the 30-minute window and a sibling reclaims live work)"
+    section_of "$f" '## FINAL REPORT' |
+        grep -qF -- 'write `backlog_loop_heartbeat="<iso> | released"` on every member this run still holds `in_progress`' ||
+        fail "$f: FINAL REPORT no longer writes a \`released\` heartbeat on members still held (breaks R26: a merged member waiting on post-merge CI stays live for 30 minutes after the run ended)"
+    grep -qF -- 'a `live` `backlog_loop_heartbeat` under 30 minutes old on an issue whose `backlog_loop_run` is present and is not `<run-id>`' "$f" ||
+        fail "$f: the WRITE GATE no longer counts a heartbeat only when a different \`backlog_loop_run\` is present (breaks R26: an orphan heartbeat left by reopen or drop skips this run's own census writes)"
 done
 
 # ---------------------------------------------------------------------------
@@ -798,4 +903,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, and the goal prompt preserves the same terminal authority"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, and the goal prompt preserves the same terminal authority"
