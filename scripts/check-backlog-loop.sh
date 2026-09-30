@@ -83,6 +83,21 @@
 #       unconditional trunk or counter stop wins before the skill can reach
 #       its recovery mechanics, recreating the deadlock even when both host
 #       copies are correct.
+#   R19 the merge gate reconciles compound-engineering's `actionable_findings`
+#       only. LFG never applies an `advisory` finding and never lists it under
+#       `## Unapplied review findings`, so a gate that reconciles every
+#       returned finding cannot be satisfied by a review that returns one, and
+#       the batch blocks, is charged, and reaches `needs-person` over a finding
+#       that was never meant to gate. The `settled_conflict` and
+#       `settled_decision_conflicts` bullets LFG step 6 writes under that
+#       heading stay merge-gating, and the non-complete review statuses are
+#       the ones ce-code-review actually returns.
+#   R20 the loop names the compound-engineering children it relies on by the
+#       invocation that keeps them unattended: the off-route resolver runs in
+#       `mode:pipeline` (full mode may stop on a blocking question), and
+#       preflight resolves `ce-debug`, which `ce-babysit-pr` invokes for a
+#       failing check, so a missing child surfaces before a claim and not
+#       inside a babysit.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -594,6 +609,36 @@ for f in $copies; do
     residue=$(sed -n '/^RESIDUE PASS\./,/^GATE REPAIR PASS\./p' "$f")
     printf '%s\n' "$residue" | grep -qF -- '--unset-metadata backlog_loop_postmerge_ci' ||
         fail "$f: RESIDUE PASS leaves a parked issue in the pending CI watch"
+
+    # -----------------------------------------------------------------------
+    # R19. The merge gate counts actionable findings only.
+    #
+    # Each anchor is a WHOLE clause, never a bare token: `actionable_findings`
+    # and `advisory` both survive in a sentence that negates the rule.
+    # -----------------------------------------------------------------------
+    grep -qF -- 'and reconcile `actionable_findings` only: each one is either an applied fix or an entry in `## Unapplied review findings`.' "$f" ||
+        fail "$f: pipeline step 4 no longer reconciles actionable_findings only (breaks R19: an advisory finding LFG never applies or lists makes the merge gate unsatisfiable, so the batch blocks and is charged)"
+    grep -qF -- 'with every entry in the review'"'"'s `actionable_findings` reconciled to either an applied-fix receipt or one of those entries' "$f" ||
+        fail "$f: the merge gate no longer counts actionable_findings only (breaks R19: a review that returns an advisory finding can never cross the gate)"
+    grep -qF -- '`advisory` findings are not entries and never block a merge.' "$f" ||
+        fail "$f: the merge gate no longer says advisory findings never block a merge (breaks R19: advisory findings read as unreconciled entries)"
+    grep -qF -- 'Record `advisory` findings under a separate non-checkbox `## Advisory review notes` heading in the PR body; they never gate the merge.' "$f" ||
+        fail "$f: pipeline step 4 no longer records advisory findings under a separate non-checkbox heading (breaks R19: advisory findings are dropped, or land under the gating heading)"
+    grep -qF -- 'The `settled_conflict` and `settled_decision_conflicts` bullets LFG step 6 writes under that heading gate the merge like any unchecked entry, because a divergence from a settled decision needs a person.' "$f" ||
+        fail "$f: pipeline step 4 no longer says the settled_conflict and settled_decision_conflicts bullets gate the merge (breaks R19: a divergence from a settled decision merges without a person)"
+    grep -qF -- 'Require `status: complete`; a `failed`, `degraded`, or `skipped` status, or a malformed return, takes the blocked path in step 7' "$f" ||
+        fail "$f: pipeline step 4 no longer names failed, degraded, and skipped as the non-complete review statuses (breaks R19: a failed review is read as a review that found nothing)"
+
+    # -----------------------------------------------------------------------
+    # R20. The children the loop relies on are named the way that keeps them
+    # unattended and resolvable.
+    # -----------------------------------------------------------------------
+    grep -qF -- 'invoke `compound-engineering:ce-resolve-pr-feedback mode:pipeline <pr-url>` once, so no step can stop on a blocking question;' "$f" ||
+        fail "$f: step 8 no longer invokes ce-resolve-pr-feedback in pipeline mode (breaks R20: the resolver's full mode can stop on a blocking question inside an unattended run)"
+    grep -qF -- '`compound-engineering:ce-resolve-pr-feedback`, `compound-engineering:ce-debug`.' "$f" ||
+        fail "$f: preflight no longer resolves compound-engineering:ce-debug (breaks R20: ce-babysit-pr invokes it for a failing check, so a missing ce-debug surfaces inside a babysit instead of before a claim)"
+    grep -qF -- "LFG's \`ce-compound\` step is skipped deliberately: it would add a commit after the gated head." "$f" ||
+        fail "$f: preflight no longer says the LFG ce-compound step is skipped deliberately (breaks R20: a reader cannot tell a dropped LFG stage from an intended one)"
 done
 
 # ---------------------------------------------------------------------------
@@ -618,4 +663,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, and the goal prompt preserves the same terminal authority"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and the goal prompt preserves the same terminal authority"

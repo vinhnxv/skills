@@ -420,6 +420,98 @@ run_suite() { # checker path
     expect_fail "the companion goal loses its census reachability gate" \
         "goal is not gated on a census proving legal progress exhausted" "$t"
 
+    # -- CE 3.30.1 compatibility: the merge gate and the child contracts -----
+    #
+    # Every one of these is a revert to text that was correct against an older
+    # compound-engineering: LFG never applies an `advisory` finding and never
+    # lists it under `## Unapplied review findings`, so a gate that reconciles
+    # every returned finding can never be satisfied by a review that returns
+    # one.
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'and reconcile `actionable_findings` only: each one is either an applied fix or an entry in `## Unapplied review findings`.' \
+        'and reconcile every finding the review returned against either an applied fix or an entry in `## Unapplied review findings`.'
+    expect_fail "pipeline step 4 reconciles every returned finding instead of actionable_findings" \
+        "no longer reconciles actionable_findings only" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CODEX" \
+        'and reconcile `actionable_findings` only: each one is either an applied fix or an entry in `## Unapplied review findings`.' \
+        'and reconcile every finding the review returned against either an applied fix or an entry in `## Unapplied review findings`.'
+    expect_fail "pipeline step 4 reconciles every returned finding, in the Codex copy alone" \
+        "skills/codex/backlog-loop/SKILL.md: pipeline step 4 no longer reconciles actionable_findings only" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'with every entry in the review'"'"'s `actionable_findings` reconciled to either an applied-fix receipt or one of those entries' \
+        'with every finding the review returned reconciled to either an applied-fix receipt or one of those entries'
+    expect_fail "the merge gate counts every returned finding instead of actionable_findings" \
+        "merge gate no longer counts actionable_findings only" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        ' `advisory` findings are not entries and never block a merge.' \
+        ''
+    expect_fail "the merge gate stops saying advisory findings never block a merge" \
+        "merge gate no longer says advisory findings never block a merge" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'Record `advisory` findings under a separate non-checkbox `## Advisory review notes` heading in the PR body; they never gate the merge. ' \
+        ''
+    expect_fail "advisory findings have no separate non-checkbox PR-body heading" \
+        "no longer records advisory findings under a separate non-checkbox heading" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'The `settled_conflict` and `settled_decision_conflicts` bullets LFG step 6 writes under that heading gate the merge like any unchecked entry, because a divergence from a settled decision needs a person. ' \
+        ''
+    expect_fail "the settled-conflict bullets stop gating the merge" \
+        "no longer says the settled_conflict and settled_decision_conflicts bullets gate the merge" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'a `failed`, `degraded`, or `skipped` status, or a malformed return, takes the blocked path in step 7' \
+        'a `degraded`, `blocked`, `skipped`, or malformed return takes the blocked path in step 7'
+    expect_fail "the review's non-complete statuses revert to a set that has no failed and invents blocked" \
+        "no longer names failed, degraded, and skipped as the non-complete review statuses" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'invoke `compound-engineering:ce-resolve-pr-feedback mode:pipeline <pr-url>` once, so no step can stop on a blocking question;' \
+        'invoke `compound-engineering:ce-resolve-pr-feedback <pr-url>` once;'
+    expect_fail "the step 8 resolver loses mode:pipeline" \
+        "no longer invokes ce-resolve-pr-feedback in pipeline mode" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CODEX" \
+        'invoke `compound-engineering:ce-resolve-pr-feedback mode:pipeline <pr-url>` once, so no step can stop on a blocking question;' \
+        'invoke `compound-engineering:ce-resolve-pr-feedback <pr-url>` once;'
+    expect_fail "the step 8 resolver loses mode:pipeline, in the Codex copy alone" \
+        "skills/codex/backlog-loop/SKILL.md: step 8 no longer invokes ce-resolve-pr-feedback in pipeline mode" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '`compound-engineering:ce-resolve-pr-feedback`, `compound-engineering:ce-debug`. LFG' \
+        '`compound-engineering:ce-resolve-pr-feedback`. LFG'
+    expect_fail "preflight stops naming ce-debug among the skills it resolves" \
+        "preflight no longer resolves compound-engineering:ce-debug" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CODEX" \
+        '`compound-engineering:ce-resolve-pr-feedback`, `compound-engineering:ce-debug`. LFG' \
+        '`compound-engineering:ce-resolve-pr-feedback`. LFG'
+    expect_fail "preflight stops naming ce-debug, in the Codex copy alone" \
+        "skills/codex/backlog-loop/SKILL.md: preflight no longer resolves compound-engineering:ce-debug" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        "LFG's \`ce-compound\` step is skipped deliberately: it would add a commit after the gated head. " \
+        ''
+    expect_fail "preflight no longer says the LFG ce-compound step is skipped deliberately" \
+        "no longer says the LFG ce-compound step is skipped deliberately" "$t"
+
     # -- The Codex copy is read too -----------------------------------------
     #
     # Same break as the first case, applied to the other host only. A checker
