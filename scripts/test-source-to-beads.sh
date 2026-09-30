@@ -12,6 +12,22 @@ codex="$root/skills/codex/source-to-beads/SKILL.md"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 require() { grep -Fq -- "$2" "$1" || fail "$1 lacks $2"; }
 
+# The one place a close is allowed: reconcile mode's confirmation clause.
+close_clause='Close an issue only after the operator confirms the close-candidate list, and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`); close each confirmed issue with `bd close <id> --reason-file <file>` only after a fresh `bd show <id> --json` still shows it open and unassigned.'
+
+# Print the file with the anchored clause removed. Exactly one copy must exist,
+# so a second clause appended elsewhere cannot smuggle a close past the guard.
+outside_clause() {
+    CLAUSE=$2 python3 - "$1" <<'PY'
+import os, sys
+s = open(sys.argv[1]).read()
+c = os.environ["CLAUSE"]
+if s.count(c) != 1:
+    sys.exit(3)
+sys.stdout.write(s.replace(c, "", 1))
+PY
+}
+
 check() {
     file=$1
     [ -f "$file" ] || fail "missing $file"
@@ -56,8 +72,14 @@ check() {
     require "$file" 'stop tracker writes only when the listing itself is incomplete'
     require "$file" 'Pass `--no-inherit-labels` on a child that sets explicit labels.'
     require "$file" 'List every gate filed with how to resolve it: `bd gate resolve <id>`.'
-    if grep -Eq '(^|[[:space:]`])bd[[:space:]]+(close|reopen)' "$file"; then
-        fail "$file claims issue closure or reopening"
+    require "$file" 'Run reconcile mode only when the operator asks to reconcile issues already filed'
+    require "$file" 'Never read an earlier result note as a verdict'
+    require "$file" "--append-notes <note> --if-assignee '' --if-status open"
+    require "$file" 'Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`'
+    require "$file" "$close_clause"
+    rest=$(outside_clause "$file" "$close_clause") || fail "$file lacks exactly one reconcile close clause"
+    if printf '%s\n' "$rest" | grep -Eq '(^|[[:space:]`])bd[[:space:]]+(close|reopen)'; then
+        fail "$file closes or reopens an issue outside the reconcile confirmation clause"
     fi
 }
 
@@ -101,6 +123,7 @@ run_case() {
         cp "$src" "$tmp/SKILL.md"
         case "$3" in
             drop) mutate "$tmp/SKILL.md" "$4" "" ;;
+            replace) mutate "$tmp/SKILL.md" "$4" "$5" ;;
             append) printf '%s\n' "$4" >> "$tmp/SKILL.md" ;;
             delete-line) drop_line "$tmp/SKILL.md" "$4" ;;
         esac
@@ -116,7 +139,17 @@ run_cases() {
     cases=0
     misses=0
     run_case "$checker" "metadata key deletion" delete-line 'source_to_beads_key'
-    run_case "$checker" "issue closure" append 'bd close example'
+    run_case "$checker" "issue closure outside the clause" append 'bd close example'
+    run_case "$checker" "issue reopening" append 'bd reopen example'
+    run_case "$checker" "close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd close example\`."
+    run_case "$checker" "second copy of the confirmation clause" append "$close_clause"
+    run_case "$checker" "confirmation clause removed" drop "$close_clause"
+    run_case "$checker" "confirmation requirement removed" replace 'only after the operator confirms the close-candidate list' 'without asking the operator'
+    run_case "$checker" "close limited to issues this skill created" replace 'and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`)' 'and any issue'
+    run_case "$checker" "reconcile runs only on request" drop 'Run reconcile mode only when the operator asks to reconcile issues already filed'
+    run_case "$checker" "result note is never a verdict" drop 'Never read an earlier result note as a verdict'
+    run_case "$checker" "status-guarded result note" drop "--append-notes <note> --if-assignee '' --if-status open"
+    run_case "$checker" "legacy and foreign issues untouched" drop 'Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`'
     run_case "$checker" "default-tip revalidation sentence" drop 'Revalidate every audit finding against the default-branch tip, never the checked-out branch.'
     run_case "$checker" "fetch that touches only the remote-tracking ref" drop 'which updates only the remote-tracking ref and touches no worktree or local branch'
     run_case "$checker" "evidence read from the tip object" drop 'Read the cited evidence with `git show <tip>:<path>`'
