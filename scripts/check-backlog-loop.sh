@@ -130,6 +130,14 @@
 #       fresh heartbeat left on a parked or finished member stops the next
 #       invocation for 30 minutes over work nobody is doing; a stale one lets a
 #       sibling reclaim work that is still moving.
+#   R27 preflight stops the run when a required status check has no producer on
+#       either CI route, naming the check, and names the required approving
+#       review count from branch protection and `pull_request` rulesets before
+#       the first claim; a PR awaiting that approval stays loop-responsible,
+#       uncharged, and reported. A required check that can never appear parks
+#       every PR behind it forever. Post-merge CI pending past 30 minutes runs
+#       the exact-merge local gate once (R18 clauses), and a slow optional
+#       check never rewrites the batch CI route to `off`.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -703,8 +711,28 @@ for f in $copies; do
         fail "$f: open-PR preservation rule is missing (breaks R17)"
     grep -qF -- '| `backlog_loop_postmerge_ci` |' "$f" ||
         fail "$f: durable post-merge CI queue key is missing (breaks R18)"
-    grep -qF -- 'Wait up to 30 minutes total from `<first-seen-utc>`' "$f" ||
+    grep -qF -- 'Wait up to 30 minutes total from `<first-seen-utc>`.' "$f" ||
         fail "$f: bounded post-merge CI wait is missing (breaks R18)"
+    grep -qF -- 'An entry still pending at that deadline stops waiting: run the applicable local quality gate set once through CLEAN-TREE GATE RUN at `<merge-sha>`, in a clean worktree, and write the entry `timeout-local-green` when it is green or `failed` when it is red, so the gate never runs twice for one entry' "$f" ||
+        fail "$f: post-merge CI pending past 30 minutes no longer runs the exact-merge local gate once (breaks R18: a path-filtered or never-queued workflow holds the members in_progress at merged forever, and the goal's success conditions become unreachable)"
+    grep -qF -- 'Green closes the members with the `timeout-local-green` receipt in the close reason; red enters TRUNK REPAIR with the gate'"'"'s evidence.' "$f" ||
+        fail "$f: the timeout gate no longer closes on green with a \`timeout-local-green\` receipt and enters TRUNK REPAIR on red (breaks R18: the gate's result decides nothing)"
+    grep -qF -- 'A local-gate timeout writes `timeout-local-green` in place of `passed` in that same command.' "$f" ||
+        fail "$f: the step 7 write no longer records \`timeout-local-green\` in place of \`passed\` after a local-gate timeout (breaks R18: a close on the local gate reads as a green CI run)"
+    grep -qF -- 'Expected workflows are computed from event and path filters at `<merge-sha>`: a workflow whose `push` trigger admits `<default>` and whose path filters match a file the merge commit changed, and any workflow whose filters cannot be decided.' "$f" ||
+        fail "$f: step 7 no longer computes the expected workflows from event and path filters at the merge SHA (breaks R18: a workflow the merge never triggered is waited on for the full 30 minutes)"
+    grep -qF -- 'until 30 minutes have passed from the original first-seen time; then run step 7'"'"'s exact-merge local gate once.' "$f" ||
+        fail "$f: the RECOVERY \`merged\` arm no longer runs step 7's exact-merge local gate once after 30 minutes (breaks R18: an interrupted run resumes into an unbounded wait)"
+    grep -qF -- 'Runs pending on a SHA this loop did not merge have no batch to record on: record nothing on any member, mark the exact-SHA LOCAL TRUNK GATE pending, and run it after CLAIM; do not treat pending CI as green.' "$f" ||
+        fail "$f: trunk CI pending on a SHA this loop did not merge no longer marks the LOCAL TRUNK GATE pending (breaks R18: a queue entry is recorded on a batch that does not exist)"
+    grep -qF -- 'POST-MERGE QUEUE RECHECK, every iteration and every invocation, on either route:' "$f" ||
+        fail "$f: the post-merge queue recheck no longer runs every iteration on either route (breaks R18: under \`<trunk-ci>=off\` a merged member waits for the next invocation)"
+    grep -qF -- 'never pass `--all`' "$f" ||
+        fail "$f: the post-merge queue enumeration no longer says never to pass \`--all\` (breaks R18: every closed member in history is shown on every iteration)"
+    grep -qF -- 'keep `backlog_loop_ci` as step 6 recorded it, because a slow optional check is not an absent producer, and advance to merge.' "$f" ||
+        fail "$f: step 8 no longer keeps the batch CI route when an optional check is slow (breaks R18: a slow route is rewritten to \`off\` and post-merge CI stops being expected)"
+    grep -qF -- 'keep the route `on` and post-merge CI expected, and write `backlog_loop_ci=off` only on proven absence of every producer (pipeline step 6), never because an optional check is slow' "$f" ||
+        fail "$f: the pending-optional-check row no longer keeps the route \`on\` and writes \`off\` only on proven absence (breaks R18: a slow route is rewritten to \`off\`)"
     grep -qF -- 'Recheck the durable queue at each iteration and in the next invocation.' "$f" ||
         fail "$f: post-merge CI queue has no resumed poll (breaks R18)"
     grep -qF -- 'If either route is `off` or missing, a missing workflow does not hold verification after the exact-merge clean-tree gate passes' "$f" ||
@@ -715,7 +743,7 @@ for f in $copies; do
         fail "$f: a parked open PR has no later-run resume path"
     grep -qF -- 'backlog_loop_cause=transient:pr-open' "$f" ||
         fail "$f: a parked open PR is not recorded as recoverable"
-    grep -qF -- 'bd list --all --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' "$f" ||
+    grep -qF -- 'bd list --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' "$f" ||
         fail "$f: CI watch cannot enumerate queue entries because bd list omits metadata"
     residue=$(sed -n '/^RESIDUE PASS\./,/^GATE REPAIR PASS\./p' "$f")
     printf '%s\n' "$residue" | grep -qF -- 'plus unsetting the RUN and FORGE-LINK classes (KEY CLASSES)' ||
@@ -879,6 +907,38 @@ for f in $copies; do
         fail "$f: FINAL REPORT no longer writes a \`released\` heartbeat on members still held (breaks R26: a merged member waiting on post-merge CI stays live for 30 minutes after the run ended)"
     grep -qF -- 'a `live` `backlog_loop_heartbeat` under 30 minutes old on an issue whose `backlog_loop_run` is present and is not `<run-id>`' "$f" ||
         fail "$f: the WRITE GATE no longer counts a heartbeat only when a different \`backlog_loop_run\` is present (breaks R26: an orphan heartbeat left by reopen or drop skips this run's own census writes)"
+
+    # -----------------------------------------------------------------------
+    # R27. Preflight stops on what the repository's rules make unsatisfiable
+    # and names what a person must approve.
+    #
+    # A required check no workflow can produce never appears on any PR, so every
+    # PR parks forever behind it; preflight is the one place that can name it
+    # before a claim. Every anchor is a whole clause: the old sentence ("If it
+    # has no known PR producer, keep the route `on` through step 8.") carried
+    # the same tokens and is pinned absent below.
+    # -----------------------------------------------------------------------
+    grep -qF -- 'A required check that no default-branch workflow can produce for a pull request stops the run at preflight on either CI route, naming the check:' "$f" ||
+        fail "$f: preflight no longer stops on a required check with no producer on either CI route, naming the check (breaks R27: every PR parks on a check that can never appear)"
+    grep -qF -- 'an undecidable enabled state, or a check pinned to a non-Actions app is an uncertain producer and never stops the run.' "$f" ||
+        fail "$f: the no-producer stop no longer leaves an uncertain producer alone (breaks R27: a matrix job name or an app-produced check stops a healthy run)"
+    if grep -qF -- 'If it has no known PR producer, keep the route `on` through step 8.' "$f"; then
+        fail "$f: preflight still keeps the route \`on\` for a required check with no producer (breaks R27: the PR parks on it forever)"
+    fi
+    grep -qF -- 'from the flattened rules response read every `pull_request` rule'"'"'s `required_approving_review_count` and `require_code_owner_review`' "$f" ||
+        fail "$f: preflight no longer reads the required approving review count from both branch protection and pull_request rulesets (breaks R27: a ruleset-only approval requirement is never named)"
+    grep -qF -- 'Name it before the first claim as `approval required: <n> review(s) (<protection|ruleset>)`, or `approval required: none`.' "$f" ||
+        fail "$f: preflight no longer names the approval requirement before the first claim (breaks R27: the operator learns of it from a parked PR)"
+    grep -qF -- 'wait for the required approval and never approve; this loop stays responsible and lists the PR in the report as awaiting a required approval' "$f" ||
+        fail "$f: the \`REVIEW_REQUIRED\` row no longer waits, stays loop-responsible, and lists the PR as awaiting a required approval (breaks R27: the PR is either abandoned or approved by the loop)"
+    grep -qF -- 'waiting on a required approval, an interruption park in RECOVERY' "$f" ||
+        fail "$f: CHARGING no longer lists waiting on a required approval as never charged (breaks R27: a PR waiting on a person reaches the attempt ceiling)"
+    section_of "$f" '## FINAL REPORT' |
+        grep -qF -- 'List every PR awaiting a required approval and every PR LINKED PR DISPOSITION sent to `needs-person`' ||
+        fail "$f: FINAL REPORT no longer lists every PR awaiting a required approval (breaks R27: the loop waits on a person nobody told)"
+    printf '%s\n' "$stop_early" |
+        grep -qF -- 'a required status check has no producer on either CI route;' ||
+        fail "$f: STOP EARLY no longer names a required check with no producer as a global terminal blocker (breaks R27: the preflight stop has no reachability decision behind it)"
 done
 
 # ---------------------------------------------------------------------------
@@ -903,4 +963,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, and the goal prompt preserves the same terminal authority"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, and the goal prompt preserves the same terminal authority"

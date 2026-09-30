@@ -228,8 +228,8 @@ run_suite() { # checker path
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        'bd list --all --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' \
-        'bd list --all --limit 0 --json'
+        'bd list --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' \
+        'bd list --limit 0 --json'
     expect_fail "CI watch enumerates metadata from plain bd list" \
         'CI watch cannot enumerate queue entries' "$t"
 
@@ -790,6 +790,98 @@ run_suite() { # checker path
         'a `live` `backlog_loop_heartbeat` under 30 minutes old on an issue whose `backlog_loop_run` is present and is not `<run-id>`' \
         'a `backlog_loop_heartbeat` under 30 minutes old on an issue whose `backlog_loop_run` is not `<run-id>`' \
         "the WRITE GATE no longer counts a heartbeat only when a different .backlog_loop_run. is present"
+
+    # -- R18 and R27: preflight probes and post-merge verification ----------
+
+    both_hosts "the 30-minute timeout stops running the exact-merge local gate" \
+        'An entry still pending at that deadline stops waiting: run the applicable local quality gate set once through CLEAN-TREE GATE RUN at `<merge-sha>`, in a clean worktree, and write the entry `timeout-local-green` when it is green or `failed` when it is red, so the gate never runs twice for one entry' \
+        'An entry still pending at that deadline stays pending until its workflows finish' \
+        "post-merge CI pending past 30 minutes no longer runs the exact-merge local gate once"
+
+    both_hosts "a green timeout gate stops closing the members and a red one stops entering TRUNK REPAIR" \
+        'Green closes the members with the `timeout-local-green` receipt in the close reason; red enters TRUNK REPAIR with the gate'"'"'s evidence.' \
+        'Both results keep the members in_progress.' \
+        "the timeout gate no longer closes on green with a .timeout-local-green. receipt and enters TRUNK REPAIR on red"
+
+    both_hosts "the verified write stops carrying the timeout-local-green value" \
+        'A local-gate timeout writes `timeout-local-green` in place of `passed` in that same command.' \
+        'A local-gate timeout writes nothing further.' \
+        "the step 7 write no longer records .timeout-local-green. in place of .passed. after a local-gate timeout"
+
+    both_hosts "expected workflows stop being computed from event and path filters" \
+        'Expected workflows are computed from event and path filters at `<merge-sha>`: a workflow whose `push` trigger admits `<default>` and whose path filters match a file the merge commit changed, and any workflow whose filters cannot be decided.' \
+        'Every workflow in the repository is expected.' \
+        "step 7 no longer computes the expected workflows from event and path filters at the merge SHA"
+
+    both_hosts "RECOVERY stops running the local gate after the 30 minutes" \
+        'until 30 minutes have passed from the original first-seen time; then run step 7'"'"'s exact-merge local gate once.' \
+        'until the expected run appears.' \
+        "the RECOVERY .merged. arm no longer runs step 7's exact-merge local gate once after 30 minutes"
+
+    both_hosts "trunk CI pending on an unmerged SHA is recorded on a batch that does not exist" \
+        'Runs pending on a SHA this loop did not merge have no batch to record on: record nothing on any member, mark the exact-SHA LOCAL TRUNK GATE pending, and run it after CLAIM; do not treat pending CI as green.' \
+        'Runs pending on a SHA this loop did not merge are recorded on the next batch.' \
+        "trunk CI pending on a SHA this loop did not merge no longer marks the LOCAL TRUNK GATE pending"
+
+    both_hosts "the post-merge queue recheck stops running every iteration on either route" \
+        'POST-MERGE QUEUE RECHECK, every iteration and every invocation, on either route:' \
+        'POST-MERGE QUEUE RECHECK, only while trunk CI is on:' \
+        "the post-merge queue recheck no longer runs every iteration on either route"
+
+    both_hosts "the post-merge queue enumeration passes --all again" \
+        'never pass `--all`' \
+        'pass `--all`' \
+        "the post-merge queue enumeration no longer says never to pass .--all."
+
+    both_hosts "a slow optional check rewrites the route to off in step 8" \
+        'keep `backlog_loop_ci` as step 6 recorded it, because a slow optional check is not an absent producer, and advance to merge.' \
+        'record `backlog_loop_ci=off` if no check has completed, and advance to merge.' \
+        "step 8 no longer keeps the batch CI route when an optional check is slow"
+
+    both_hosts "the disposition row rewrites the route to off for a pending optional check" \
+        'keep the route `on` and post-merge CI expected, and write `backlog_loop_ci=off` only on proven absence of every producer (pipeline step 6), never because an optional check is slow' \
+        'write `backlog_loop_ci=off` only when no check has completed' \
+        "the pending-optional-check row no longer keeps the route .on. and writes .off. only on proven absence"
+
+    both_hosts "preflight keeps the route on for a required check with no producer" \
+        'A required check that no default-branch workflow can produce for a pull request stops the run at preflight on either CI route, naming the check:' \
+        'If it has no known PR producer, keep the route `on` through step 8.' \
+        "preflight no longer stops on a required check with no producer on either CI route, naming the check"
+
+    both_hosts "the no-producer stop loses its uncertain-producer exemption" \
+        'an undecidable enabled state, or a check pinned to a non-Actions app is an uncertain producer and never stops the run.' \
+        'an undecidable enabled state is a producer that does not exist.' \
+        "the no-producer stop no longer leaves an uncertain producer alone"
+
+    both_hosts "preflight stops reading the approval requirement from both sources" \
+        'from the flattened rules response read every `pull_request` rule'"'"'s `required_approving_review_count` and `require_code_owner_review`' \
+        'from the flattened rules response read nothing' \
+        "preflight no longer reads the required approving review count from both branch protection and pull_request rulesets"
+
+    both_hosts "preflight stops naming the approval requirement before the first claim" \
+        'Name it before the first claim as `approval required: <n> review(s) (<protection|ruleset>)`, or `approval required: none`.' \
+        'Name it in the final report.' \
+        "preflight no longer names the approval requirement before the first claim"
+
+    both_hosts "the awaiting-approval row stops staying loop-responsible and listed" \
+        'wait for the required approval and never approve; this loop stays responsible and lists the PR in the report as awaiting a required approval' \
+        'park the PR as needs-person' \
+        "the .REVIEW_REQUIRED. row no longer waits, stays loop-responsible, and lists the PR as awaiting a required approval"
+
+    both_hosts "waiting on a required approval starts being charged" \
+        'waiting on a required approval, an interruption park in RECOVERY' \
+        'an interruption park in RECOVERY' \
+        "CHARGING no longer lists waiting on a required approval as never charged"
+
+    both_hosts "FINAL REPORT stops listing PRs awaiting a required approval" \
+        'List every PR awaiting a required approval and every PR LINKED PR DISPOSITION sent to `needs-person`' \
+        'List every PR LINKED PR DISPOSITION sent to `needs-person`' \
+        "FINAL REPORT no longer lists every PR awaiting a required approval"
+
+    both_hosts "STOP EARLY stops naming a no-producer required check as a global blocker" \
+        'a required status check has no producer on either CI route;' \
+        'a required status check is pending;' \
+        "STOP EARLY no longer names a required check with no producer as a global terminal blocker"
 
     # -- The Codex copy is read too -----------------------------------------
     #
