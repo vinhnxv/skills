@@ -472,6 +472,60 @@ else
     esac
 fi
 
+# source-to-beads names each issue `<prefix>-s<first 8 hex of sha256(key)>`, with
+# the key `s2b1|<repo-id>|<anchor>|<action-kind>`. `s2b_repo_id` and `s2b_id`
+# restate the procedure's grammar, so an SSH clone and an HTTPS clone of one
+# repository must land on one id, and the second create must be refused.
+s2b_repo_id() {
+    printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E \
+        -e 's#^[a-z][a-z0-9+.-]*://##' -e 's#^[^@/]*@##' \
+        -e 's#^([^/:]+):[0-9]+/#\1/#' -e 's#^([^/:]+):#\1/#' \
+        -e 's#/$##' -e 's#\.git$##'
+}
+s2b_id() {
+    printf '%s' "$2" | python3 -c 'import hashlib,sys
+print("%s-s%s" % (sys.argv[1], hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:8]))' "$1"
+}
+s2b_ssh=$(s2b_repo_id 'git@GitHub.com:Org/Repo.git')
+s2b_https=$(s2b_repo_id 'https://github.com/Org/Repo')
+s2b_ssh_url=$(s2b_repo_id 'ssh://git@github.com:22/Org/Repo.git')
+[ "$s2b_ssh" = github.com/org/repo ] && [ "$s2b_https" = "$s2b_ssh" ] && [ "$s2b_ssh_url" = "$s2b_ssh" ] \
+    && pass "SSH (scp-style and ssh://) and HTTPS origins normalize to one repo-id" \
+    || fail "repo-id differs across remotes: scp '$s2b_ssh', https '$s2b_https', ssh:// '$s2b_ssh_url'"
+
+s2b_store=$(fresh_store)
+s2b_key_ssh="s2b1|$s2b_ssh|RA-0123456789|fix"
+s2b_key_https="s2b1|$s2b_https|RA-0123456789|fix"
+s2b_id_ssh=$(s2b_id cx "$s2b_key_ssh")
+s2b_id_https=$(s2b_id cx "$s2b_key_https")
+s2b_made=$(bd -C "$s2b_store" create "Fix the audited defect" --type bug --id "$s2b_id_ssh" \
+    --body-file "$sb_body" --metadata "{\"source_to_beads_key\":\"$s2b_key_ssh\"}" --silent 2>/dev/null || true)
+bd -C "$s2b_store" export > "$work/export.s2b.before" 2>/dev/null
+s2b_rc=$(status_of bd -C "$s2b_store" create "Fix the audited defect, reworded" --type bug --id "$s2b_id_https" \
+    --body-file "$sb_body" --metadata "{\"source_to_beads_key\":\"$s2b_key_https\"}" --silent)
+bd -C "$s2b_store" export > "$work/export.s2b.after" 2>/dev/null
+[ "$s2b_id_ssh" = "$s2b_id_https" ] && [ "$s2b_made" = "$s2b_id_ssh" ] && [ "$s2b_rc" -ne 0 ] \
+    && cmp -s "$work/export.s2b.before" "$work/export.s2b.after" \
+    && [ "$(field_of "$s2b_store" "$s2b_id_ssh" title)" = "Fix the audited defect" ] \
+    && [ "$(meta_of "$s2b_store" "$s2b_id_ssh" source_to_beads_key)" = "$s2b_key_ssh" ] \
+    && pass "a second create under the key derived from the HTTPS origin is refused and the first issue is unchanged" \
+    || fail "derived-id create-once: ssh id '$s2b_id_ssh', https id '$s2b_id_https', first create '$s2b_made', second exit $s2b_rc, or the first issue changed"
+
+# A gate filed under a derived id keeps its native shape, its label, and the
+# create-once guarantee.
+s2b_gate_key="s2b1|$s2b_ssh|RA-0123456789|human"
+s2b_gate_id=$(s2b_id cx "$s2b_gate_key")
+s2b_gate=$(bd -C "$s2b_store" create "[HUMAN] Decide the release channel" --type gate --id "$s2b_gate_id" \
+    --labels human-gate --body-file "$sb_body" \
+    --metadata "{\"source_to_beads_key\":\"$s2b_gate_key\"}" --silent 2>/dev/null || true)
+s2b_gate_rc=$(status_of bd -C "$s2b_store" create "[HUMAN] Decide the release channel" --type gate --id "$s2b_gate_id" --labels human-gate --silent)
+[ "$s2b_gate" = "$s2b_gate_id" ] && [ "$(field_of "$s2b_store" "$s2b_gate_id" issue_type)" = gate ] \
+    && [ "$(labels_of "$s2b_store" "$s2b_gate_id")" = human-gate ] \
+    && [ "$(meta_of "$s2b_store" "$s2b_gate_id" source_to_beads_key)" = "$s2b_gate_key" ] \
+    && [ "$s2b_gate_rc" -ne 0 ] \
+    && pass "a gate created under a derived id reads back as a labeled gate and a repeat create is refused" \
+    || fail "derived-id gate: id '$s2b_gate', type '$(field_of "$s2b_store" "$s2b_gate_id" issue_type)', labels '$(labels_of "$s2b_store" "$s2b_gate_id")', repeat exit $s2b_gate_rc"
+
 # ---------------------------------------------------------------------------
 # PART 1c - tracker contract for guarded writes, liveness, adoption, and ids.
 #

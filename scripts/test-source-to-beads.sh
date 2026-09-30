@@ -1,5 +1,8 @@
 #!/bin/sh
 # Guard the source-to-Beads procedure's supported inputs and write boundaries.
+# Every break case below deletes one whole clause from a copy of each host file
+# and must make the contract check fail; an always-succeeding check must miss
+# every case.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -30,24 +33,120 @@ check() {
     require "$file" 'human-gate'
     require "$file" 'no parent'
     require "$file" 'Do not run `backlog-loop`'
+    require "$file" 'Revalidate every audit finding against the default-branch tip, never the checked-out branch.'
+    require "$file" 'run `git fetch <remote> refs/heads/<default>`, which updates only the remote-tracking ref and touches no worktree or local branch'
+    require "$file" 'Read the cited evidence with `git show <tip>:<path>`'
+    require "$file" 'Defer a finding, and say so in the receipt, only when the fetch fails.'
+    require "$file" 'Evidence that exists only on the checked-out branch defers unless the operator opted in to branch-only evidence'
+    require "$file" 'Refuse a refuted finding: when the tip no longer shows the cited defect, file nothing'
+    require "$file" 'File a finding that cannot be evaluated only as a `spike` with action kind `verify`.'
+    require "$file" 'Record `revalidated-at: <tip sha>` in the body of every finding filed.'
+    require "$file" 'A `disagree` or `correct` verdict in a companion `docs/audits/<run-id>-review-*.md` file defers the finding or turns it into a verification task.'
+    require "$file" 's2b1|<repo-id>|<anchor>|<action-kind>[|<n>]'
+    require "$file" '`git@GitHub.com:Org/Repo.git` and `https://github.com/Org/Repo` both give `github.com/org/repo`'
+    require "$file" 'fall back to the root commit SHA when there is no origin'
+    require "$file" 'Assert that each metadata key name matches `^[a-z_][a-z0-9_]*$` before create.'
+    require "$file" 'Create each issue with `--id <prefix>-s<first 8 hex of sha256(key)>`'
+    require "$file" 'a duplicate id is refused even with `--force`'
+    require "$file" "--if-assignee '' --if-status open"
+    require "$file" 'exit 13 means the issue was claimed or left `open`'
+    require "$file" 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`'
+    require "$file" 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.'
+    require "$file" 'An ambiguous match defers that candidate only'
+    require "$file" 'stop tracker writes only when the listing itself is incomplete'
+    require "$file" 'Pass `--no-inherit-labels` on a child that sets explicit labels.'
+    require "$file" 'List every gate filed with how to resolve it: `bd gate resolve <id>`.'
     if grep -Eq '(^|[[:space:]`])bd[[:space:]]+(close|reopen)' "$file"; then
         fail "$file claims issue closure or reopening"
     fi
 }
+
+# Control: a checker that accepts everything.
+check_control() { :; }
 
 check "$claude"
 check "$codex"
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/source-to-beads-contract.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-sed '/source_to_beads_key/d' "$claude" > "$tmp/no-key.md"
-if (check "$tmp/no-key.md") >/dev/null 2>&1; then
-    fail "metadata key deletion escaped the contract check"
-fi
-cp "$claude" "$tmp/SKILL.md"
-printf '\nbd close example\n' >> "$tmp/SKILL.md"
-if (check "$tmp/SKILL.md") >/dev/null 2>&1; then
-    fail "issue closure escaped the contract check"
-fi
 
-echo 'OK: source-to-Beads inputs and write boundaries hold in both hosts'
+# Delete every line holding the literal; fail the case when none does, so a
+# reworded anchor cannot leave a case silently testing nothing.
+drop_line() {
+    grep -Fq -- "$2" "$1" || fail "test bug: $1 has no line with $2"
+    grep -Fv -- "$2" "$1" > "$1.new"
+    mv "$1.new" "$1"
+}
+# Replace one literal with another inside a copy.
+mutate() {
+    OLD=$2 NEW=$3 python3 - "$1" <<'PY'
+import os, sys
+p = sys.argv[1]
+s = open(p).read()
+old, new = os.environ["OLD"], os.environ["NEW"]
+if old not in s:
+    sys.stderr.write("test bug: missing literal %r in %s\n" % (old, p))
+    sys.exit(2)
+open(p, "w").write(s.replace(old, new))
+PY
+}
+
+cases=0
+misses=0
+run_case() {
+    # $1 checker, $2 case name, $3 mutation kind, $4 literal, $5 replacement
+    for host in claude codex; do
+        cases=$((cases + 1))
+        src="$root/skills/$host/source-to-beads/SKILL.md"
+        cp "$src" "$tmp/SKILL.md"
+        case "$3" in
+            drop) mutate "$tmp/SKILL.md" "$4" "" ;;
+            append) printf '%s\n' "$4" >> "$tmp/SKILL.md" ;;
+            delete-line) drop_line "$tmp/SKILL.md" "$4" ;;
+        esac
+        if ("$1" "$tmp/SKILL.md") >/dev/null 2>&1; then
+            [ "$1" = check_control ] || echo "  MISS: $2 ($host)" >&2
+            misses=$((misses + 1))
+        fi
+    done
+}
+
+run_cases() {
+    checker=$1
+    cases=0
+    misses=0
+    run_case "$checker" "metadata key deletion" delete-line 'source_to_beads_key'
+    run_case "$checker" "issue closure" append 'bd close example'
+    run_case "$checker" "default-tip revalidation sentence" drop 'Revalidate every audit finding against the default-branch tip, never the checked-out branch.'
+    run_case "$checker" "fetch that touches only the remote-tracking ref" drop 'which updates only the remote-tracking ref and touches no worktree or local branch'
+    run_case "$checker" "evidence read from the tip object" drop 'Read the cited evidence with `git show <tip>:<path>`'
+    run_case "$checker" "fetch-failure-only deferral" drop 'Defer a finding, and say so in the receipt, only when the fetch fails.'
+    run_case "$checker" "branch-only evidence deferral" drop 'Evidence that exists only on the checked-out branch defers unless the operator opted in to branch-only evidence'
+    run_case "$checker" "refuted findings refused" drop 'Refuse a refuted finding: when the tip no longer shows the cited defect, file nothing'
+    run_case "$checker" "unevaluable findings only as verification spikes" drop 'File a finding that cannot be evaluated only as a `spike` with action kind `verify`.'
+    run_case "$checker" "revalidated-at record" drop 'Record `revalidated-at: <tip sha>` in the body of every finding filed.'
+    run_case "$checker" "companion review verdicts" drop 'A `disagree` or `correct` verdict in a companion `docs/audits/<run-id>-review-*.md` file defers the finding or turns it into a verification task.'
+    run_case "$checker" "key grammar" drop 's2b1|<repo-id>|<anchor>|<action-kind>[|<n>]'
+    run_case "$checker" "ssh and https repo-id equivalence example" drop '`git@GitHub.com:Org/Repo.git` and `https://github.com/Org/Repo` both give `github.com/org/repo`'
+    run_case "$checker" "root commit fallback" drop 'fall back to the root commit SHA when there is no origin'
+    run_case "$checker" "metadata key name assertion" drop 'Assert that each metadata key name matches `^[a-z_][a-z0-9_]*$` before create.'
+    run_case "$checker" "deterministic id create" drop 'Create each issue with `--id <prefix>-s<first 8 hex of sha256(key)>`'
+    run_case "$checker" "duplicate id means reuse" drop 'a duplicate id is refused even with `--force`'
+    run_case "$checker" "status-guarded update" drop "--if-assignee '' --if-status open"
+    run_case "$checker" "exit 13 defers" drop 'exit 13 means the issue was claimed or left `open`'
+    run_case "$checker" "native gate form" drop 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`'
+    run_case "$checker" "agent-decidable decision issue" drop 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.'
+    run_case "$checker" "ambiguous match defers one candidate" drop 'An ambiguous match defers that candidate only'
+    run_case "$checker" "global stop only for an incomplete listing" drop 'stop tracker writes only when the listing itself is incomplete'
+    run_case "$checker" "no-inherit-labels" drop 'Pass `--no-inherit-labels` on a child that sets explicit labels.'
+    run_case "$checker" "receipt gate resolution" drop 'List every gate filed with how to resolve it: `bd gate resolve <id>`.'
+}
+
+run_cases check
+[ "$misses" -eq 0 ] || fail "$misses of $cases break cases escaped the contract check"
+real_cases=$cases
+run_cases check_control
+[ "$misses" -eq "$cases" ] || fail "the always-succeeding control caught $((cases - misses)) of $cases cases"
+[ "$cases" -eq "$real_cases" ] || fail "control ran a different number of cases"
+
+echo "OK: source-to-Beads inputs and write boundaries hold in both hosts ($real_cases break cases, control misses all)"
