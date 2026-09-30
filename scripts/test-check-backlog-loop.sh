@@ -883,6 +883,143 @@ run_suite() { # checker path
         'a required status check is pending;' \
         "STOP EARLY no longer names a required check with no producer as a global terminal blocker"
 
+    # -- R28: the remaining loop fixes ---------------------------------------
+
+    both_hosts "the census bd ready loses --limit 0" \
+        '`bd ready --explain --json --limit 0` is the AUTHORITY for the dependency question' \
+        '`bd ready --explain --json` is the AUTHORITY for the dependency question' \
+        "a .bd ready. call carries no .--limit 0."
+
+    both_hosts "the GROW bd ready loses --limit 0" \
+        '`bd ready --parent <epic-id> --json --limit 0 --exclude-type=epic`' \
+        '`bd ready --parent <epic-id> --json --exclude-type=epic`' \
+        "a .bd ready. call carries no .--limit 0."
+
+    both_hosts "the preflight probe drops to a bare bd ready" \
+        '`bd prime` and `bd ready --json --limit 0` must both work.' \
+        '`bd prime` and `bd ready` must both work.' \
+        "preflight no longer probes .bd ready --json --limit 0."
+
+    both_hosts "STATE stops stating that every bd ready call carries --limit 0" \
+        'Every `bd ready` call carries `--limit 0`: without it the tracker returns at most 100 rows, so a larger backlog reads as a smaller one.' \
+        'Every `bd ready` call is cheap.' \
+        "STATE no longer says every .bd ready. call carries .--limit 0."
+
+    both_hosts "the census stops counting the rows of bd ready --explain" \
+        'Count its rows: the `ready` and `blocked` arrays must hold `summary.total_ready` and `summary.total_blocked` rows' \
+        'Trust its rows: the `ready` and `blocked` arrays are complete' \
+        "CENSUS no longer counts the rows of .bd ready --explain --json --limit 0."
+
+    both_hosts "the browser test runs from the invoking tree" \
+        'run the browser test with its working directory in `<clean-tree>` at that commit, bootstrapped as CLEAN-TREE GATE RUN requires, and on an explicit port:' \
+        'run the browser test from the working tree:' \
+        "pipeline step 5 no longer runs the browser test with its working directory in .<clean-tree>."
+
+    both_hosts "the browser test loses its explicit port" \
+        'invoke `compound-engineering:ce-test-browser mode:pipeline --port <browser-port>` from that directory' \
+        'invoke `compound-engineering:ce-test-browser mode:pipeline` from that directory' \
+        "pipeline step 5 no longer invokes ce-test-browser on the explicit .<browser-port>."
+
+    both_hosts "REAP stops stopping the browser server by port" \
+        'For every port in `<owned-ports>`, list its listeners with `lsof -i :<port> -sTCP:LISTEN -t`, take each listener'"'"'s process group, and treat that group exactly like a `<pgid>` above:' \
+        'Leave every port in `<owned-ports>` alone:' \
+        "REAP no longer stops the browser server by port"
+
+    both_hosts "the branch stops being written before pipeline step 4" \
+        'Then write `backlog_loop_branch` on every member BEFORE step 4:' \
+        'Then write `backlog_loop_branch` on every member at step 6:' \
+        "pipeline step 3 no longer writes .backlog_loop_branch. before step 4"
+
+    both_hosts "the ledger row writes the branch at step 6 again" \
+        'pipeline step 3, the moment `ce-work` returns and before step 4 commits anything' \
+        'pipeline step 6' \
+        "the .backlog_loop_branch. ledger row no longer says it is written at pipeline step 3"
+
+    both_hosts "step 6 writes the branch a second time" \
+        'write `backlog_loop_head` and `backlog_loop_phase=built` for every member; `backlog_loop_branch` already holds the branch from step 3.' \
+        'write `backlog_loop_branch`, `backlog_loop_head`, and `backlog_loop_phase=built` for every member.' \
+        "pipeline step 6 writes .backlog_loop_branch. again"
+
+    both_hosts "the apply stage pushes before the PR exists" \
+        'Commit each applied fix locally without pushing:' \
+        'Push each applied fix to the branch:' \
+        "pipeline step 4 no longer commits applied fixes without pushing"
+
+    both_hosts "BACKLOG_LOOP_RUN is exported only into commands the loop launches" \
+        'Export `BACKLOG_LOOP_RUN=<run-id>` into the host session environment right after choosing `<run-id>` and before any child skill runs,' \
+        'Export `BACKLOG_LOOP_RUN=<run-id>` into every such command' \
+        "process hygiene no longer exports .BACKLOG_LOOP_RUN. into the host session environment before any child skill runs"
+
+    both_hosts "the child brief stops restating the hygiene rules" \
+        'Every child brief restates the hygiene rules in one sentence: run every gate, test, build, or app command non-interactively (`CI=1`, watch and UI modes off), never leave a watcher, dev server, or REPL alive past the command that needed it, and never signal a process you did not start.' \
+        'Children know the hygiene rules.' \
+        "process hygiene no longer says every child brief restates the hygiene rules"
+
+    both_hosts "the step 5 brief stops carrying the hygiene sentence" \
+        'End the brief, and the brief of every later child invocation, with the hygiene sentence from PREFLIGHT'"'"'s process-hygiene item.' \
+        'Children read the hygiene rules themselves.' \
+        "pipeline step 5 no longer ends every child brief with the hygiene sentence"
+
+    both_hosts "macOS stops naming gtimeout" \
+        '`timeout` is `gtimeout` from Homebrew coreutils on macOS;' \
+        '`timeout` is optional;' \
+        "process hygiene no longer names .gtimeout. for macOS"
+
+    both_hosts "the gate timeout stops following the repository docs" \
+        'which is 20m unless the repository'"'"'s CLAUDE.md, AGENTS.md, CONTRIBUTING.md, or README states a gate timeout,' \
+        'which is always 20m,' \
+        "process hygiene no longer takes .<gate-timeout>. from the repository docs when they state one"
+
+    both_hosts "OPEN PR RESUME resumes in the invoking tree" \
+        'Every `ce-babysit-pr`, `ce-resolve-pr-feedback`, and `ce-debug` round on a resumed PR runs with the PR branch checked out in a run-owned worktree and never in the invoking tree:' \
+        'Every `ce-babysit-pr`, `ce-resolve-pr-feedback`, and `ce-debug` round on a resumed PR runs in the invoking tree:' \
+        "OPEN PR RESUME no longer runs babysit, resolve, and debug in a run-owned worktree"
+
+    both_hosts "OPEN PR RESUME loses the PR worktree command" \
+        'git worktree add <worktree-root>/pr-<number> <branch>' \
+        'git checkout <branch>' \
+        "OPEN PR RESUME no longer creates the PR worktree under .<worktree-root>."
+
+    both_hosts "the post-merge queue scan stops skipping closed rows" \
+        'and skip any row whose `status` is `closed` without a `bd show`.' \
+        'and read every row with a `bd show`.' \
+        "the post-merge queue scan no longer skips closed members"
+
+    both_hosts "the diagnostic run stops reporting proofs it cannot run" \
+        'is reported as `would evaluate: <proof>`, for example' \
+        'is reported as proven, for example' \
+        "DIAGNOSTIC RUN no longer reports a proof it cannot run as .would evaluate"
+
+    both_hosts "auto-resolving gates count as human gates" \
+        'Only `label` and `native` gates count as human gates, because only they wait on a person.' \
+        'Every gate counts as a human gate.' \
+        "CENSUS no longer counts only .label. and .native. gates as human gates"
+
+    both_hosts "auto-resolving gates stop being reported as such" \
+        'An `auto-resolving:<await_type>` gate resolves itself on its timer, run, PR, or bead:' \
+        'An `auto-resolving:<await_type>` gate waits on a person:' \
+        "CENSUS no longer reports a non-human gate as auto-resolving"
+
+    both_hosts "OWNER-DECISION writes the design field as a shell argument" \
+        'run `bd update <id> --design-file <file>`. Read the field back and require the original text as an exact substring and the appended line in full;' \
+        'run `bd update <id> --design "<text>"`.' \
+        "OWNER-DECISION no longer writes the design field with .--design-file. and a read-back"
+
+    both_hosts "the final REAP stops deleting the worktree root" \
+        'delete `<worktree-root>` with `rmdir`' \
+        'leave `<worktree-root>` in place' \
+        "the final REAP no longer deletes .<worktree-root>."
+
+    both_hosts "FINAL REPORT stops listing closed issues whose PR is still open" \
+        'List every closed issue whose PR is still `OPEN` on the forge:' \
+        'List every closed issue:' \
+        "FINAL REPORT no longer lists closed issues whose PR is still .OPEN."
+
+    both_hosts "the enumeration claim about bd list returns to an absolute" \
+        'Whether `bd list --json` carries a `metadata` object or a `dependencies` array depends on the `bd` version' \
+        '`bd list --json` returns neither a `metadata` object nor a `dependencies` array; it carries' \
+        "CENSUS no longer states the .bd list --json. shape as version-dependent"
+
     # -- The Codex copy is read too -----------------------------------------
     #
     # Same break as the first case, applied to the other host only. A checker

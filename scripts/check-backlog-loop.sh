@@ -138,6 +138,21 @@
 #       every PR behind it forever. Post-merge CI pending past 30 minutes runs
 #       the exact-merge local gate once (R18 clauses), and a slow optional
 #       check never rewrites the batch CI route to `off`.
+#   R28 the remaining loop fixes. Every `bd ready` call carries `--limit 0`,
+#       because the tracker returns at most 100 rows by default and a larger
+#       backlog then reads as a smaller one, and the census counts the rows of
+#       `bd ready --explain`. The browser test runs with its working directory
+#       in the clean tree on an explicit port that REAP stops it by, the branch
+#       is recorded before step 4 and nothing is pushed before step 7, the run
+#       token is exported before any child skill and each child brief restates
+#       the hygiene rules, OPEN PR RESUME runs babysit, resolve, and debug in a
+#       run-owned worktree, the post-merge scan skips closed members, a
+#       diagnostic census reports an unrunnable proof as `would evaluate`,
+#       only human or untyped gates count as human gates, OWNER-DECISION writes
+#       the design with `--design-file` and a read-back, the gate timeout names
+#       `gtimeout` and follows the repository docs, the final REAP deletes the
+#       run-owned worktree root, and FINAL REPORT lists closed issues whose PR
+#       is still open.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -939,6 +954,82 @@ for f in $copies; do
     printf '%s\n' "$stop_early" |
         grep -qF -- 'a required status check has no producer on either CI route;' ||
         fail "$f: STOP EARLY no longer names a required check with no producer as a global terminal blocker (breaks R27: the preflight stop has no reachability decision behind it)"
+
+    # -----------------------------------------------------------------------
+    # R28. The remaining loop fixes (U6). Every anchor is a whole clause.
+    #
+    # `bd ready` returns at most 100 rows unless told otherwise, so every call
+    # that carries arguments names `--limit 0`; a bare `bd ready` span names
+    # the list, not a call. The scan reads every such span in the file, so a
+    # new call without the flag fails too, and an empty extraction fails
+    # rather than passing over nothing.
+    # -----------------------------------------------------------------------
+    bd_ready_calls=$(grep -o '`bd ready [^`]*`' "$f" || true)
+    [ -n "$bd_ready_calls" ] ||
+        fail "$f: extracted no \`bd ready\` call with arguments (breaks R28: the --limit 0 scan would pass over nothing)"
+    bd_ready_bad=$(printf '%s\n' "$bd_ready_calls" | grep -vF -- '--limit 0' || true)
+    [ -z "$bd_ready_bad" ] ||
+        fail "$f: a \`bd ready\` call carries no \`--limit 0\`: $(printf '%s' "$bd_ready_bad" | head -n 1) (breaks R28: the tracker returns at most 100 rows by default, so a larger backlog reads as a smaller one)"
+    grep -qF -- '`bd prime` and `bd ready --json --limit 0` must both work.' "$f" ||
+        fail "$f: preflight no longer probes \`bd ready --json --limit 0\` (breaks R28: the tracker probe runs the call the loop never makes)"
+    grep -qF -- 'Every `bd ready` call carries `--limit 0`: without it the tracker returns at most 100 rows, so a larger backlog reads as a smaller one.' "$f" ||
+        fail "$f: STATE no longer says every \`bd ready\` call carries \`--limit 0\` (breaks R28: a new call is written without the flag)"
+    grep -qF -- 'Count its rows: the `ready` and `blocked` arrays must hold `summary.total_ready` and `summary.total_blocked` rows' "$f" ||
+        fail "$f: CENSUS no longer counts the rows of \`bd ready --explain --json --limit 0\` (breaks R28: a truncated dependency authority is read as a complete one)"
+
+    # Browser test: working directory and port.
+    grep -qF -- 'run the browser test with its working directory in `<clean-tree>` at that commit, bootstrapped as CLEAN-TREE GATE RUN requires, and on an explicit port:' "$f" ||
+        fail "$f: pipeline step 5 no longer runs the browser test with its working directory in \`<clean-tree>\` (breaks R28: ce-test-browser starts its server from its working directory, so the invoking tree's dirty paths are served)"
+    grep -qF -- 'invoke `compound-engineering:ce-test-browser mode:pipeline --port <browser-port>` from that directory' "$f" ||
+        fail "$f: pipeline step 5 no longer invokes ce-test-browser on the explicit \`<browser-port>\` (breaks R28: the server it leaves behind has no handle REAP can use)"
+    grep -qF -- 'For every port in `<owned-ports>`, list its listeners with `lsof -i :<port> -sTCP:LISTEN -t`, take each listener'"'"'s process group, and treat that group exactly like a `<pgid>` above:' "$f" ||
+        fail "$f: REAP no longer stops the browser server by port (breaks R28: a dev server outlives the iteration that started it)"
+
+    # Branch before any commit, and no push before step 7.
+    grep -qF -- 'Then write `backlog_loop_branch` on every member BEFORE step 4:' "$f" ||
+        fail "$f: pipeline step 3 no longer writes \`backlog_loop_branch\` before step 4 (breaks R28: a branch the ledger does not name can reach the forge and RECOVERY cannot find it)"
+    grep -qF -- 'pipeline step 3, the moment `ce-work` returns and before step 4 commits anything' "$f" ||
+        fail "$f: the \`backlog_loop_branch\` ledger row no longer says it is written at pipeline step 3 (breaks R28: the ledger and the pipeline disagree on when the branch is recorded)"
+    grep -qF -- 'write `backlog_loop_head` and `backlog_loop_phase=built` for every member; `backlog_loop_branch` already holds the branch from step 3.' "$f" ||
+        fail "$f: pipeline step 6 writes \`backlog_loop_branch\` again instead of reading the step 3 record (breaks R28: two writers of one key)"
+    grep -qF -- 'Commit each applied fix locally without pushing:' "$f" ||
+        fail "$f: pipeline step 4 no longer commits applied fixes without pushing (breaks R28: LFG's apply stage publishes the branch at phase claimed)"
+
+    # Run token and hygiene reach the children.
+    grep -qF -- 'Export `BACKLOG_LOOP_RUN=<run-id>` into the host session environment right after choosing `<run-id>` and before any child skill runs,' "$f" ||
+        fail "$f: process hygiene no longer exports \`BACKLOG_LOOP_RUN\` into the host session environment before any child skill runs (breaks R28: commands a child launches carry no token, so REAP and the dead-run sweep cannot find them)"
+    grep -qF -- 'Every child brief restates the hygiene rules in one sentence: run every gate, test, build, or app command non-interactively (`CI=1`, watch and UI modes off), never leave a watcher, dev server, or REPL alive past the command that needed it, and never signal a process you did not start.' "$f" ||
+        fail "$f: process hygiene no longer says every child brief restates the hygiene rules (breaks R28: a child starts a watcher nobody reaps)"
+    grep -qF -- 'End the brief, and the brief of every later child invocation, with the hygiene sentence from PREFLIGHT'"'"'s process-hygiene item.' "$f" ||
+        fail "$f: pipeline step 5 no longer ends every child brief with the hygiene sentence (breaks R28: the rule is stated but never handed to a child)"
+    grep -qF -- '`timeout` is `gtimeout` from Homebrew coreutils on macOS;' "$f" ||
+        fail "$f: process hygiene no longer names \`gtimeout\` for macOS (breaks R28: the deadline wrapper does not exist on the platform)"
+    grep -qF -- 'which is 20m unless the repository'"'"'s CLAUDE.md, AGENTS.md, CONTRIBUTING.md, or README states a gate timeout,' "$f" ||
+        fail "$f: process hygiene no longer takes \`<gate-timeout>\` from the repository docs when they state one (breaks R28: a documented long gate is killed at 20 minutes)"
+
+    # OPEN PR RESUME runs in a run-owned worktree; closed members cost nothing.
+    grep -qF -- 'Every `ce-babysit-pr`, `ce-resolve-pr-feedback`, and `ce-debug` round on a resumed PR runs with the PR branch checked out in a run-owned worktree and never in the invoking tree:' "$f" ||
+        fail "$f: OPEN PR RESUME no longer runs babysit, resolve, and debug in a run-owned worktree (breaks R28: they push the checked-out branch and stop on a dirty checkout)"
+    grep -qF -- 'git worktree add <worktree-root>/pr-<number> <branch>' "$f" ||
+        fail "$f: OPEN PR RESUME no longer creates the PR worktree under \`<worktree-root>\` (breaks R28: REAP cannot tell the worktree is run-owned)"
+    grep -qF -- 'and skip any row whose `status` is `closed` without a `bd show`.' "$f" ||
+        fail "$f: the post-merge queue scan no longer skips closed members (breaks R28: one \`bd show\` per closed member in history, every iteration)"
+
+    # Diagnostic census, gates, owner decisions, final REAP and report.
+    grep -qF -- 'is reported as `would evaluate: <proof>`, for example' "$f" ||
+        fail "$f: DIAGNOSTIC RUN no longer reports a proof it cannot run as \`would evaluate: <proof>\` (breaks R28: a readonly census either writes or claims a proof it never ran)"
+    grep -qF -- 'Only `label` and `native` gates count as human gates, because only they wait on a person.' "$f" ||
+        fail "$f: CENSUS no longer counts only \`label\` and \`native\` gates as human gates (breaks R28: a timer gate is reported as work for a person)"
+    grep -qF -- 'An `auto-resolving:<await_type>` gate resolves itself on its timer, run, PR, or bead:' "$f" ||
+        fail "$f: CENSUS no longer reports a non-human gate as auto-resolving (breaks R28: a timer gate is reported as work for a person)"
+    grep -qF -- 'run `bd update <id> --design-file <file>`. Read the field back and require the original text as an exact substring and the appended line in full;' "$f" ||
+        fail "$f: OWNER-DECISION no longer writes the design field with \`--design-file\` and a read-back (breaks R28: \`--design\` replaces the field, and nothing proves the original survived)"
+    grep -qF -- 'delete `<worktree-root>` with `rmdir`' "$f" ||
+        fail "$f: the final REAP no longer deletes \`<worktree-root>\` (breaks R28: every run leaves an empty directory behind)"
+    grep -qF -- 'List every closed issue whose PR is still `OPEN` on the forge:' "$f" ||
+        fail "$f: FINAL REPORT no longer lists closed issues whose PR is still \`OPEN\` (breaks R28: a person-closed issue orphans an open PR nobody reports)"
+    grep -qF -- 'Whether `bd list --json` carries a `metadata` object or a `dependencies` array depends on the `bd` version' "$f" ||
+        fail "$f: CENSUS no longer states the \`bd list --json\` shape as version-dependent (breaks R28: the claim is false on the bd version that returns metadata)"
 done
 
 # ---------------------------------------------------------------------------
@@ -963,4 +1054,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, and the goal prompt preserves the same terminal authority"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, and the goal prompt preserves the same terminal authority"
