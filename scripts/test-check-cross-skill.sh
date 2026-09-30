@@ -40,6 +40,22 @@ expect_fail() {
         echo "  ok: $name"
     fi
 }
+both_replace() {
+    label="$1"; want="$2"; skill="$3"; old="$4"; new="$5"
+    for host in claude codex; do
+        t=$(fresh_tree)
+        replace_all "$t" "skills/$host/$skill/SKILL.md" "$old" "$new"
+        expect_fail "$label ($host)" "$want" "$t"
+    done
+}
+both_append() {
+    label="$1"; want="$2"; skill="$3"; text="$4"
+    for host in claude codex; do
+        t=$(fresh_tree)
+        printf '\n%s\n' "$text" >> "$t/skills/$host/$skill/SKILL.md"
+        expect_fail "$label ($host)" "$want" "$t"
+    done
+}
 run_suite() {
     under_test="$1"; cases=0; misses=0
     t=$(fresh_tree)
@@ -142,6 +158,30 @@ run_suite() {
     t=$(fresh_tree)
     replace_all "$t" "$CONSUMER" 'issue_type` is `gate`' 'issue_type` is `blocker`'
     expect_fail "consumer loses native gate type" "no longer recognizes native gate issues" "$t"
+
+    both_replace "audit loses the handoff section" "repo-audit: .*missing worktree handoff section" repo-audit '## Worktree handoff' '## Worktree notes'
+    both_replace "writer loses the handoff section" "source-to-beads: .*missing worktree handoff section" source-to-beads 'Worktree handoff' 'Worktree notes'
+    both_replace "audit loses root resolution" "repo-audit: .*missing handoff root resolution" repo-audit 'Resolve `<root>` as the first `worktree` entry of `git worktree list --porcelain`' 'Resolve the root somehow'
+    both_replace "writer loses root resolution" "source-to-beads: .*missing handoff root resolution" source-to-beads 'Resolve `<root>` as the first `worktree` entry of `git worktree list --porcelain`' 'Resolve the root somehow'
+    both_replace "audit skips checksum verification" "repo-audit: .*missing handoff copy verification" repo-audit 'compare the sha256 of each copy with its source' 'copy without checking'
+    both_replace "writer skips checksum verification" "source-to-beads: .*missing handoff copy verification" source-to-beads 'compare the sha256 of each copy with its source' 'copy without checking'
+    both_replace "audit copies a sidecar without an ignored root path" "repo-audit: .*missing handoff sidecar safety" repo-audit 'makes the verdict `not safe to delete`, names the worktree path of the sidecar, and suppresses the remove command' 'is fine to leave behind'
+    both_replace "writer copies a sidecar without an ignored root path" "source-to-beads: .*missing handoff sidecar safety" source-to-beads 'makes the verdict `not safe to delete`, names the worktree path of the sidecar, and suppresses the remove command' 'is fine to leave behind'
+    both_replace "audit loses the printed remove command" "repo-audit: .*missing printed remove command gated on the verdict" repo-audit 'When the verdict is `safe to delete`, print the literal `git worktree remove <worktree>` command for the operator to run.' 'Tell the operator the worktree may be deleted.'
+    both_replace "writer loses the printed remove command" "source-to-beads: .*missing printed remove command gated on the verdict" source-to-beads 'When the verdict is `safe to delete`, print the literal `git worktree remove <worktree>` command for the operator to run.' 'Tell the operator the worktree may be deleted.'
+    both_replace "audit prints the remove command without the verdict gate" "repo-audit: .*missing printed remove command gated on the verdict" repo-audit 'When the verdict is `safe to delete`, print' 'Always print'
+    both_replace "writer prints the remove command without the verdict gate" "source-to-beads: .*missing printed remove command gated on the verdict" source-to-beads 'When the verdict is `safe to delete`, print' 'Always print'
+    both_replace "audit drops the never-run rule" "repo-audit: .*missing no-remove rule" repo-audit 'Never run `git worktree remove` or `git worktree prune`; removal belongs to the operator.' 'Removal is easy.'
+    both_replace "writer drops the never-run rule" "source-to-beads: .*missing no-remove rule" source-to-beads 'Never run `git worktree remove` or `git worktree prune`; removal belongs to the operator.' 'Removal is easy.'
+    both_append "audit instructs running worktree remove" "repo-audit: .*instructs running" repo-audit 'Afterward run `git worktree remove <worktree>` to clean up.'
+    both_append "writer instructs running worktree remove" "source-to-beads: .*instructs running" source-to-beads 'Afterward run `git worktree remove <worktree>` to clean up.'
+    both_append "audit instructs running worktree prune" "repo-audit: .*instructs running" repo-audit 'Then run `git worktree prune`.'
+    both_append "writer instructs running worktree prune" "source-to-beads: .*instructs running" source-to-beads 'Then run `git worktree prune`.'
+    both_replace "audit loses the finalize-time handoff" "repo-audit: .*missing finalize-time handoff" repo-audit 'Run the handoff once when the report is finalized, before presenting any choice, so every exit, an abandoned session included, already holds the root copy.' 'Run the handoff when convenient.'
+    both_replace "audit loses the exit rerun" "repo-audit: .*missing handoff rerun on every exit" repo-audit 'Rerun it on every exit, idempotently: on Stop with report, and on Beads and Fix before printing the command.' 'Rerun it sometimes.'
+    both_replace "writer runs the handoff before its receipt" "source-to-beads: .*missing post-receipt handoff" source-to-beads 'Run the handoff after the receipt, reading every receipt issue id back with `bd -C <root> show <id> --json` first.' 'Run the handoff before the receipt.'
+    both_replace "writer loses the database comparison" "source-to-beads: .*missing bd where comparison" source-to-beads 'compare `bd where` in the current directory with `bd -C <root> where`' 'assume the database'
+    both_append "audit compares databases itself" "repo-audit: .*contains a Beads command" repo-audit 'Compare `bd where` with `bd -C <root> where` before the copy.'
 
     return "$misses"
 }

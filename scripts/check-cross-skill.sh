@@ -70,6 +70,44 @@ for f in $writer_copies; do
     grep -qi 'read.back' "$f" || fail "source-to-beads: $f missing tracker read-back contract"
 done
 
+# Worktree handoff: both skills carry one procedure, print the remove command
+# only behind the safety verdict, and never run a worktree removal themselves.
+handoff_root='Resolve `<root>` as the first `worktree` entry of `git worktree list --porcelain`'
+handoff_copy='compare the sha256 of each copy with its source'
+handoff_sidecar='makes the verdict `not safe to delete`, names the worktree path of the sidecar, and suppresses the remove command'
+handoff_print='When the verdict is `safe to delete`, print the literal `git worktree remove <worktree>` command for the operator to run.'
+handoff_never='Never run `git worktree remove` or `git worktree prune`; removal belongs to the operator.'
+without_allowed_worktree_commands() {
+    awk -v a="$handoff_print" -v b="$handoff_never" '
+        {
+            line = $0
+            while ((p = index(line, a)) > 0) line = substr(line, 1, p - 1) substr(line, p + length(a))
+            while ((p = index(line, b)) > 0) line = substr(line, 1, p - 1) substr(line, p + length(b))
+            print line
+        }' "$1"
+}
+for pair in "repo-audit:$audit_copies" "source-to-beads:$writer_copies"; do
+    skill=${pair%%:*}
+    for f in ${pair#*:}; do
+        grep -qE '^## .*Worktree handoff$' "$f" || fail "$skill: $f missing worktree handoff section"
+        grep -qF -- "$handoff_root" "$f" || fail "$skill: $f missing handoff root resolution"
+        grep -qF -- "$handoff_copy" "$f" || fail "$skill: $f missing handoff copy verification"
+        grep -qF -- "$handoff_sidecar" "$f" || fail "$skill: $f missing handoff sidecar safety"
+        grep -qF -- "$handoff_print" "$f" || fail "$skill: $f missing printed remove command gated on the verdict"
+        grep -qF -- "$handoff_never" "$f" || fail "$skill: $f missing no-remove rule"
+        strays=$(without_allowed_worktree_commands "$f" | grep -nE 'worktree[[:space:]]+(remove|prune)' || true)
+        [ -z "$strays" ] || fail "$skill: $f instructs running a worktree removal: $(printf '%s\n' "$strays" | head -n 1)"
+    done
+done
+for f in $audit_copies; do
+    grep -qF 'Run the handoff once when the report is finalized, before presenting any choice, so every exit, an abandoned session included, already holds the root copy.' "$f" || fail "repo-audit: $f missing finalize-time handoff"
+    grep -qF 'Rerun it on every exit, idempotently: on Stop with report, and on Beads and Fix before printing the command.' "$f" || fail "repo-audit: $f missing handoff rerun on every exit"
+done
+for f in $writer_copies; do
+    grep -qF 'Run the handoff after the receipt, reading every receipt issue id back with `bd -C <root> show <id> --json` first.' "$f" || fail "source-to-beads: $f missing post-receipt handoff"
+    grep -qF 'compare `bd where` in the current directory with `bd -C <root> where`' "$f" || fail "source-to-beads: $f missing bd where comparison"
+done
+
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/check-cross-skill.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
 total_keys=0
@@ -121,4 +159,4 @@ for f in $consumer_copies; do
     grep -qF 'backlog_loop_run' "$f" || fail "backlog-loop: $f missing claim marker"
     grep -qF 'hard-blocker' "$f" || fail "backlog-loop: $f missing author-only adoption signal"
 done
-echo "OK: audit is Beads-free; writer metadata, dedup, and human gates hold; backlog-loop contract holds"
+echo "OK: audit is Beads-free; writer metadata, dedup, and human gates hold; worktree handoff holds; backlog-loop contract holds"
