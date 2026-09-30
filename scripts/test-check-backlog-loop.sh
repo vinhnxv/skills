@@ -224,10 +224,17 @@ run_suite() { # checker path
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '--unset-metadata backlog_loop_merge --unset-metadata backlog_loop_postmerge_ci --unset-metadata backlog_loop_ci' \
-        '--unset-metadata backlog_loop_merge --unset-metadata backlog_loop_ci'
-    expect_fail "residue pass leaves a parked CI queue entry" \
+        'plus unsetting the RUN and FORGE-LINK classes (KEY CLASSES)' \
+        'plus unsetting the RUN class (KEY CLASSES)'
+    expect_fail "residue pass stops unsetting the FORGE-LINK class, so a parked CI queue entry survives" \
         'RESIDUE PASS leaves a parked issue' "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '`backlog_loop_postmerge_ci`, `backlog_loop_gate_receipt` | reclaim' \
+        '`backlog_loop_gate_receipt` | reclaim'
+    expect_fail "the FORGE-LINK class stops holding the post-merge CI queue key" \
+        'FORGE-LINK row no longer lists .backlog_loop_postmerge_ci.' "$t"
 
     # A substring test for `claimed` stays green here: the replacement leaves
     # "reclaimed" in the block. Only a whole-token match sees the arm go.
@@ -511,6 +518,167 @@ run_suite() { # checker path
         ''
     expect_fail "preflight no longer says the LFG ce-compound step is skipped deliberately" \
         "no longer says the LFG ce-compound step is skipped deliberately" "$t"
+
+    # -- Linked PR disposition, charging, key classes (CR21-CR24) -------------
+    #
+    # A loop that never closes a PR can only meet a closed one because a person
+    # closed it. Reclaiming it rebuilds the rejected change, and the old reclaim
+    # wiped the attempt count as well, so the cycle had no bound.
+
+    closed_action='write `needs-person` and release the PR link: one command sets `blocked`, unsets the RUN and FORGE-LINK classes, keeps every DURABLE key, and records the PR URL in a note. This loop never closes a PR, so a person closed it and a person decides; reopening the issue gets a fresh build. Never reclaim'
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        "$closed_action" \
+        'reclaim the issue and rebuild the work'
+    expect_fail "the CLOSED-not-merged row reclaims instead of writing needs-person" \
+        "CLOSED-not-merged row does not write .needs-person. and release the PR link" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CODEX" \
+        "$closed_action" \
+        'reclaim the issue and rebuild the work'
+    expect_fail "the CLOSED-not-merged row reclaims, in the Codex copy alone" \
+        "skills/codex/backlog-loop/SKILL.md: .*CLOSED-not-merged row does not write" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        "$closed_action" \
+        "$closed_action"', or reclaim when no other PR is open'
+    expect_fail "the CLOSED-not-merged row keeps its needs-person clause but adds a reclaim" \
+        "CLOSED-not-merged row .*reclaim" "$t"
+
+    t=$(fresh_tree)
+    closed_row=$(sed -n '/^| `CLOSED`, not merged | write/p' "$t/$LOOP_MD_CLAUDE")
+    [ -n "$closed_row" ] || { echo 'test bug: CLOSED-not-merged row missing before mutation' >&2; return 1; }
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        "$closed_row
+" \
+        ''
+    expect_fail "the CLOSED-not-merged row is deleted from the disposition table" \
+        "LINKED PR DISPOSITION carries no CLOSED-not-merged row" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '`merge-requested`: the outcome is unknown, which is exactly what this phase exists to record. Query `backlog_loop_pr` and apply LINKED PR DISPOSITION to its state; `MERGED` is the common answer and means treat as `merged` above.' \
+        '`merge-requested`: the outcome is unknown, which is exactly what this phase exists to record. Query `backlog_loop_pr`. `MERGED` -> treat as `merged` above. `CLOSED` without a merge -> reclaim.'
+    expect_fail "a RECOVERY arm handles a closed PR inline with a reclaim" \
+        "reclaims a closed PR inline" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| linked PR state | action | charged | result |' \
+        '| PR state | action | charged | result |'
+    expect_fail "the disposition table header changes shape and no row parses" \
+        "the LINKED PR DISPOSITION table did not parse" "$t"
+
+    # The ceiling is per issue and covers every cause. A `transient:pr-open`
+    # exemption parks a conflicting or unapproved PR forever.
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'for any cause, `transient:pr-open` included -> rewrite' \
+        'for a cause other than `transient:pr-open` -> rewrite'
+    expect_fail "REOPEN PASS exempts transient:pr-open from the attempt ceiling" \
+        "REOPEN PASS no longer applies the attempt ceiling to every cause" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CODEX" \
+        'for any cause, `transient:pr-open` included -> rewrite' \
+        'for a cause other than `transient:pr-open` -> rewrite'
+    expect_fail "REOPEN PASS exempts transient:pr-open from the attempt ceiling, in the Codex copy alone" \
+        "skills/codex/backlog-loop/SKILL.md: REOPEN PASS no longer applies the attempt ceiling" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'bounds one issue across its whole life for every cause, `transient:pr-open` included, and REOPEN PASS enforces it.' \
+        'bounds one issue across its whole life for every cause except `transient:pr-open`, and REOPEN PASS enforces it.'
+    expect_fail "CHARGING exempts transient:pr-open from the attempt ceiling" \
+        "CHARGING no longer applies the attempt ceiling to every cause" "$t"
+
+    # Reclaim keeps the DURABLE class. Losing `backlog_loop_quarantine` frees an
+    # issue a gate repair held back, and losing the attempt count unbounds the
+    # rebuild cycle.
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'plus unsetting the rest of the RUN class and the FORGE-LINK class (KEY CLASSES)' \
+        'plus unsetting every other ledger key, including `backlog_loop_attempts`'
+    expect_fail "reclaim returns to unsetting every other ledger key" \
+        "reclaim no longer unsets exactly the RUN and FORGE-LINK classes" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CODEX" \
+        'plus unsetting the rest of the RUN class and the FORGE-LINK class (KEY CLASSES)' \
+        'plus unsetting every other ledger key, including `backlog_loop_attempts`'
+    expect_fail "reclaim returns to unsetting every other ledger key, in the Codex copy alone" \
+        "skills/codex/backlog-loop/SKILL.md: reclaim no longer unsets exactly the RUN and FORGE-LINK classes" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        ', returning the issue to `bd ready`. No DURABLE key is unset:' \
+        ' and `--unset-metadata backlog_loop_attempts`, returning the issue to `bd ready`. No DURABLE key is unset:'
+    expect_fail "reclaim names a DURABLE key to unset while keeping the class clause" \
+        "reclaim names a DURABLE key" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'plus unsetting every other RUN-class and FORGE-LINK-class key (KEY CLASSES).' \
+        'plus unsetting every other RUN-class and FORGE-LINK-class key (KEY CLASSES) and `--unset-metadata backlog_loop_quarantine`.'
+    expect_fail "REOPEN PASS unsets a DURABLE key" \
+        "REOPEN PASS unsets a DURABLE key" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'keeps every DURABLE key, and records the PR URL in a note' \
+        'unsets every DURABLE key, and records the PR URL in a note'
+    expect_fail "the human-close release stops keeping the DURABLE class" \
+        "CLOSED-not-merged row does not write .needs-person. and release the PR link" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'plus unsetting the RUN and FORGE-LINK classes (KEY CLASSES) and the `backlog_loop_census=<census-run>` stamp' \
+        'plus unsetting the RUN and FORGE-LINK classes (KEY CLASSES) and `--unset-metadata backlog_loop_attempts` and the `backlog_loop_census=<census-run>` stamp'
+    expect_fail "RESIDUE PASS unsets a DURABLE key" \
+        "RESIDUE PASS unsets a DURABLE key" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| DURABLE | `backlog_loop_attempts`, `backlog_loop_cause`,' \
+        '| DURABLE | `backlog_loop_cause`,'
+    expect_fail "the DURABLE class stops listing the attempt count" \
+        "DURABLE row no longer lists .backlog_loop_attempts." "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '| class | members | unset by |' \
+        '| class | keys | unset by |'
+    expect_fail "the KEY CLASSES table header changes shape and no row parses" \
+        "the KEY CLASSES table did not parse" "$t"
+
+    # A cause that is written must be declared and must have a REOPEN PASS
+    # proof, or the issue it labels can be neither cleared nor escalated.
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
+    expect_fail "step 7 writes a cause the ledger's cause row does not declare" \
+        "cause .transient:review-wait. is not declared in THE RUN LEDGER" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CODEX" \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
+    expect_fail "step 7 writes an undeclared cause, in the Codex copy alone" \
+        "skills/codex/backlog-loop/SKILL.md: cause .transient:review-wait. is not declared" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'The legacy `transient:merge-precondition` is gone when' \
+        'The legacy cause is gone when'
+    expect_fail "a declared cause has no REOPEN PASS proof" \
+        "REOPEN PASS carries no proof for cause .transient:merge-precondition." "$t"
 
     # -- The Codex copy is read too -----------------------------------------
     #

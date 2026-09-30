@@ -98,6 +98,21 @@
 #       preflight resolves `ce-debug`, which `ce-babysit-pr` invokes for a
 #       failing check, so a missing child surfaces before a claim and not
 #       inside a babysit.
+#   R21 LINKED PR DISPOSITION maps a PR `CLOSED` without a merge to
+#       `needs-person` and releases the PR link, and no other text reclaims a
+#       closed PR. This loop never closes a PR, so a closed one is a person's
+#       rejection; reclaiming it rebuilds the rejected change, and the
+#       rebuilding has no bound while the old reclaim wiped the attempt count.
+#   R22 the attempt ceiling covers every cause, `transient:pr-open` included,
+#       in REOPEN PASS and in CHARGING. An exempt cause parks a conflicting or
+#       unapproved PR forever, because nothing else ends it.
+#   R23 reclaim, reopen, and residue unset the RUN and FORGE-LINK classes and
+#       never a DURABLE key, and the human-close release keeps the DURABLE
+#       class. Losing `backlog_loop_quarantine` frees an issue a gate repair
+#       held back; losing `backlog_loop_attempts` unbounds the rebuild cycle.
+#   R24 every cause value the procedure names is declared in THE RUN LEDGER's
+#       cause row and has a proof in REOPEN PASS. A cause with no proof labels
+#       an issue that can neither be cleared nor escalated.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -161,6 +176,32 @@ cause_rows() { # file
 ledger_phase_row() { # file
     sed -n '/^| key | written at | value |$/,/^$/p' "$1" |
         grep '^| `backlog_loop_phase` |' || true
+}
+
+# The LINKED PR DISPOSITION table: `| linked PR state | action | charged | result |`.
+disposition_rows() { # file
+    sed -n '/^| linked PR state | action | charged | result |$/,/^$/p' "$1" |
+        grep '^| ' | grep -v '^| linked PR state |' || true
+}
+
+# One disposition row, found by the exact text of its first cell.
+disposition_row() { # file, state cell
+    disposition_rows "$1" | awk -F'|' -v want="$2" '
+        { c = $2; sub(/^ +/, "", c); sub(/ +$/, "", c); if (c == want) print }
+    '
+}
+
+# The KEY CLASSES table: `| class | members | unset by |`.
+class_rows() { # file
+    sed -n '/^| class | members | unset by |$/,/^$/p' "$1" |
+        grep '^| ' | grep -v '^| class |' || true
+}
+
+# The members cell of one key class.
+class_members() { # file, class
+    class_rows "$1" | awk -F'|' -v want="$2" '
+        { c = $2; gsub(/ /, "", c); if (c == want) print $3 }
+    '
 }
 
 # RECOVERY has no header line and no terminator before `## CENSUS`, so it is
@@ -267,6 +308,10 @@ for f in $copies; do
         fail "$f: THE RUN LEDGER's \`backlog_loop_phase\` row declares no phase value, so the RECOVERY arm census below would pass vacuously"
     [ "$n_arms" -gt 0 ] ||
         fail "$f: the RECOVERY block extracted no '- ' arm, so every RECOVERY check below would pass vacuously"
+    [ "$(disposition_rows "$f" | grep -c . || true)" -gt 0 ] ||
+        fail "$f: the LINKED PR DISPOSITION table did not parse -- no row matched under the '| linked PR state | action | charged | result |' header, so every R21 check below would pass vacuously"
+    [ "$(class_rows "$f" | grep -c . || true)" -gt 0 ] ||
+        fail "$f: the KEY CLASSES table did not parse -- no row matched under the '| class | members | unset by |' header, so every R23 check below would pass vacuously"
 
     # -----------------------------------------------------------------------
     # R9. The ledger row closes its own value set.
@@ -607,8 +652,10 @@ for f in $copies; do
     grep -qF -- 'bd list --all --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' "$f" ||
         fail "$f: CI watch cannot enumerate queue entries because bd list omits metadata"
     residue=$(sed -n '/^RESIDUE PASS\./,/^GATE REPAIR PASS\./p' "$f")
-    printf '%s\n' "$residue" | grep -qF -- '--unset-metadata backlog_loop_postmerge_ci' ||
+    printf '%s\n' "$residue" | grep -qF -- 'plus unsetting the RUN and FORGE-LINK classes (KEY CLASSES)' ||
         fail "$f: RESIDUE PASS leaves a parked issue in the pending CI watch"
+    class_members "$f" FORGE-LINK | grep -qF -- '`backlog_loop_postmerge_ci`' ||
+        fail "$f: the KEY CLASSES FORGE-LINK row no longer lists \`backlog_loop_postmerge_ci\` (breaks R18: residue, reclaim, and reopen leave a parked issue in the pending CI watch)"
 
     # -----------------------------------------------------------------------
     # R19. The merge gate counts actionable findings only.
@@ -639,6 +686,94 @@ for f in $copies; do
         fail "$f: preflight no longer resolves compound-engineering:ce-debug (breaks R20: ce-babysit-pr invokes it for a failing check, so a missing ce-debug surfaces inside a babysit instead of before a claim)"
     grep -qF -- "LFG's \`ce-compound\` step is skipped deliberately: it would add a commit after the gated head." "$f" ||
         fail "$f: preflight no longer says the LFG ce-compound step is skipped deliberately (breaks R20: a reader cannot tell a dropped LFG stage from an intended one)"
+
+    # -----------------------------------------------------------------------
+    # R21. A PR closed without a merge is a person's decision.
+    #
+    # The row is found by the exact text of its first cell, and its action is
+    # anchored as a WHOLE clause: `needs-person` alone survives "reclaim, or
+    # write needs-person when the ceiling is reached".
+    # -----------------------------------------------------------------------
+    closed_row=$(disposition_row "$f" '`CLOSED`, not merged')
+    [ -n "$closed_row" ] ||
+        fail "$f: LINKED PR DISPOSITION carries no CLOSED-not-merged row (breaks R21: a PR a person closed has no terminal path, so every entry point improvises one)"
+    printf '%s\n' "$closed_row" |
+        grep -qF -- 'write `needs-person` and release the PR link: one command sets `blocked`, unsets the RUN and FORGE-LINK classes, keeps every DURABLE key, and records the PR URL in a note.' ||
+        fail "$f: the CLOSED-not-merged row does not write \`needs-person\` and release the PR link with the RUN and FORGE-LINK classes unset and the DURABLE class kept (breaks R21 and R23: a person's rejection is rebuilt, or a person who reopens the issue meets a stale PR link)"
+    if printf '%s\n' "$closed_row" | sed 's/Never reclaim//' | grep -qi 'reclaim'; then
+        fail "$f: the CLOSED-not-merged row reclaims the issue (breaks R21: reclaiming a rejected PR rebuilds the rejected change)"
+    fi
+    if grep -qE -- '`CLOSED`[^.|]{0,80}-> reclaim' "$f"; then
+        fail "$f: a RECOVERY arm or OPEN PR RESUME reclaims a closed PR inline (breaks R21: divergent handling of a PR a person closed, outside LINKED PR DISPOSITION)"
+    fi
+
+    # -----------------------------------------------------------------------
+    # R22. The attempt ceiling has no exempt cause.
+    # -----------------------------------------------------------------------
+    reopen_section=$(sed -n '/^REOPEN PASS\./,/^RESIDUE PASS\./p' "$f")
+    printf '%s\n' "$reopen_section" |
+        grep -qF -- 'for any cause, `transient:pr-open` included -> rewrite `backlog_loop_cause=needs-person`' ||
+        fail "$f: REOPEN PASS no longer applies the attempt ceiling to every cause, \`transient:pr-open\` included (breaks R22: an exempt cause parks a PR forever)"
+    if grep -qF -- 'for a cause other than `transient:pr-open`' "$f"; then
+        fail "$f: the attempt ceiling exempts \`transient:pr-open\` again (breaks R22: a conflicting or unapproved PR parks forever)"
+    fi
+    grep '^CHARGING\.' "$f" |
+        grep -qF -- 'bounds one issue across its whole life for every cause, `transient:pr-open` included, and REOPEN PASS enforces it.' ||
+        fail "$f: CHARGING no longer applies the attempt ceiling to every cause, \`transient:pr-open\` included (breaks R22: no charged round ends an open PR)"
+
+    # -----------------------------------------------------------------------
+    # R23. No transition unsets a DURABLE key.
+    #
+    # The clause is anchored whole AND the DURABLE members are scanned for,
+    # because keeping the clause and appending one key to the command leaves
+    # the clause intact.
+    # -----------------------------------------------------------------------
+    durable=$(class_members "$f" DURABLE | grep -oE '`backlog_loop_[a-z_]+`' | tr -d '`' || true)
+    for key in backlog_loop_attempts backlog_loop_quarantine; do
+        printf '%s\n' "$durable" | grep -qxF -- "$key" ||
+            fail "$f: the KEY CLASSES DURABLE row no longer lists \`$key\` (breaks R23: a transition that unsets the class no longer protects it)"
+    done
+    for key in backlog_loop_run backlog_loop_heartbeat; do
+        class_members "$f" RUN | grep -qF -- "\`$key\`" ||
+            fail "$f: the KEY CLASSES RUN row no longer lists \`$key\` (breaks R23: reclaim, reopen, residue, and drop leave it behind)"
+    done
+    class_members "$f" FORGE-LINK | grep -qF -- '`backlog_loop_pr`' ||
+        fail "$f: the KEY CLASSES FORGE-LINK row no longer lists \`backlog_loop_pr\` (breaks R23: a stale PR link is read as the next claim's own PR)"
+
+    reclaim=$(grep '^Reclaim means' "$f" || true)
+    printf '%s\n' "$reclaim" |
+        grep -qF -- 'plus unsetting the rest of the RUN class and the FORGE-LINK class (KEY CLASSES)' ||
+        fail "$f: reclaim no longer unsets exactly the RUN and FORGE-LINK classes (breaks R23: a hand-copied key list drifts from the class table and can reach a DURABLE key)"
+    printf '%s\n' "$reopen_section" |
+        grep -qF -- 'plus unsetting every other RUN-class and FORGE-LINK-class key (KEY CLASSES)' ||
+        fail "$f: REOPEN PASS no longer unsets exactly the RUN and FORGE-LINK classes (breaks R23: a hand-copied key list drifts from the class table)"
+    printf '%s\n' "$residue" |
+        grep -qF -- 'plus unsetting the RUN and FORGE-LINK classes (KEY CLASSES)' ||
+        fail "$f: RESIDUE PASS no longer unsets exactly the RUN and FORGE-LINK classes (breaks R23: a hand-copied key list drifts from the class table)"
+    for key in $durable; do
+        if printf '%s\n' "$reclaim" | grep -qF -- "$key"; then
+            fail "$f: reclaim names a DURABLE key (\`$key\`) (breaks R23: the attempt count, cause, quarantine, and edge records must outlive every reclaim)"
+        fi
+        if printf '%s\n' "$reopen_section" | grep -qF -- "--unset-metadata $key"; then
+            fail "$f: REOPEN PASS unsets a DURABLE key (\`$key\`) (breaks R23: the attempt count is what bounds the reopen cycle)"
+        fi
+        if printf '%s\n' "$residue" | grep -qF -- "--unset-metadata $key"; then
+            fail "$f: RESIDUE PASS unsets a DURABLE key (\`$key\`) (breaks R23: residue repair must leave the parking decision's own records)"
+        fi
+    done
+
+    # -----------------------------------------------------------------------
+    # R24. Every cause the procedure names is declared and has a REOPEN PASS
+    # proof. Collected from every `transient:<subtype>` token in the file, so a
+    # value written by any step is seen wherever it is written.
+    # -----------------------------------------------------------------------
+    cause_row=$(sed -n '/^| key | written at | value |$/,/^$/p' "$f" | grep '^| `backlog_loop_cause` |' || true)
+    for cause in $(grep -oE -- 'transient:[a-z][a-z-]*' "$f" | LC_ALL=C sort -u) needs-person; do
+        printf '%s\n' "$cause_row" | grep -qF -- "\`$cause\`" ||
+            fail "$f: cause \`$cause\` is not declared in THE RUN LEDGER's \`backlog_loop_cause\` row (breaks R24: a cause the ledger does not list reaches no REOPEN PASS proof and no census reading)"
+        printf '%s\n' "$reopen_section" | grep -qF -- "$cause" ||
+            fail "$f: REOPEN PASS carries no proof for cause \`$cause\` (breaks R24: an issue labelled with it can be neither cleared nor escalated)"
+    done
 done
 
 # ---------------------------------------------------------------------------
@@ -663,4 +798,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and the goal prompt preserves the same terminal authority"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, and the goal prompt preserves the same terminal authority"
