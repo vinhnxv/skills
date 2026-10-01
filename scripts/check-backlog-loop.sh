@@ -52,14 +52,18 @@
 #       dependency is then classified `dep-blocked` and walked transitively
 #       into the loop-responsible set, so no run can ever report the backlog
 #       clear.
-#   R8  the procedure writes only `open` and `blocked` as literal `--status=`
-#       flags -- MATCHED WHETHER OR NOT THE VALUE IS QUOTED, because a bare
-#       char-class pattern captures nothing past an opening quote and silently
-#       drops a write such as `--status="deferred"` from the census -- and
-#       `## CONSTRAINTS` names the three statuses it refuses. A run that parks
-#       an issue is writing under the authority of whoever reads that status
-#       next, and `deferred` in particular is a sibling skill's own parking
-#       mechanism.
+#   R8  the procedure writes only `open` and `blocked` as a status flag --
+#       `--status=X`, `--status X`, and `-s X` on a `bd update`, `bd create`, or
+#       `bd q` command, MATCHED WHETHER OR NOT THE VALUE IS QUOTED, because a
+#       bare char-class pattern captures nothing past an opening quote and
+#       silently drops a write such as `--status="deferred"` from the census --
+#       never runs `bd defer`, and runs `bd close` (a write of `closed`) only
+#       in step 7 VERIFY, THEN CLOSE and the RECOVERY `verified` arm.
+#       `in_progress` is a status flag only in the anchored adoption write.
+#       `## CONSTRAINTS` names the three statuses the procedure refuses. A run
+#       that parks an issue is writing under the authority of whoever reads that
+#       status next, and `deferred` in particular is a sibling skill's own
+#       parking mechanism.
 #   R11 `## CENSUS` carries the RESIDUE PASS opener. Without the pass a person
 #       clears every parked issue's dead ledger residue by hand.
 #   R12 the WRITE GATE paragraph counts RESIDUE PASS among the writes it
@@ -90,6 +94,19 @@
 #       issue) and allows members held by a recorded post-merge watch, the
 #       census goal lists residue strips beside repairs and reopens, and a
 #       `gh pr merge` example without `--match-head-commit` fails.
+#   R17 the loop never closes a PR: no text runs `gh pr close`, and the
+#       open-PR preservation rule stands. This loop never closes a PR, so a PR it
+#       cannot land stays open for a person, and a close the loop made itself
+#       would destroy the record the human decision rests on.
+#   R18 a merged member keeps a durable post-merge CI watch. The queue key
+#       `backlog_loop_postmerge_ci` is declared, the wait is bounded at 30
+#       minutes from the first-seen time, a pending entry past the deadline runs
+#       the exact-merge local gate once, the queue is rechecked on every
+#       iteration and invocation on either CI route, and a slow optional check
+#       never rewrites the batch route to `off`. Without the key and the bound,
+#       a path-filtered or never-queued workflow holds members `in_progress` at
+#       `merged` forever, or a close rests on a CI run that never covered the
+#       merge.
 #   R19 the merge gate reconciles compound-engineering's `actionable_findings`
 #       only. LFG never applies an `advisory` finding and never lists it under
 #       `## Unapplied review findings`, so a gate that reconciles every
@@ -209,6 +226,11 @@ ADOPTION_WRITE='bd update <id> --if-status blocked --status=in_progress --assign
 # The statuses the procedure must refuse to write, and which CLASSIFY must
 # reach before `abandoned-claim`.
 PARKED_STATUSES="hooked pinned deferred"
+
+# A `bd` command word up to its subcommand: global options, each with at most
+# one argument (`bd -C <dir> close`). Shared by every R8 pattern below so they
+# read the same command the same way as `check-cross-skill.sh` does.
+BD_WORDS='bd([[:space:]]+-[^[:space:]`]+([[:space:]]+[^-[:space:]`][^[:space:]`]*)?)*[[:space:]]+'
 
 root="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
 
@@ -351,16 +373,26 @@ copies=$(copies_of "$SKILL_NAME")
 [ -n "$copies" ] ||
     fail "no $SKILL_NAME/SKILL.md under $root/skills for either host -- every rule below would pass vacuously"
 
+# The copy paths are newline-separated, so a checkout path with a space stays
+# one path in each iteration.
+nl='
+'
+old_ifs=$IFS
+IFS=$nl
+set -f
+set -- $copies
+set +f
+IFS=$old_ifs
+
 checked=0
 
-for f in $copies; do
+for f in "$@"; do
     checked=$((checked + 1))
 
     classify=$(classify_rows "$f")
     causes=$(cause_rows "$f")
     phases=$(phase_values "$f")
     arms=$(recovery_arms "$f")
-    recovery=$(recovery_block "$f")
 
     n_classify=$(printf '%s\n' "$classify" | grep -c . || true)
     n_causes=$(printf '%s\n' "$causes" | grep -c . || true)
@@ -647,6 +679,51 @@ for f in $copies; do
             *) fail "$f: writes \`--status=$status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking an issue under a status this loop does not own overrides whoever reads that status next)" ;;
         esac
     done < "$work/status-writes"
+
+    # R8, the other forms. `--status X` and `-s X` write a status exactly as
+    # `--status=X` does, and the census above cannot see them. They are read
+    # only inside an inline code span that is a `bd update`, `bd create`, or
+    # `bd q` command, because `bd list --status closed` reads and writes
+    # nothing. No value other than `open` or `blocked` is allowed in these
+    # forms: the adoption write is the one `--status=in_progress`, and it is
+    # anchored above.
+    flag_pattern="(^|[[:space:]])(--status[[:space:]]+|-s[[:space:]=]+)(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
+    write_spans=$(grep -oE '`[^`]*`' "$f" | grep -E -- "(^|[^[:alnum:]_])${BD_WORDS}(update|create|q)[[:space:]]" || true)
+    raw_flag_writes=$(printf '%s\n' "$write_spans" | grep -oE -- '(^|[[:space:]])(--status[[:space:]]|-s[[:space:]=])' | grep -c . || true)
+    flag_matches=$(printf '%s\n' "$write_spans" | grep -oE -- "$flag_pattern" || true)
+    parsed_flag_writes=$(printf '%s\n' "$flag_matches" | grep -c . || true)
+    [ "$raw_flag_writes" -eq "$parsed_flag_writes" ] ||
+        fail "$f: $((raw_flag_writes - parsed_flag_writes)) \`--status X\` or \`-s X\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census, so the status it writes is never checked)"
+    printf '%s\n' "$flag_matches" |
+        sed -E -e 's/^[[:space:]]+//' -e 's/^(--status|-s)[[:space:]=]+/\1 /' > "$work/status-flag-writes"
+    while read -r flag status; do
+        [ -n "$flag" ] || continue
+        status=$(printf '%s\n' "$status" | sed -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/")
+        case " $ALLOWED_STATUS_WRITES " in
+            *" $status "*) ;;
+            *) fail "$f: writes \`$flag $status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking or closing an issue by a status flag the census reads overrides whoever reads that status next)" ;;
+        esac
+    done < "$work/status-flag-writes"
+
+    # `bd defer` writes `deferred`, the sibling skill's parking status.
+    defer_line=$(grep -nE -- "(^|[^[:alnum:]_])${BD_WORDS}defer([^a-z-]|\$)" "$f" | head -n 1 | cut -d: -f1 || true)
+    [ -z "$defer_line" ] ||
+        fail "$f: line $defer_line runs \`bd defer\` (breaks R8: \`deferred\` is a person's or a sibling skill's parking decision, and a run that wrote it would park work under the authority of whoever reads that status next)"
+
+    # `bd close` writes `closed`: step 7 VERIFY, THEN CLOSE and the RECOVERY
+    # `verified` arm are the only places that may run it, because a close
+    # anywhere else closes work no merge has been proven for.
+    close_line=$(awk -v pat="(^|[^[:alnum:]_])${BD_WORDS}close([^a-z-]|\$)" '
+        /^7\. \*\*VERIFY, THEN CLOSE\.\*\*/ { step7 = 1 }
+        step7 && /^[0-9]+\. / && !/^7\. / { step7 = 0 }
+        step7 && /^## / { step7 = 0 }
+        /^RECOVERY,/ { rec = 1; seen = 0 }
+        rec && seen && /^$/ { rec = 0; arm = 0 }
+        rec && /^- / { seen = 1; arm = ($0 ~ /^- [^:]*`verified`[^:]*:/) }
+        $0 ~ pat && !step7 && !(rec && arm) { print NR; exit }
+    ' "$f")
+    [ -z "$close_line" ] ||
+        fail "$f: line $close_line runs \`bd close\` outside step 7 VERIFY, THEN CLOSE and the RECOVERY \`verified\` arm (breaks R8: a close anywhere else closes work whose merge and post-merge CI nothing has proven)"
 
     # -----------------------------------------------------------------------
     # R8, second half. `## CONSTRAINTS` names the three statuses it refuses.
@@ -1163,4 +1240,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, the invoking worktree is never switched, fast-forwarded, or built on, no text prunes worktrees repository-wide, and REAP removes only run-owned paths under <worktree-root>, and both goal prompts preserve the same terminal authority, state success as the census and leave the merge command to the skill"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written as a status flag including quoted, bd defer is never run, bd close runs only in step 7 and the RECOVERY verified arm, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, the invoking worktree is never switched, fast-forwarded, or built on, no text prunes worktrees repository-wide, and REAP removes only run-owned paths under <worktree-root>, and both goal prompts preserve the same terminal authority, state success as the census and leave the merge command to the skill"

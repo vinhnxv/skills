@@ -15,6 +15,13 @@ require() { grep -Fq -- "$2" "$1" || fail "$1 lacks $2"; }
 # The one place a close is allowed: reconcile mode's confirmation clause.
 close_clause='Close an issue only after the operator confirms the close-candidate list, and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`); close each confirmed issue with `bd close <id> --reason-file <file>` only after a fresh `bd show <id> --json` still shows it open and unassigned.'
 
+# A close or reopen in any spelling: the subcommand behind global options
+# (`bd -C <dir> close`), or a write of the `closed` status by flag
+# (`--status closed`, `--status=closed`, `-s closed`). The bd command words match
+# scripts/check-backlog-loop.sh's BD_WORDS.
+bd_words='bd([[:space:]]+-[^[:space:]`]+([[:space:]]+[^-[:space:]`][^[:space:]`]*)?)*[[:space:]]+'
+closure_pattern="(^|[^[:alnum:]_])${bd_words}(close|reopen)([^a-z-]|\$)|(--status[[:space:]=]+|-s[[:space:]=]+)[\"']?closed([^a-z-]|\$)"
+
 # Print the file with the anchored clause removed. Exactly one copy must exist,
 # so a second clause appended elsewhere cannot smuggle a close past the guard.
 outside_clause() {
@@ -78,7 +85,7 @@ check() {
     require "$file" 'Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`'
     require "$file" "$close_clause"
     rest=$(outside_clause "$file" "$close_clause") || fail "$file lacks exactly one reconcile close clause"
-    if printf '%s\n' "$rest" | grep -Eq '(^|[[:space:]`])bd[[:space:]]+(close|reopen)'; then
+    if printf '%s\n' "$rest" | grep -Eq "$closure_pattern"; then
         fail "$file closes or reopens an issue outside the reconcile confirmation clause"
     fi
 }
@@ -141,6 +148,14 @@ run_cases() {
     run_case "$checker" "metadata key deletion" delete-line 'source_to_beads_key'
     run_case "$checker" "issue closure outside the clause" append 'bd close example'
     run_case "$checker" "issue reopening" append 'bd reopen example'
+    run_case "$checker" "issue closure behind a directory option" append 'bd -C . close example'
+    run_case "$checker" "issue reopening behind a directory option" append 'bd -C /tmp/example reopen example'
+    run_case "$checker" "issue closure behind a quiet option" append 'bd -q close example'
+    run_case "$checker" "closed status written by long flag" append 'bd update example --status closed'
+    run_case "$checker" "closed status written by long flag with equals" append 'bd update example --status=closed'
+    run_case "$checker" "closed status written by short flag" append 'bd update example -s closed'
+    run_case "$checker" "closed status written by quoted flag value" append 'bd update example --status "closed"'
+    run_case "$checker" "directory-option close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd -C . close example\`."
     run_case "$checker" "close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd close example\`."
     run_case "$checker" "second copy of the confirmation clause" append "$close_clause"
     run_case "$checker" "confirmation clause removed" drop "$close_clause"
@@ -181,5 +196,14 @@ real_cases=$cases
 run_cases check_control
 [ "$misses" -eq "$cases" ] || fail "the always-succeeding control caught $((cases - misses)) of $cases cases"
 [ "$cases" -eq "$real_cases" ] || fail "control ran a different number of cases"
+
+# A checkout path with a space must not split into two paths: rerun the whole
+# suite from a copy under one.
+if [ -z "${S2B_SPACE_RERUN:-}" ]; then
+    spaced="$tmp/checkout with space"
+    mkdir "$spaced"
+    cp -R "$root/scripts" "$root/skills" "$spaced/"
+    S2B_SPACE_RERUN=1 sh "$spaced/scripts/test-source-to-beads.sh" >/dev/null 2>&1 || fail "the suite fails from a checkout path that contains a space"
+fi
 
 echo "OK: source-to-Beads inputs and write boundaries hold in both hosts ($real_cases break cases, control misses all)"

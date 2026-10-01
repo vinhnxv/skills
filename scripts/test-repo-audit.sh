@@ -11,7 +11,6 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 claude="$root/skills/claude/repo-audit/SKILL.md"
 codex="$root/skills/codex/repo-audit/SKILL.md"
-prompts="$root/prompts/repo-audit.goal.md $root/prompts/repo-audit-readonly.goal.md"
 fixture="$root/scripts/fixtures/audit-report-v1.md"
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/audit-contract.XXXXXX")
@@ -19,6 +18,14 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 require() { grep -Fq -- "$2" "$1" || fail "$1 lacks $2"; }
+
+# One goal prompt per line, so a checkout path with a space stays whole.
+printf '%s\n' "$root/prompts/repo-audit.goal.md" "$root/prompts/repo-audit-readonly.goal.md" > "$tmp/prompts"
+
+# What counts as a Beads command: scripts/check-cross-skill.sh's definition,
+# restated here and required to match it.
+bd_command='(^|[^[:alnum:]_])bd[[:space:]]+(-[^[:space:]`]+|[a-z][a-z-]*)([[:space:]`]|$)'
+grep -qF -- "BD_COMMAND='$bd_command'" "$root/scripts/check-cross-skill.sh" || fail "the Beads command pattern differs from scripts/check-cross-skill.sh"
 
 # One whole clause per line; each must appear verbatim in the skill text.
 skill_anchors() {
@@ -73,7 +80,7 @@ check() {
     while IFS= read -r clause; do
         require "$file" "$clause"
     done < "$tmp/skill-anchors"
-    if grep -Eq '(^|[[:space:]`])bd[[:space:]]+(prime|ready|create|update|close|show|list|export)' "$file"; then
+    if grep -Eq -- "$bd_command" "$file"; then
         fail "$file contains a Beads command"
     fi
     count=$(grep -Ec '^\| `([a-z]{2})-[a-z-]+` \|' "$file" || true)
@@ -152,7 +159,7 @@ check_report() {
         grep -Fxq -- "## $n. $name" "$f" || fail "$f lacks section heading: ## $n. $name"
     done < "$tmp/sections"
     [ "$(grep -c '^## [0-9]\. ' "$f")" -eq 6 ] || fail "$f does not have exactly six sections"
-    if grep -Eq '(^|[[:space:]`])bd[[:space:]]+(prime|ready|create|update|close|show|list|export)' "$f"; then
+    if grep -Eq -- "$bd_command" "$f"; then
         fail "$f contains a Beads command"
     fi
     section "$f" 1 > "$tmp/s1"
@@ -231,7 +238,7 @@ weak_check() { return 0; }
 
 check "$claude"
 check "$codex"
-for p in $prompts; do check_prompt "$p"; done
+while IFS= read -r p; do check_prompt "$p"; done < "$tmp/prompts"
 check_report "$fixture"
 
 # remove_clause <src> <dst> <clause>: copy src to dst without the clause.
@@ -263,6 +270,7 @@ PY
 # report_case <fn> <name> <reason> <old> <new>: mutate the fixture, then require
 # the report check to fail for that reason; an empty <new> deletes the text.
 report_case() {
+    cases=$((cases + 1))
     replace_first "$fixture" "$tmp/report.md" "$4" "$5"
     if out=$("$1" "$tmp/report.md" 2>&1); then
         misses=$((misses + 1)); echo "  MISS: report $2" >&2
@@ -271,17 +279,27 @@ report_case() {
     fi
 }
 
-# run_cases <check-fn> <prompt-check-fn> <report-check-fn>: count the cases the function misses.
+# run_cases <check-fn> <prompt-check-fn> <report-check-fn>: run every case,
+# leaving the number run in `cases` and the number the function missed in `misses`.
 run_cases() {
-    fn=$1; pfn=$2; rfn=$3; misses=0
-    cp "$claude" "$tmp/SKILL.md"
-    sed '/repo-audit-report\/v1/d' "$claude" > "$tmp/no-schema.md"
-    if ( "$fn" "$tmp/no-schema.md" ) >/dev/null 2>&1; then misses=$((misses + 1)); echo "  MISS: schema deletion" >&2; fi
-    printf '\nbd create --title example\n' >> "$tmp/SKILL.md"
-    if ( "$fn" "$tmp/SKILL.md" ) >/dev/null 2>&1; then misses=$((misses + 1)); echo "  MISS: Beads command" >&2; fi
+    fn=$1; pfn=$2; rfn=$3; misses=0; cases=0
     for host in claude codex; do
         src="$root/skills/$host/repo-audit/SKILL.md"
+        cases=$((cases + 1))
+        sed '/repo-audit-report\/v1/d' "$src" > "$tmp/no-schema.md"
+        if ( "$fn" "$tmp/no-schema.md" ) >/dev/null 2>&1; then misses=$((misses + 1)); echo "  MISS: $host schema deletion" >&2; fi
+        # Every spelling of a Beads command must fail, behind global options too.
+        for cmd in 'bd create --title example' 'bd -C . create example' 'bd dep add a b' 'bd label add a b' 'bd q example' 'bd -q list' 'bd --version'; do
+            cases=$((cases + 1))
+            { cat "$src"; printf '\n%s\n' "$cmd"; } > "$tmp/SKILL.md"
+            if out=$("$fn" "$tmp/SKILL.md" 2>&1); then
+                misses=$((misses + 1)); echo "  MISS: $host Beads command: $cmd" >&2
+            elif [ "$fn" = check ] && ! printf '%s\n' "$out" | grep -Fq -- 'contains a Beads command'; then
+                misses=$((misses + 1)); echo "  WRONG REASON: $host Beads command: $cmd" >&2
+            fi
+        done
         while IFS= read -r clause; do
+            cases=$((cases + 1))
             remove_clause "$src" "$tmp/case.md" "$clause"
             if out=$("$fn" "$tmp/case.md" 2>&1); then
                 misses=$((misses + 1)); echo "  MISS: $host drops: $clause" >&2
@@ -290,14 +308,15 @@ run_cases() {
             fi
         done < "$tmp/skill-anchors"
     done
-    for p in $prompts; do
+    while IFS= read -r p; do
         while IFS= read -r clause; do
+            cases=$((cases + 1))
             remove_clause "$p" "$tmp/case.md" "$clause"
             if ( "$pfn" "$tmp/case.md" ) >/dev/null 2>&1; then
                 misses=$((misses + 1)); echo "  MISS: $(basename "$p") drops: $clause" >&2
             fi
         done < "$tmp/prompt-anchors"
-    done
+    done < "$tmp/prompts"
     report_case "$rfn" 'schema field deletion' 'lacks header field: Schema' '- Schema: repo-audit-report/v1
 ' ''
     report_case "$rfn" 'wrong schema marker' 'lacks the repo-audit-report/v1 marker' '- Schema: repo-audit-report/v1' '- Schema: repo-audit-report/v2'
@@ -339,13 +358,27 @@ Coverage:'
     report_case "$rfn" 'Beads command in report' 'contains a Beads command' '## 6. Closing summary' '## 6. Closing summary
 
 bd create --title example'
-    return "$misses"
+    report_case "$rfn" 'Beads command behind a directory option in report' 'contains a Beads command' '## 6. Closing summary' '## 6. Closing summary
+
+bd -C . create example'
 }
 
-run_cases check check_prompt check_report || fail "$? case(s) escaped the contract check"
-# Weakened pass: every case must be missed, so it must report a nonzero miss count.
-if run_cases weak_check weak_check weak_check 2>/dev/null; then
-    fail "weakened check missed no case; the cases prove nothing"
+run_cases check check_prompt check_report
+[ "$misses" -eq 0 ] || fail "$misses of $cases case(s) escaped the contract check"
+real_cases=$cases
+# Weakened pass: it must miss every case, not merely one, so a crashed run
+# cannot pass for a discriminating one.
+run_cases weak_check weak_check weak_check 2>/dev/null
+[ "$misses" -eq "$cases" ] || fail "weakened check missed only $misses of $cases cases; the cases prove nothing"
+[ "$cases" -eq "$real_cases" ] || fail "the weakened pass ran a different number of cases"
+
+# A checkout path with a space must not split into two paths: rerun the whole
+# suite from a copy under one.
+if [ -z "${AUDIT_SPACE_RERUN:-}" ]; then
+    spaced="$tmp/checkout with space"
+    mkdir "$spaced"
+    cp -R "$root/scripts" "$root/skills" "$root/prompts" "$spaced/"
+    AUDIT_SPACE_RERUN=1 sh "$spaced/scripts/test-repo-audit.sh" >/dev/null 2>&1 || fail "the suite fails from a checkout path that contains a space"
 fi
 
-echo 'OK: audit report contract is tracker-independent in both hosts'
+echo "OK: audit report contract is tracker-independent in both hosts ($real_cases cases, control misses all)"

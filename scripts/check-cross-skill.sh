@@ -2,6 +2,10 @@
 # Cross-skill boundary: audit has no Beads commands; the independent writer
 # owns Beads metadata and remains consumable by backlog-loop.
 set -eu
+# Path lists below are newline-separated, so a checkout path with a space
+# survives every `for f in $list`; nothing here relies on splitting at a space.
+IFS='
+'
 root="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 copies_of() {
@@ -24,7 +28,10 @@ consumer_copies=$(copies_of backlog-loop)
 [ -n "$writer_copies" ] || fail "source-to-beads skill missing"
 [ -n "$consumer_copies" ] || fail "backlog-loop skill missing"
 
-bd_lines() { grep -nE '(^|[^[:alnum:]_])bd[[:space:]]+(-[^[:space:]`]+|[a-z][a-z-]*)([[:space:]`]|$)' "$1" || true; }
+# What counts as a Beads command. scripts/test-repo-audit.sh restates this
+# pattern and fails when the two differ.
+BD_COMMAND='(^|[^[:alnum:]_])bd[[:space:]]+(-[^[:space:]`]+|[a-z][a-z-]*)([[:space:]`]|$)'
+bd_lines() { grep -nE "$BD_COMMAND" "$1" || true; }
 # Audit may name the writer as a next action but may not invoke bd itself.
 for f in $audit_copies; do
     calls=$(bd_lines "$f")
@@ -32,6 +39,37 @@ for f in $audit_copies; do
 done
 
 bd_set_lines() { bd_lines "$1" | grep -E -- '--(set-)?metadata[ =]|--(add-|set-|remove-)?labels?[ =]|(^|[[:space:]])-l([[:space:]=]|$)' || true; }
+# Lines that claim to write <label>: a write verb within six words of the label
+# that no negation governs. A negation governs a verb only when it stands within
+# four words before it, so one elsewhere on the line, or after the verb, exempts
+# nothing. A line that declares the label author-only is the invariant itself
+# and is skipped.
+prose_claims() {
+    grep -nF -- "$2" "$1" | awk -v label="$2" '
+        BEGIN {
+            nv = split("write writes add adds apply applies set sets attach attaches mark marks labels", v, " ")
+            for (i = 1; i <= nv; i++) verb[v[i]] = 1
+            nn = split("never no not nothing neither none refuse refuses", n, " ")
+            for (i = 1; i <= nn; i++) neg[n[i]] = 1
+            label = tolower(label)
+        }
+        tolower($0) ~ /author.only/ { next }
+        {
+            line = tolower($0)
+            sub(/^[0-9]+:/, "", line)
+            while ((p = index(line, label)) > 0) line = substr(line, 1, p - 1) " labeltoken " substr(line, p + length(label))
+            gsub(/[^a-z0-9_]+/, " ", line)
+            nw = split(line, w, " ")
+            for (i = 1; i <= nw; i++) {
+                if (!(w[i] in verb)) continue
+                near = 0
+                for (j = i - 6; j <= i + 6; j++) if (j >= 1 && j <= nw && w[j] == "labeltoken") near = 1
+                governed = 0
+                for (j = i - 4; j < i; j++) if (j >= 1 && (w[j] in neg)) governed = 1
+                if (near && !governed) { print; break }
+            }
+        }' || true
+}
 declared_metadata_keys() {
     awk -F'|' '
         /^\| *key *\|/ { if ($NF ~ /^ *$/ && $(NF-1) ~ /^ *value *$/) { intable = 1; next } }
@@ -43,14 +81,15 @@ declared_metadata_keys() {
 written_metadata_keys() {
     sites=$(bd_set_lines "$1")
     {
-        printf '%s\n' "$sites" | sed -E 's/.*--(set-)?metadata[ =]+/\n/g' | sed -E 's/[ `].*//; s/=.*//'
+        # Every `--metadata <key>` on a line counts, not only the last one.
+        printf '%s\n' "$sites" | grep -oE -- '--(set-)?metadata[ =]+[^ `]*' | sed -E 's/^--(set-)?metadata[ =]+//; s/=.*//' || true
         printf '%s\n' "$sites" | grep -oE '"[A-Za-z_][A-Za-z0-9_]*"[[:space:]]*:' | sed -E 's/^"//; s/"[[:space:]]*:$//' || true
         declared_metadata_keys "$1"
+        # The writer's metadata contract lives in prose, with no `bd` write line
+        # of its own, so a reserved key it names in backticks is a key it writes.
         case "$1" in
             */source-to-beads/SKILL.md)
-                for key in source_to_beads_key source_to_beads_source; do
-                    grep -qF -- "$key" "$1" && printf '%s\n' "$key"
-                done ;;
+                grep -oE '`(backlog_loop|source_to_beads)_[a-z0-9_]+`' "$1" | tr -d '`' || true ;;
         esac
     } | grep -E '^[a-z][a-z0-9_]*$' | LC_ALL=C sort -u || true
 }
@@ -112,27 +151,32 @@ done
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/check-cross-skill.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+tab=$(printf '\t')
 total_keys=0
 for skill in $skills; do
-    : > "$scratch/keys.$skill"
-    for f in $(copies_of "$skill"); do written_metadata_keys "$f" >> "$scratch/keys.$skill"; done
-    LC_ALL=C sort -u "$scratch/keys.$skill" -o "$scratch/keys.$skill"
+    : > "$scratch/keyed.$skill"
+    for f in $(copies_of "$skill"); do
+        written_metadata_keys "$f" | while IFS= read -r key; do printf '%s\t%s\n' "$key" "$f"; done >> "$scratch/keyed.$skill"
+    done
+    cut -f1 "$scratch/keyed.$skill" | LC_ALL=C sort -u > "$scratch/keys.$skill"
     n=$(grep -c . "$scratch/keys.$skill" || true)
     total_keys=$((total_keys + n))
 done
 [ "$total_keys" -gt 0 ] || fail "no metadata key was harvested from any skill"
 for skill in backlog-loop source-to-beads; do
     prefix=$(printf '%s' "$skill" | tr '-' '_')_
-    grep -q "^$prefix" "$scratch/keys.$skill" || fail "$skill yields no metadata key under its own reserved prefix"
+    for f in $(copies_of "$skill"); do
+        awk -F"$tab" -v f="$f" -v p="$prefix" '$2 == f && index($1, p) == 1 { found = 1 } END { exit !found }' "$scratch/keyed.$skill" || fail "$skill: $f yields no metadata key under its own reserved prefix"
+    done
 done
 for skill in $skills; do
-    while IFS= read -r key; do
+    while IFS="$tab" read -r key f; do
         case "$key" in
-            backlog_loop_*) [ "$skill" = backlog-loop ] || fail "$skill writes metadata key '$key', reserved to 'backlog-loop'" ;;
-            source_to_beads_*) [ "$skill" = source-to-beads ] || fail "$skill writes metadata key '$key', reserved to 'source-to-beads'" ;;
-            repo_audit_*) fail "$skill writes legacy audit metadata key '$key'" ;;
+            backlog_loop_*) [ "$skill" = backlog-loop ] || fail "$skill: $f writes metadata key '$key', reserved to 'backlog-loop'" ;;
+            source_to_beads_*) [ "$skill" = source-to-beads ] || fail "$skill: $f writes metadata key '$key', reserved to 'source-to-beads'" ;;
+            repo_audit_*) fail "$skill: $f writes legacy audit metadata key '$key'" ;;
         esac
-    done < "$scratch/keys.$skill"
+    done < "$scratch/keyed.$skill"
 done
 for a in $skills; do
     for b in $skills; do
@@ -147,7 +191,7 @@ for skill in $skills; do
         for label in hard-blocker audit-suppressed; do
             sites=$(bd_set_lines "$f" | grep -F -- "$label" || true)
             [ -z "$sites" ] || fail "$skill: $f has a write site for author-only label '$label'"
-            claims=$(grep -nF -- "$label" "$f" | grep -E '\b(writes?|adds?|applies|apply|sets?|attaches|attach|marks?|labels)\b' | grep -Evi '\b(never|no|not|nothing|neither|none|refuses?)\b|author.only' || true)
+            claims=$(prose_claims "$f" "$label")
             [ -z "$claims" ] || fail "$skill: $f claims in prose to write author-only label '$label'"
         done
     done

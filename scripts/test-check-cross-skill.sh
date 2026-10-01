@@ -23,11 +23,11 @@ if old not in s:
 open(p, "w").write(s.replace(old, new))
 PY
 }
-AUDIT=skills/claude/repo-audit/SKILL.md
-WRITER=skills/claude/source-to-beads/SKILL.md
-CONSUMER=skills/claude/backlog-loop/SKILL.md
+# expect_fail <name> <reason-ERE> <tree> [host]: with a host, the failure
+# message must also name that host's copy, so a checker that scanned only the
+# Claude copy cannot satisfy a Codex case.
 expect_fail() {
-    name="$1"; expected="$2"; tree="$3"
+    name="$1"; expected="$2"; tree="$3"; host="${4:-}"
     cases=$((cases + 1))
     out=$(sh "$under_test" "$tree" 2>&1) && rc=0 || rc=$?
     if [ "$rc" -eq 0 ]; then
@@ -35,6 +35,9 @@ expect_fail() {
         misses=$((misses + 1))
     elif ! printf '%s\n' "$out" | grep -qE -- "$expected"; then
         echo "  WRONG REASON: $name: $(printf '%s\n' "$out" | head -n 1)" >&2
+        misses=$((misses + 1))
+    elif [ -n "$host" ] && ! printf '%s\n' "$out" | grep -qF -- "/skills/$host/"; then
+        echo "  WRONG COPY: $name: $(printf '%s\n' "$out" | head -n 1)" >&2
         misses=$((misses + 1))
     else
         echo "  ok: $name"
@@ -45,7 +48,7 @@ both_replace() {
     for host in claude codex; do
         t=$(fresh_tree)
         replace_all "$t" "skills/$host/$skill/SKILL.md" "$old" "$new"
-        expect_fail "$label ($host)" "$want" "$t"
+        expect_fail "$label ($host)" "$want" "$t" "$host"
     done
 }
 both_append() {
@@ -53,111 +56,88 @@ both_append() {
     for host in claude codex; do
         t=$(fresh_tree)
         printf '\n%s\n' "$text" >> "$t/skills/$host/$skill/SKILL.md"
-        expect_fail "$label ($host)" "$want" "$t"
+        expect_fail "$label ($host)" "$want" "$t" "$host"
     done
 }
 run_suite() {
     under_test="$1"; cases=0; misses=0
-    t=$(fresh_tree)
-    printf '\nRun `bd list --all --json` before audit.\n' >> "$t/$AUDIT"
-    expect_fail "audit calls Beads" "repo-audit: .*contains a Beads command" "$t"
+    both_append "audit calls Beads" "repo-audit: .*contains a Beads command" repo-audit 'Run `bd list --all --json` before audit.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd --version` before audit.\n' >> "$t/$AUDIT"
-    expect_fail "audit checks Beads availability" "repo-audit: .*contains a Beads command" "$t"
+    both_append "audit checks Beads availability" "repo-audit: .*contains a Beads command" repo-audit 'Run `bd --version` before audit.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd config` before audit.\n' >> "$t/$AUDIT"
-    expect_fail "audit invokes another Beads subcommand" "repo-audit: .*contains a Beads command" "$t"
+    both_append "audit invokes another Beads subcommand" "repo-audit: .*contains a Beads command" repo-audit 'Run `bd config` before audit.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd -C . list` before audit.\n' >> "$t/$AUDIT"
-    expect_fail "audit invokes Beads with a directory option" "repo-audit: .*contains a Beads command" "$t"
+    both_append "audit invokes Beads with a directory option" "repo-audit: .*contains a Beads command" repo-audit 'Run `bd -C . list` before audit.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd -q list` before audit.\n' >> "$t/$AUDIT"
-    expect_fail "audit invokes Beads with a quiet option" "repo-audit: .*contains a Beads command" "$t"
+    both_append "audit invokes Beads with a quiet option" "repo-audit: .*contains a Beads command" repo-audit 'Run `bd -q list` before audit.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd update <id> --set-metadata backlog_loop_run=1`.\n' >> "$t/$WRITER"
-    expect_fail "writer crosses consumer namespace" "reserved to 'backlog-loop'" "$t"
+    both_append "writer crosses consumer namespace" "reserved to 'backlog-loop'" source-to-beads 'Run `bd update <id> --set-metadata backlog_loop_run=1`.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd -C . update <id> --set-metadata backlog_loop_run=1`.\n' >> "$t/$WRITER"
-    expect_fail "writer crosses consumer namespace with a directory option" "reserved to 'backlog-loop'" "$t"
+    both_append "writer crosses consumer namespace with a directory option" "reserved to 'backlog-loop'" source-to-beads 'Run `bd -C . update <id> --set-metadata backlog_loop_run=1`.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd update <id> --set-metadata repo_audit_sha=abc`.\n' >> "$t/$WRITER"
-    expect_fail "writer mutates legacy audit metadata" "legacy audit metadata key" "$t"
+    both_append "writer mutates legacy audit metadata" "legacy audit metadata key" source-to-beads 'Run `bd update <id> --set-metadata repo_audit_sha=abc`.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd update <id> --set-metadata source_to_beads_probe=1`.\n' >> "$t/$CONSUMER"
-    expect_fail "consumer crosses writer namespace" "reserved to 'source-to-beads'" "$t"
+    both_append "consumer crosses writer namespace" "reserved to 'source-to-beads'" backlog-loop 'Run `bd update <id> --set-metadata source_to_beads_probe=1`.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd update <id> --set-metadata shared_probe_key=1`.\n' >> "$t/$WRITER"
-    printf '\nRun `bd update <id> --set-metadata shared_probe_key=1`.\n' >> "$t/$CONSUMER"
-    expect_fail "unreserved metadata collision" "both write metadata key" "$t"
+    # Every key on a write line counts, not only the last one: a foreign key
+    # written first must fail as surely as one written last.
+    both_append "consumer writes a foreign key before its own on one line" "reserved to 'source-to-beads'" backlog-loop 'Run `bd update <id> --set-metadata source_to_beads_probe=1 --set-metadata backlog_loop_run=1`.'
+    both_append "writer writes a foreign key before its own on one line" "reserved to 'backlog-loop'" source-to-beads 'Run `bd update <id> --set-metadata backlog_loop_run=1 --set-metadata source_to_beads_key=1`.'
+    both_append "writer writes a foreign key after its own on one line" "reserved to 'backlog-loop'" source-to-beads 'Run `bd update <id> --set-metadata source_to_beads_key=1 --set-metadata backlog_loop_run=1`.'
+    both_append "writer writes a legacy audit key first of two with the long flag" "legacy audit metadata key" source-to-beads 'Run `bd update <id> --metadata repo_audit_sha=abc --metadata source_to_beads_key=1`.'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'source_to_beads_key' 'source_to_beads_anchor'
-    expect_fail "writer key vanishes" "missing metadata key 'source_to_beads_key'" "$t"
+    # The writer's keys also come from its prose, so a key it mentions is a key
+    # it writes, and its own-prefix check reads what the file says.
+    both_append "writer prose records a consumer key" "reserved to 'backlog-loop'" source-to-beads 'Also record metadata key `backlog_loop_run` on each created issue.'
+    for host in claude codex; do
+        t=$(fresh_tree)
+        replace_all "$t" "skills/$host/source-to-beads/SKILL.md" '`source_to_beads_key`' 'source_to_beads_key'
+        replace_all "$t" "skills/$host/source-to-beads/SKILL.md" '`source_to_beads_source`' 'source_to_beads_source'
+        expect_fail "writer names no key under its own prefix ($host)" "source-to-beads: .*yields no metadata key under its own reserved prefix" "$t" "$host"
+    done
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'bd list --all --include-gates --limit 0 --json' 'bd list --json'
-    expect_fail "writer loses full dedup scan" "missing full Beads dedup scan" "$t"
+    for host in claude codex; do
+        t=$(fresh_tree)
+        printf '\nRun `bd update <id> --set-metadata shared_probe_key=1`.\n' >> "$t/skills/$host/source-to-beads/SKILL.md"
+        printf '\nRun `bd update <id> --set-metadata shared_probe_key=1`.\n' >> "$t/skills/$host/backlog-loop/SKILL.md"
+        expect_fail "unreserved metadata collision ($host)" "both write metadata key" "$t"
+    done
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'repo_audit_fingerprint' 'old_audit_fingerprint'
-    expect_fail "writer loses legacy dedup" "missing legacy audit deduplication" "$t"
+    both_replace "writer key vanishes" "missing metadata key 'source_to_beads_key'" source-to-beads 'source_to_beads_key' 'source_to_beads_anchor'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'both open and closed issues' 'open issues'
-    expect_fail "writer overlooks closed semantic matches" "missing closed-issue semantic deduplication" "$t"
+    both_replace "writer loses full dedup scan" "missing full Beads dedup scan" source-to-beads 'bd list --all --include-gates --limit 0 --json' 'bd list --json'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'stable `RA-` finding ID' 'report run identifier'
-    expect_fail "writer keys repeated audit runs separately" "missing cross-report audit identity" "$t"
+    both_replace "writer loses legacy dedup" "missing legacy audit deduplication" source-to-beads 'repo_audit_fingerprint' 'old_audit_fingerprint'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" '[HUMAN]' '[PERSON]'
-    expect_fail "writer loses human gate title" "missing human-gate title contract" "$t"
+    both_replace "writer overlooks closed semantic matches" "missing closed-issue semantic deduplication" source-to-beads 'both open and closed issues' 'open issues'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'human-gate' 'person-gate'
-    expect_fail "writer loses human gate label" "missing human-gate label contract" "$t"
+    both_replace "writer keys repeated audit runs separately" "missing cross-report audit identity" source-to-beads 'stable `RA-` finding ID' 'report run identifier'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'with no parent and no dependency on agent work' 'inside an epic'
-    expect_fail "writer nests human gates" "missing standalone human-gate contract" "$t"
+    both_replace "writer loses human gate title" "missing human-gate title contract" source-to-beads '[HUMAN]' '[PERSON]'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$WRITER" 'unless no agent work can run' 'whenever convenient'
-    expect_fail "writer broadens human gate blocker exception" "missing hard-blocker exception" "$t"
+    both_replace "writer loses human gate label" "missing human-gate label contract" source-to-beads 'human-gate' 'person-gate'
 
-    t=$(fresh_tree)
-    printf '\nThe writer adds `hard-blocker` to new gates.\n' >> "$t/$WRITER"
-    expect_fail "writer forges author-only label in prose" "claims in prose to write author-only label 'hard-blocker'" "$t"
+    both_replace "writer nests human gates" "missing standalone human-gate contract" source-to-beads 'with no parent and no dependency on agent work' 'inside an epic'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd update <id> --add-label audit-suppressed`.\n' >> "$t/$WRITER"
-    expect_fail "writer forges legacy suppression label" "write site for author-only label 'audit-suppressed'" "$t"
+    both_replace "writer broadens human gate blocker exception" "missing hard-blocker exception" source-to-beads 'unless no agent work can run' 'whenever convenient'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd create work -l hard-blocker`.\n' >> "$t/$WRITER"
-    expect_fail "writer forges author-only label with a short flag" "write site for author-only label 'hard-blocker'" "$t"
+    both_append "writer forges author-only label in prose" "claims in prose to write author-only label 'hard-blocker'" source-to-beads 'The writer adds `hard-blocker` to new gates.'
 
-    t=$(fresh_tree)
-    printf '\nRun `bd -q create work -l audit-suppressed`.\n' >> "$t/$WRITER"
-    expect_fail "writer forges legacy label with global and short flags" "write site for author-only label 'audit-suppressed'" "$t"
+    both_append "writer forges legacy suppression label" "write site for author-only label 'audit-suppressed'" source-to-beads 'Run `bd update <id> --add-label audit-suppressed`.'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$CONSUMER" 'status=deferred' 'status=parked'
-    expect_fail "consumer loses deferred category" "no longer classifies deferred issues" "$t"
+    both_append "writer forges author-only label with a short flag" "write site for author-only label 'hard-blocker'" source-to-beads 'Run `bd create work -l hard-blocker`.'
 
-    t=$(fresh_tree)
-    replace_all "$t" "$CONSUMER" 'issue_type` is `gate`' 'issue_type` is `blocker`'
-    expect_fail "consumer loses native gate type" "no longer recognizes native gate issues" "$t"
+    both_append "writer forges legacy label with global and short flags" "write site for author-only label 'audit-suppressed'" source-to-beads 'Run `bd -q create work -l audit-suppressed`.'
+
+    # A negation counts only before the verb it governs and within a few words
+    # of it; one elsewhere on the line exempts nothing.
+    both_append "writer negates one verb and then applies the label" "claims in prose to write author-only label 'hard-blocker'" source-to-beads 'The writer never writes the label, but bd label add <id> hard-blocker.'
+    both_append "writer applies the label with a negation after the verb" "claims in prose to write author-only label 'hard-blocker'" source-to-beads 'Apply `hard-blocker` when the gate is not yet closed.'
+    both_append "writer marks the legacy label unless something else applies" "claims in prose to write author-only label 'audit-suppressed'" source-to-beads 'Mark it `audit-suppressed` unless nothing else applies.'
+
+    both_replace "consumer loses deferred category" "no longer classifies deferred issues" backlog-loop 'status=deferred' 'status=parked'
+
+    both_replace "consumer loses native gate type" "no longer recognizes native gate issues" backlog-loop 'issue_type` is `gate`' 'issue_type` is `blocker`'
 
     # Producer contract (R18): the loop keeps recognizing a gate a person
     # reserved and never repairs or decides it; the writer files that form.
@@ -199,6 +179,11 @@ failures=0
 run_suite "$checker" || failures=$?
 real_cases="$cases"
 [ "$failures" -eq 0 ] || { echo "FAIL: $failures mutation case(s) missed" >&2; exit 1; }
+# A checkout path with a space must not split into two paths.
+spaced="$work/checkout with space"
+mkdir "$spaced"
+cp -R "$repo_root/skills" "$spaced/skills"
+sh "$checker" "$spaced" >/dev/null 2>&1 || { echo "FAIL: the checker rejects a tree whose path contains a space" >&2; exit 1; }
 weak="$work/weakened.sh"
 printf '#!/bin/sh\nexit 0\n' > "$weak"
 echo "Running suite against a deliberately weakened checker"

@@ -138,6 +138,16 @@ both_hosts() { # name, old, new, expected-message-ERE
     done
 }
 
+# One planted line appended to each host copy in turn, in its own tree. The
+# message must name the mutated copy's path, as both_hosts does.
+both_append() { # name, text, expected-message-ERE
+    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
+        t=$(fresh_tree)
+        append_line "$t" "$md" "$2"
+        expect_fail "$1 ($md)" "$md: $3" "$t"
+    done
+}
+
 # ---------------------------------------------------------------------------
 # The suite. Every case builds its own tree, applies exactly one break, and
 # states the message it expects.
@@ -194,59 +204,62 @@ run_suite() { # checker path
     expect_fail "the WRITE GATE paragraph stops naming RESIDUE PASS" \
         "does not name RESIDUE PASS among the writes it covers" "$t"
 
-    t=$(fresh_tree)
-    append_line "$t" "$LOOP_MD_CLAUDE" 'Run `gh pr close <url>` after a review timeout.'
-    expect_fail "automatic PR close is reintroduced" \
-        'may close a PR automatically' "$t"
+    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
+        t=$(fresh_tree)
+        append_line "$t" "$md" 'Run `gh pr close <url>` after a review timeout.'
+        expect_fail "automatic PR close is reintroduced ($md)" \
+            "$md: backlog-loop may close a PR automatically" "$t"
+    done
 
-    t=$(fresh_tree)
-    replace_first "$t" "$LOOP_MD_CLAUDE" \
+    both_hosts "the open-PR preservation rule is removed" \
+        'Never close a PR automatically.' \
+        'A PR may be closed when it is stale.' \
+        'open-PR preservation rule is missing'
+
+    both_hosts "the bounded post-merge CI wait is removed" \
+        'Wait up to 30 minutes total from `<first-seen-utc>`.' \
+        'Wait as long as the queue entry needs.' \
+        'bounded post-merge CI wait is missing'
+
+    both_hosts "the post-merge CI queue resumed poll is removed" \
+        'Recheck the durable queue at each iteration and in the next invocation.' \
+        'Recheck the queue when convenient.' \
+        'post-merge CI queue has no resumed poll'
+
+    both_hosts "the durable post-merge CI queue key is removed" \
         '| `backlog_loop_postmerge_ci` |' \
-        '| `backlog_loop_postmerge_ci_removed` |'
-    expect_fail "the durable post-merge CI queue key is removed" \
-        'durable post-merge CI queue key is missing' "$t"
+        '| `backlog_loop_postmerge_ci_removed` |' \
+        'durable post-merge CI queue key is missing'
 
-    t=$(fresh_tree)
-    replace_first "$t" "$LOOP_MD_CLAUDE" \
+    both_hosts "CI-off recovery waits on a missing workflow" \
         'If either route is `off` or missing, a missing workflow does not hold verification after the exact-merge clean-tree gate passes' \
-        'If either route is `off` or missing, keep waiting for every workflow'
-    expect_fail "CI-off recovery waits on a missing workflow" \
-        'CI-off recovery can wait forever' "$t"
+        'If either route is `off` or missing, keep waiting for every workflow' \
+        'CI-off recovery can wait forever'
 
-    t=$(fresh_tree)
-    replace_first "$t" "$LOOP_MD_CLAUDE" \
+    both_hosts "CI-off verification waits on a missing workflow" \
         'When either route is `off`, the exact-merge local gate is authoritative: a missing workflow does not keep the queue pending after that gate passes.' \
-        'When either route is `off`, keep waiting for every missing workflow.'
-    expect_fail "CI-off verification waits on a missing workflow" \
-        'CI-off post-merge verification can wait forever' "$t"
+        'When either route is `off`, keep waiting for every missing workflow.' \
+        'CI-off post-merge verification can wait forever'
 
-    t=$(fresh_tree)
-    replace_first "$t" "$LOOP_MD_CLAUDE" \
+    both_hosts "parked PR resume path is removed" \
         'OPEN PR RESUME. For each linked PR' \
-        'PARKED PR REPORT. For each linked PR'
-    expect_fail "parked PR resume path is removed" \
-        'parked open PR has no later-run resume path' "$t"
+        'PARKED PR REPORT. For each linked PR' \
+        'a parked open PR has no later-run resume path'
 
-    t=$(fresh_tree)
-    replace_first "$t" "$LOOP_MD_CLAUDE" \
+    both_hosts "CI watch enumerates metadata from plain bd list" \
         'bd list --limit 0 --has-metadata-key backlog_loop_postmerge_ci --json' \
-        'bd list --limit 0 --json'
-    expect_fail "CI watch enumerates metadata from plain bd list" \
-        'CI watch cannot enumerate queue entries' "$t"
+        'bd list --limit 0 --json' \
+        'CI watch cannot enumerate queue entries'
 
-    t=$(fresh_tree)
-    replace_first "$t" "$LOOP_MD_CLAUDE" \
+    both_hosts "residue pass stops unsetting the FORGE-LINK class, so a parked CI queue entry survives" \
         'plus unsetting the RUN and FORGE-LINK classes (KEY CLASSES)' \
-        'plus unsetting the RUN class (KEY CLASSES)'
-    expect_fail "residue pass stops unsetting the FORGE-LINK class, so a parked CI queue entry survives" \
-        'RESIDUE PASS leaves a parked issue' "$t"
+        'plus unsetting the RUN class (KEY CLASSES)' \
+        'RESIDUE PASS leaves a parked issue'
 
-    t=$(fresh_tree)
-    replace_first "$t" "$LOOP_MD_CLAUDE" \
+    both_hosts "the FORGE-LINK class stops holding the post-merge CI queue key" \
         '`backlog_loop_postmerge_ci`, `backlog_loop_gate_receipt` | reclaim' \
-        '`backlog_loop_gate_receipt` | reclaim'
-    expect_fail "the FORGE-LINK class stops holding the post-merge CI queue key" \
-        'FORGE-LINK row no longer lists .backlog_loop_postmerge_ci.' "$t"
+        '`backlog_loop_gate_receipt` | reclaim' \
+        'the KEY CLASSES FORGE-LINK row no longer lists .backlog_loop_postmerge_ci.'
 
     # A substring test for `claimed` stays green here: the replacement leaves
     # "reclaimed" in the block. Only a whole-token match sees the arm go.
@@ -338,6 +351,55 @@ run_suite() { # checker path
         'Reclaim means `bd update <id> --status="deferred" --assignee=""'
     expect_fail "a quoted --status=\"deferred\" write is added" \
         'writes .--status=deferred., which is outside' "$t"
+
+    # R8 reads every form that writes a status, not only `--status=`: the
+    # space-separated long flag, the short flag, and the commands that write a
+    # status without naming one. A form the census cannot see is a status this
+    # loop writes without anyone checking whose it is.
+    both_append "a --status deferred write is added" \
+        'Park it with `bd update <id> --status deferred` and move on.' \
+        'writes .--status deferred., which is outside'
+    both_append "a -s pinned write is added" \
+        'Park it with `bd update <id> -s pinned` and move on.' \
+        'writes .-s pinned., which is outside'
+    both_append "a --status closed write is added" \
+        'Finish it with `bd update <id> --status closed`.' \
+        'writes .--status closed., which is outside'
+    both_append "an in_progress status flag is written without the adoption guard" \
+        'Take it with `bd update <id> -s in_progress`.' \
+        'writes .-s in_progress., which is outside'
+    both_append "a --status write behind a global option is added" \
+        'Park it with `bd -C . update <id> --status hooked` and move on.' \
+        'writes .--status hooked., which is outside'
+    both_append "a quoted --status write is added" \
+        'Park it with `bd update <id> --status "deferred"` and move on.' \
+        'writes .--status deferred., which is outside'
+    both_append "a --status write names no value the census can read" \
+        'Park it with `bd update <id> --status <status>` and move on.' \
+        '[0-9]+ .--status X. or .-s X. occurrence.s. could not be parsed into a value'
+    both_append "bd defer is used to park an issue" \
+        'Park it with `bd defer <id>` and move on.' \
+        'line [0-9]+ runs .bd defer.'
+    both_append "bd defer is used behind a global option" \
+        'Park it with `bd -C . defer <id>` and move on.' \
+        'line [0-9]+ runs .bd defer.'
+
+    # `bd close` is a write of `closed`, permitted in step 7 VERIFY, THEN CLOSE
+    # and the RECOVERY `verified` arm and nowhere else.
+    both_append "bd close is run outside step 7 and the verified arm" \
+        'Then run `bd close <id>`.' \
+        'line [0-9]+ runs .bd close. outside step 7'
+    both_append "bd close is run behind a global option outside step 7" \
+        'Then run `bd -C . close <id>`.' \
+        'line [0-9]+ runs .bd close. outside step 7'
+    both_hosts "bd close is run in the merge-requested RECOVERY arm" \
+        '- `merge-requested`: the outcome is unknown' \
+        '- `merge-requested`: run `bd close <id>`; the outcome is unknown' \
+        'line [0-9]+ runs .bd close. outside step 7'
+    both_hosts "bd close is run in REAP" \
+        '8. **REAP.** Runs at the end' \
+        '8. **REAP.** Run `bd close <id>`. Runs at the end' \
+        'line [0-9]+ runs .bd close. outside step 7'
 
     # Every token the exclusion names is still present; only the polarity
     # flips from "is not" to "is". Token-presence matching cannot see this.
@@ -1287,6 +1349,13 @@ else
     sh "$checker" "$t" >&2 || true
     exit 1
 fi
+
+# The same unmodified tree under a path that contains a space must pass too:
+# an unquoted path list would split it into two paths and fail.
+spaced="$work/checkout with space"
+mkdir "$spaced"
+cp -R "$t/skills" "$t/prompts" "$spaced/"
+sh "$checker" "$spaced" >/dev/null 2>&1 || { echo "FAIL: the checker rejects a tree whose path contains a space" >&2; exit 1; }
 
 run_suite "$checker"
 suite_failures="$case_failures"
