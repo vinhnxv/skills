@@ -115,13 +115,6 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/source-to-beads-contract.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT HUP TERM
 
-# Delete every line holding the literal; fail the case when none does, so a
-# reworded anchor cannot leave a case silently testing nothing.
-drop_line() {
-    grep -Fq -- "$2" "$1" || fail "test bug: $1 has no line with $2"
-    grep -Fv -- "$2" "$1" > "$1.new"
-    mv "$1.new" "$1"
-}
 # Replace one literal with another inside a copy.
 mutate() {
     OLD=$2 NEW=$3 python3 - "$1" <<'PY'
@@ -148,7 +141,6 @@ run_case() {
             drop) mutate "$tmp/SKILL.md" "$4" "" ;;
             replace) mutate "$tmp/SKILL.md" "$4" "$5" ;;
             append) printf '%s\n' "$4" >> "$tmp/SKILL.md" ;;
-            delete-line) drop_line "$tmp/SKILL.md" "$4" ;;
         esac
         if out=$("$1" "$tmp/SKILL.md" 2>&1); then
             [ "$1" = check_control ] || echo "  MISS: $2 ($host)" >&2
@@ -182,9 +174,9 @@ REQUIREMENTS
     run_case "$checker" "directory-option close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd -C . close example\`." 'closes or reopens an issue outside the reconcile confirmation clause'
     run_case "$checker" "close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd close example\`." 'closes or reopens an issue outside the reconcile confirmation clause'
     run_case "$checker" "second copy of the confirmation clause" append "$close_clause" '' 'lacks exactly one reconcile close clause'
-    run_case "$checker" "confirmation clause removed" drop "$close_clause" '' 'lacks Close an issue only after the operator confirms the close-candidate list, and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`); close each confirmed issue with `bd close <id> --reason-file <file>` only after a fresh `bd show <id> --json` still shows it open and unassigned.'
-    run_case "$checker" "confirmation requirement removed" replace 'only after the operator confirms the close-candidate list' 'without asking the operator' 'lacks Close an issue only after the operator confirms the close-candidate list, and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`); close each confirmed issue with `bd close <id> --reason-file <file>` only after a fresh `bd show <id> --json` still shows it open and unassigned.'
-    run_case "$checker" "close limited to issues this skill created" replace 'and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`)' 'and any issue' 'lacks Close an issue only after the operator confirms the close-candidate list, and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`); close each confirmed issue with `bd close <id> --reason-file <file>` only after a fresh `bd show <id> --json` still shows it open and unassigned.'
+    run_case "$checker" "confirmation clause removed" drop "$close_clause" '' "lacks $close_clause"
+    run_case "$checker" "confirmation requirement removed" replace 'only after the operator confirms the close-candidate list' 'without asking the operator' "lacks $close_clause"
+    run_case "$checker" "close limited to issues this skill created" replace 'and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`)' 'and any issue' "lacks $close_clause"
     run_case "$checker" "reconcile runs only on request" drop 'Run reconcile mode only when the operator asks to reconcile issues already filed' '' 'lacks Run reconcile mode only when the operator asks to reconcile issues already filed'
     run_case "$checker" "result note is never a verdict" drop 'Never read an earlier result note as a verdict' '' 'lacks Never read an earlier result note as a verdict'
     run_case "$checker" "status-guarded result note" drop "--append-notes <note> --if-assignee '' --if-status open" '' 'lacks --append-notes <note> --if-assignee '"'"''"'"' --if-status open'
