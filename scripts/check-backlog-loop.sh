@@ -1085,6 +1085,10 @@ SCAN_FILES_END
         fail "$f: the \`backlog_loop_heartbeat\` ledger row no longer documents both suffix values, \`<iso> | live\` and \`<iso> | released\` (breaks R26: LIVENESS reads a state the ledger never declared)"
     grep -qF -- 'Every 10 minutes it refreshes every `in_progress` issue carrying `backlog_loop_run=<run-id>`: it writes `backlog_loop_heartbeat="<iso> | live"` and runs `bd heartbeat <id>`' "$f" ||
         fail "$f: HEARTBEAT REFRESHER no longer refreshes every 10 minutes, heartbeat and claim lease both (breaks R26: one long child stage outlasts the 30-minute window and a sibling reclaims live work)"
+    grep -qF -- 'so its lifetime is bounded another way: 36 ticks (6 hours), and it stops at the first `<refresh>` that fails or that finds no `in_progress` issue carrying `backlog_loop_run=<run-id>`.' "$f" ||
+        fail "$f: HEARTBEAT REFRESHER no longer bounds its own lifetime at 36 ticks and on a failed or empty refresh (breaks R26: a run that died without REAP leaves a refresher that keeps its heartbeat fresh and blocks every later invocation)"
+    grep -qF -- 'A process that also carries `BACKLOG_LOOP_ROLE=refresher` is a refresher, and a refresher alone does not prove a live run: it outlives a dead run by up to 6 hours.' "$f" ||
+        fail "$f: LIVENESS no longer says a refresher alone does not prove a live run (breaks R26: the orphan refresher carries the run token, so LIVENESS reads a dead run as live)"
     section_of "$f" '## FINAL REPORT' |
         grep -qF -- 'write `backlog_loop_heartbeat="<iso> | released"` on every member this run still holds `in_progress`' ||
         fail "$f: FINAL REPORT no longer writes a \`released\` heartbeat on members still held (breaks R26: a merged member waiting on post-merge CI stays live for 30 minutes after the run ended)"
