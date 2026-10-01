@@ -8,7 +8,7 @@
 # why in a way that matches the case. Asserting the message matters: without it
 # a case passes whenever the checker fails for any reason at all, including a
 # reason unrelated to the break the case is named after -- and this checker has
-# nine independent assertions, so "it failed" carries almost no information.
+# many independent assertions, so "it failed" carries almost no information.
 #
 # The cases come in three kinds.
 #
@@ -101,13 +101,10 @@ PY
 # One case: run the checker under test against a broken tree and require both
 # a non-zero exit and a message matching this case's expectation.
 #
-# Increments `break_cases` and, on a miss, `case_failures`. Never exits: the
-# suite has to reach the end so the weakened-checker comparison below compares
-# two runs of the same set.
+# Increments `break_cases` and, on a miss, `case_failures`; `run_suite` resets
+# both before its first case. Never exits: the suite has to reach the end so the
+# weakened-checker comparison below compares two runs of the same set.
 # ---------------------------------------------------------------------------
-break_cases=0
-case_failures=0
-
 expect_fail() { # name, expected-message-ERE, tree
     name="$1"
     expected="$2"
@@ -150,6 +147,16 @@ both_append() { # name, text, expected-message-ERE
         append_line "$t" "$md" "$2"
         expect_fail "$1 ($md)" "$md: $3" "$t"
     done
+}
+
+# The one line of a file in a case tree that matches a pattern, for a case that
+# replaces or deletes exactly that line. Prints nothing and fails when no line
+# matches: the case would otherwise mutate nothing and report a MISS against the
+# checker for the test's own defect. Called as `x=$(line_of ...) || return 1`.
+line_of() { # tree, relative-path, sed-regex, what-it-is
+    found=$(sed -n "/$3/p" "$1/$2")
+    [ -n "$found" ] || { echo "test bug: $4 missing before mutation" >&2; return 1; }
+    printf '%s\n' "$found"
 }
 
 # A reference file planted in one host's copy of the skill: tree, host, text.
@@ -227,12 +234,9 @@ run_suite() { # checker path
     expect_fail "the WRITE GATE paragraph stops naming RESIDUE PASS" \
         "does not name RESIDUE PASS among the writes it covers" "$t"
 
-    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
-        t=$(fresh_tree)
-        append_line "$t" "$md" 'Run `gh pr close <url>` after a review timeout.'
-        expect_fail "automatic PR close is reintroduced ($md)" \
-            "$md: backlog-loop may close a PR automatically" "$t"
-    done
+    both_append "automatic PR close is reintroduced" \
+        'Run `gh pr close <url>` after a review timeout.' \
+        'backlog-loop may close a PR automatically'
 
     both_hosts "the open-PR preservation rule is removed" \
         'Never close a PR automatically.' \
@@ -287,8 +291,7 @@ run_suite() { # checker path
     # A substring test for `claimed` stays green here: the replacement leaves
     # "reclaimed" in the block. Only a whole-token match sees the arm go.
     t=$(fresh_tree)
-    claimed_arm=$(sed -n '/^- `pr-open`, `built`, or `claimed`:/p' "$t/$LOOP_MD_CLAUDE")
-    [ -n "$claimed_arm" ] || { echo 'test bug: claimed arm missing before mutation' >&2; return 1; }
+    claimed_arm=$(line_of "$t" "$LOOP_MD_CLAUDE" '^- `pr-open`, `built`, or `claimed`:' 'claimed arm') || return 1
     replace_first "$t" "$LOOP_MD_CLAUDE" \
         "$claimed_arm" \
         '- `pr-open` or `built`: an issue reclaimed here is reclaimed whole.'
@@ -299,8 +302,7 @@ run_suite() { # checker path
     # in three other arms' cross-references even after the arm that CLAIMS it
     # is deleted outright. Only opener-scoped matching sees it go.
     t=$(fresh_tree)
-    merged_arm=$(sed -n '/^- `merged` or `verified`:/p' "$t/$LOOP_MD_CLAUDE")
-    [ -n "$merged_arm" ] || { echo 'test bug: merged/verified arm missing before mutation' >&2; return 1; }
+    merged_arm=$(line_of "$t" "$LOOP_MD_CLAUDE" '^- `merged` or `verified`:' 'merged/verified arm') || return 1
     replace_first "$t" "$LOOP_MD_CLAUDE" \
         "$merged_arm" \
         ''
@@ -311,8 +313,7 @@ run_suite() { # checker path
     # default arm's own cross-reference ("follow the `merge-requested` arm's
     # rules"), so a whole-block test stays green after this bullet is gone.
     t=$(fresh_tree)
-    merge_requested_arm=$(sed -n '/^- `merge-requested`:/p' "$t/$LOOP_MD_CLAUDE")
-    [ -n "$merge_requested_arm" ] || { echo 'test bug: merge-requested arm missing before mutation' >&2; return 1; }
+    merge_requested_arm=$(line_of "$t" "$LOOP_MD_CLAUDE" '^- `merge-requested`:' 'merge-requested arm') || return 1
     replace_first "$t" "$LOOP_MD_CLAUDE" \
         "$merge_requested_arm" \
         '- `interrupted`: park the batch.'
@@ -445,7 +446,7 @@ run_suite() { # checker path
     # Renumbered so the parked rows still outrank abandoned-claim (12 -> 13)
     # but no longer outrank dep-blocked (14 -> 9): the wedge this reopens is
     # a parked issue with an unmet dependency walked in as dep-blocked, which
-    # is exactly what row 3 in SKILL.md's own rationale forbids.
+    # is exactly what the CLASSIFY rationale in references/rationale.md forbids.
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
         '| 9 | `hooked` | `status=hooked` |' \
@@ -716,8 +717,7 @@ Never ask me for input.'
         "CLOSED-not-merged row .*reclaim" "$t"
 
     t=$(fresh_tree)
-    closed_row=$(sed -n '/^| `CLOSED`, not merged | write/p' "$t/$LOOP_MD_CLAUDE")
-    [ -n "$closed_row" ] || { echo 'test bug: CLOSED-not-merged row missing before mutation' >&2; return 1; }
+    closed_row=$(line_of "$t" "$LOOP_MD_CLAUDE" '^| `CLOSED`, not merged | write' 'CLOSED-not-merged row') || return 1
     replace_first "$t" "$LOOP_MD_CLAUDE" \
         "$closed_row
 " \
@@ -1268,11 +1268,9 @@ Never ask me for input.'
         'The branch stays on the forge.' \
         "step 6 no longer deletes the remote head branch through the API"
 
-    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
-        t=$(fresh_tree)
-        append_line "$t" "$md" 'When a worktree is stale, run `git worktree prune`.'
-        expect_fail "a repository-wide worktree prune is added ($md)" "$md: instructs .git worktree prune." "$t"
-    done
+    both_append "a repository-wide worktree prune is added" \
+        'When a worktree is stale, run `git worktree prune`.' \
+        'instructs .git worktree prune.'
 
     both_hosts "the worktree-root rule stops forbidding a repository-wide prune" \
         'Only a path under it is ever removed, with `git worktree remove --force <path>`, which also clears a registration whose directory is already gone; nothing here prunes repository-wide, because a prune also drops the registration of any worktree of the operator whose directory is temporarily missing.' \
@@ -1397,15 +1395,24 @@ Never ask me for input.'
 # `run_suite`: a weakened checker exits 0 and would "pass" it, so it carries
 # information against the real checker only and must not count as a break.
 # ---------------------------------------------------------------------------
+#
+# `expect_pass` exits on a rejection, unlike `expect_fail`: none of these runs
+# is part of the break count, and a checker that rejects a good tree makes
+# every later result meaningless.
+expect_pass() { # message when it passes, what it rejected, tree
+    if sh "$checker" "$3" >/dev/null 2>&1; then
+        echo "  ok: $1"
+    else
+        echo "FAIL: the checker rejects $2:" >&2
+        sh "$checker" "$3" >&2 || true
+        exit 1
+    fi
+}
+
 echo "Running suite against $checker"
 t=$(fresh_tree)
-if sh "$checker" "$t" >/dev/null 2>&1; then
-    echo "  ok: the unmodified tree passes, so the ' / ' split reconciles the real <cause> table's multi-category cells"
-else
-    echo "FAIL: the checker rejects an unmodified copy of the real tree:" >&2
-    sh "$checker" "$t" >&2 || true
-    exit 1
-fi
+expect_pass "the unmodified tree passes, so the ' / ' split reconciles the real <cause> table's multi-category cells" \
+    "an unmodified copy of the real tree" "$t"
 
 # The same unmodified tree under a path that contains a space must pass too:
 # an unquoted path list would split it into two paths and fail.
@@ -1421,25 +1428,15 @@ t=$(fresh_tree)
 for host in claude codex; do
     plant_reference "$t" "$host" 'Rationale. A gate is a person'"'"'s question; the loop reads it and never answers it.'
 done
-if sh "$checker" "$t" >/dev/null 2>&1; then
-    echo "  ok: a plain-prose references/rationale.md in both hosts passes"
-else
-    echo "FAIL: the checker rejects a tree with a plain-prose references/rationale.md in both hosts:" >&2
-    sh "$checker" "$t" >&2 || true
-    exit 1
-fi
+expect_pass "a plain-prose references/rationale.md in both hosts passes" \
+    "a tree with a plain-prose references/rationale.md in both hosts" "$t"
 
 t=$(fresh_tree)
 for host in claude codex; do
     plant_reference "$t" "$host" 'Rationale. Read the queue with `bd ready --json --limit 0`; park an issue with `bd update <id> --status=blocked`; remove a run-owned worktree with `git worktree remove --force <path>`.'
 done
-if sh "$checker" "$t" >/dev/null 2>&1; then
-    echo "  ok: a valid references/rationale.md in both hosts passes"
-else
-    echo "FAIL: the checker rejects a tree with a valid references/rationale.md in both hosts:" >&2
-    sh "$checker" "$t" >&2 || true
-    exit 1
-fi
+expect_pass "a valid references/rationale.md in both hosts passes" \
+    "a tree with a valid references/rationale.md in both hosts" "$t"
 
 run_suite "$checker"
 suite_failures="$case_failures"

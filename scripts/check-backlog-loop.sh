@@ -253,6 +253,15 @@ fail() {
 
 [ -d "$root/skills" ] || fail "no skills tree at $root/skills"
 
+# The number of non-empty lines on stdin. `grep -c .` exits 1 on a count of
+# zero, which `set -e` would turn into an exit; the count is printed either way.
+count_lines() { grep -c . || true; }
+
+# Strip one pair of surrounding double or single quotes from each stdin line.
+unquote() {
+    sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/"
+}
+
 # Every SKILL.md copy of one skill, both hosts, whichever exist. Same shape as
 # check-cross-skill.sh's helper, and for the same reason: a host tree that is
 # absent is not a failure, but a host tree that is present is checked.
@@ -295,10 +304,14 @@ cause_rows() { # file
     sed -n '/^| category | `<cause>` |$/,/^$/p' "$1" | grep '^| `' || true
 }
 
-# THE RUN LEDGER's key table, one row.
-ledger_phase_row() { # file
+# THE RUN LEDGER's key table, one row, found by its key.
+ledger_row() { # file, key
     sed -n '/^| key | written at | value |$/,/^$/p' "$1" |
-        grep '^| `backlog_loop_phase` |' || true
+        grep "^| \`$2\` |" || true
+}
+
+ledger_phase_row() { # file
+    ledger_row "$1" backlog_loop_phase
 }
 
 # The LINKED PR DISPOSITION table: `| linked PR state | action | charged | result |`.
@@ -393,16 +406,17 @@ cause_categories() { # file
 }
 
 # R8's status-write scan over ONE file: SKILL.md or a references/*.md of the
-# same copy (`$f` is the SKILL.md of the copy being checked, `$sf` the file
+# same copy (`$1` is the SKILL.md of the copy being checked, `$2` the file
 # scanned). The anchored adoption write may appear in SKILL.md only, so a
 # `--status=in_progress` in a reference file is a stray status.
-check_status_writes() { # scanned file
-    sf="$1"
+check_status_writes() { # SKILL.md of the copy, scanned file
+    skill_md="$1"
+    sf="$2"
     sq="'"
     status_pattern="--status=(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
-    raw_status_writes=$(grep -o -- '--status=' "$sf" | grep -c . || true)
+    raw_status_writes=$(grep -o -- '--status=' "$sf" | count_lines)
     status_matches=$(grep -oE -- "$status_pattern" "$sf" || true)
-    parsed_status_writes=$(printf '%s\n' "$status_matches" | grep -c . || true)
+    parsed_status_writes=$(printf '%s\n' "$status_matches" | count_lines)
     [ "$raw_status_writes" -eq "$parsed_status_writes" ] ||
         fail "$sf: $((raw_status_writes - parsed_status_writes)) literal \`--status=\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census below, so the status it writes is never checked)"
 
@@ -410,13 +424,13 @@ check_status_writes() { # scanned file
     # always carries a status write, but a reference file need not, and a blank
     # line there would read as a write with an empty value.
     printf '%s\n' "$status_matches" | grep . |
-        sed -e 's/^--status=//' -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/" > "$work/status-values"
+        sed -e 's/^--status=//' | unquote > "$work/status-values"
 
     # `in_progress` is the one carve-out: each occurrence, quoted or not, must
     # be the anchored adoption write, so the counts have to agree.
     in_progress_writes=$(grep -cx 'in_progress' "$work/status-values" || true)
     adoption_writes=0
-    [ "$sf" != "$f" ] || adoption_writes=$(grep -oF -- "$ADOPTION_WRITE" "$sf" | grep -c . || true)
+    [ "$sf" != "$skill_md" ] || adoption_writes=$(grep -oF -- "$ADOPTION_WRITE" "$sf" | count_lines)
     [ "$in_progress_writes" -eq "$adoption_writes" ] ||
         fail "$sf: writes \`--status=in_progress\` $in_progress_writes time(s) but the anchored adoption write appears $adoption_writes time(s) (breaks R8: \`in_progress\` is a literal status flag in the status-guarded adoption write only, and anywhere else it writes a status the claim path owns)"
 
@@ -439,16 +453,16 @@ check_status_writes() { # scanned file
     # anchored above.
     flag_pattern="(^|[[:space:]])(--status[[:space:]]+|-s[[:space:]=]+)(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
     write_spans=$(grep -oE '`[^`]*`' "$sf" | grep -E -- "(^|[^[:alnum:]_])${BD_WORDS}(update|create|q)[[:space:]]" || true)
-    raw_flag_writes=$(printf '%s\n' "$write_spans" | grep -oE -- '(^|[[:space:]])(--status[[:space:]]|-s[[:space:]=])' | grep -c . || true)
+    raw_flag_writes=$(printf '%s\n' "$write_spans" | grep -oE -- '(^|[[:space:]])(--status[[:space:]]|-s[[:space:]=])' | count_lines)
     flag_matches=$(printf '%s\n' "$write_spans" | grep -oE -- "$flag_pattern" || true)
-    parsed_flag_writes=$(printf '%s\n' "$flag_matches" | grep -c . || true)
+    parsed_flag_writes=$(printf '%s\n' "$flag_matches" | count_lines)
     [ "$raw_flag_writes" -eq "$parsed_flag_writes" ] ||
         fail "$sf: $((raw_flag_writes - parsed_flag_writes)) \`--status X\` or \`-s X\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census, so the status it writes is never checked)"
     printf '%s\n' "$flag_matches" |
         sed -E -e 's/^[[:space:]]+//' -e 's/^(--status|-s)[[:space:]=]+/\1 /' > "$work/status-flag-writes"
     while read -r flag status; do
         [ -n "$flag" ] || continue
-        status=$(printf '%s\n' "$status" | sed -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/")
+        status=$(printf '%s\n' "$status" | unquote)
         case " $ALLOWED_STATUS_WRITES " in
             *" $status "*) ;;
             *) fail "$sf: writes \`$flag $status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking or closing an issue by a status flag the census reads overrides whoever reads that status next)" ;;
@@ -506,10 +520,10 @@ for f in "$@"; do
     phases=$(phase_values "$f")
     arms=$(recovery_arms "$f")
 
-    n_classify=$(printf '%s\n' "$classify" | grep -c . || true)
-    n_causes=$(printf '%s\n' "$causes" | grep -c . || true)
-    n_phases=$(printf '%s\n' "$phases" | grep -c . || true)
-    n_arms=$(printf '%s\n' "$arms" | grep -c . || true)
+    n_classify=$(printf '%s\n' "$classify" | count_lines)
+    n_causes=$(printf '%s\n' "$causes" | count_lines)
+    n_phases=$(printf '%s\n' "$phases" | count_lines)
+    n_arms=$(printf '%s\n' "$arms" | count_lines)
 
     # -----------------------------------------------------------------------
     # THE ANTI-VACUITY GUARD, before anything that iterates. Every check below
@@ -527,9 +541,9 @@ for f in "$@"; do
         fail "$f: THE RUN LEDGER's \`backlog_loop_phase\` row declares no phase value, so the RECOVERY arm census below would pass vacuously"
     [ "$n_arms" -gt 0 ] ||
         fail "$f: the RECOVERY block extracted no '- ' arm, so every RECOVERY check below would pass vacuously"
-    [ "$(disposition_rows "$f" | grep -c . || true)" -gt 0 ] ||
+    [ "$(disposition_rows "$f" | count_lines)" -gt 0 ] ||
         fail "$f: the LINKED PR DISPOSITION table did not parse -- no row matched under the '| linked PR state | action | charged | result |' header, so every R21 check below would pass vacuously"
-    [ "$(class_rows "$f" | grep -c . || true)" -gt 0 ] ||
+    [ "$(class_rows "$f" | count_lines)" -gt 0 ] ||
         fail "$f: the KEY CLASSES table did not parse -- no row matched under the '| class | members | unset by |' header, so every R23 check below would pass vacuously"
 
     # -----------------------------------------------------------------------
@@ -623,7 +637,7 @@ for f in "$@"; do
     # R1, first half. The parked rows outrank `abandoned-claim`.
     #
     # Compared as row NUMBERS rather than by file order, because the numbers
-    # are what the rationale block and three other sentences cite; a table
+    # are what references/rationale.md and three other sentences cite; a table
     # reordered without renumbering would satisfy a positional test and leave
     # every citation pointing at the wrong row.
     # -----------------------------------------------------------------------
@@ -639,7 +653,7 @@ for f in "$@"; do
     # still wedges the loop: a parked issue with an unmet dependency on ready
     # work is then classified `dep-blocked` and walked transitively into the
     # loop-responsible set, so no run can ever report the backlog clear. That
-    # is the rationale bullet at SKILL.md naming rows 9-11 above row 12, and
+    # is the CLASSIFY bullet in references/rationale.md naming rows 9-11 above row 12, and
     # this is the comparison that actually enforces it.
     # -----------------------------------------------------------------------
     depblocked=$(classify_row_number "$f" dep-blocked)
@@ -729,7 +743,7 @@ for f in "$@"; do
     adoption=$(grep '^ADOPTION\. ' "$f" || true)
     [ -n "$adoption" ] ||
         fail "$f: no 'ADOPTION.' paragraph (breaks R25: a parked PR has no single write that adopts it, so every entry point improvises one and two invocations can take the same PR)"
-    [ "$(grep -oF -- "$ADOPTION_WRITE" "$f" | grep -c . || true)" -eq 1 ] &&
+    [ "$(grep -oF -- "$ADOPTION_WRITE" "$f" | count_lines)" -eq 1 ] &&
         printf '%s\n' "$adoption" | grep -qF -- "$ADOPTION_WRITE" ||
         fail "$f: no ADOPTION write carries the --if-status blocked guard (breaks R25: an unguarded adoption lets two invocations both move the parked issue to in_progress and both merge-request the same PR; the write must appear exactly once, whole, inside the ADOPTION paragraph)"
     printf '%s\n' "$adoption" |
@@ -765,7 +779,7 @@ for f in "$@"; do
     # same way.
     # -----------------------------------------------------------------------
     while IFS= read -r sf; do
-        check_status_writes "$sf"
+        check_status_writes "$f" "$sf"
     done <<SCAN_FILES_END
 $scan_files
 SCAN_FILES_END
@@ -1030,8 +1044,8 @@ SCAN_FILES_END
     # proof. Collected from every `transient:<subtype>` token in the file, so a
     # value written by any step is seen wherever it is written.
     # -----------------------------------------------------------------------
-    ledger_heartbeat_row=$(sed -n '/^| key | written at | value |$/,/^$/p' "$f" | grep '^| `backlog_loop_heartbeat` |' || true)
-    cause_row=$(sed -n '/^| key | written at | value |$/,/^$/p' "$f" | grep '^| `backlog_loop_cause` |' || true)
+    ledger_heartbeat_row=$(ledger_row "$f" backlog_loop_heartbeat)
+    cause_row=$(ledger_row "$f" backlog_loop_cause)
     for cause in $(grep -oE -- 'transient:[a-z][a-z-]*' "$f" | LC_ALL=C sort -u) needs-person; do
         printf '%s\n' "$cause_row" | grep -qF -- "\`$cause\`" ||
             fail "$f: cause \`$cause\` is not declared in THE RUN LEDGER's \`backlog_loop_cause\` row (breaks R24: a cause the ledger does not list reaches no REOPEN PASS proof and no census reading)"
@@ -1055,7 +1069,7 @@ SCAN_FILES_END
     # today or it asserts nothing.
     # -----------------------------------------------------------------------
     blocked_writes=$(grep -oE -- '`[^`]*--status=blocked[^`]*`' "$f" || true)
-    [ "$(printf '%s\n' "$blocked_writes" | grep -c . || true)" -ge 3 ] ||
+    [ "$(printf '%s\n' "$blocked_writes" | count_lines)" -ge 3 ] ||
         fail "$f: found fewer than three literal --status=blocked writes (breaks R26: the step 6 park, the step 7 block, and the ADOPTION park-first write are the writes the heartbeat check below scans, so finding none would pass it vacuously)"
     printf '%s\n' "$blocked_writes" | grep -vF -- '--unset-metadata backlog_loop_heartbeat' > "$work/blocked-keep-heartbeat" || true
     [ ! -s "$work/blocked-keep-heartbeat" ] ||
@@ -1297,4 +1311,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written as a status flag including quoted, bd defer is never run, bd close runs only in step 7 and the RECOVERY verified arm, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, the invoking worktree is never switched, fast-forwarded, or built on, no text prunes worktrees repository-wide, and REAP removes only run-owned paths under <worktree-root>, and both goal prompts preserve the same terminal authority, state success as the census and leave the merge command to the skill"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, and every other rule above holds"

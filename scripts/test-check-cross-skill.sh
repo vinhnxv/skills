@@ -199,10 +199,34 @@ run_suite() {
     both_reference "a consumer reference file forges a legacy label write" "write site for author-only label 'audit-suppressed'" backlog-loop 'Run `bd update <id> --add-label audit-suppressed`.'
     both_reference "a writer reference file records a consumer key in prose" "reserved to 'backlog-loop'" source-to-beads 'Also record metadata key `backlog_loop_run` on each created issue.'
 
+    # Anchors the cases above leave out: each mutates one literal in place so
+    # that only the rule under test can fire.
+    both_replace "writer loses legacy evidence comparison" "source-to-beads: .*missing legacy evidence comparison" source-to-beads 'legacy issue' 'older issue'
+    # Every spelling of read-back goes, so the case-insensitive anchor has no match left.
+    for host in claude codex; do
+        t=$(fresh_tree)
+        replace_all "$t" "skills/$host/source-to-beads/SKILL.md" 'read-back' 'verification'
+        replace_all "$t" "skills/$host/source-to-beads/SKILL.md" 'Read back' 'Verify'
+        replace_all "$t" "skills/$host/source-to-beads/SKILL.md" 'read back' 'verify'
+        expect_fail "writer loses the tracker read-back contract ($host)" "source-to-beads: .*missing tracker read-back contract" "$t" "$host"
+    done
+    both_replace "consumer loses the loop-responsible set" "backlog-loop: .*missing LOOP-RESPONSIBLE SET" backlog-loop 'LOOP-RESPONSIBLE SET' 'LOOP-OWNED SET'
+    both_replace "consumer lists deferred in the loop-responsible set" "backlog-loop: .*includes deferred in LOOP-RESPONSIBLE SET" backlog-loop 'LOOP-RESPONSIBLE SET. Exactly five categories' 'LOOP-RESPONSIBLE SET (`deferred`). Exactly five categories'
+    both_replace "consumer loses the claim marker" "backlog-loop: .*missing claim marker" backlog-loop 'backlog_loop_run' 'backlog_loop_claim'
+    both_replace "consumer loses the author-only adoption signal" "backlog-loop: .*missing author-only adoption signal" backlog-loop 'hard-blocker' 'hard blocker'
+    # The one case that spans both hosts: a key survives in either copy, so the
+    # guard fires only when every skill in every host stops naming one. Models a
+    # bd flag rename applied tree-wide, with the prose keys no longer in code spans.
+    t=$(fresh_tree)
+    find "$t/skills" -name '*.md' | while IFS= read -r f; do
+        sed -E -e 's/--set-metadata/--set-meta/g' -e 's/--metadata/--meta/g' -e 's/^\| key \|/| name |/' -e 's/`((backlog_loop|source_to_beads)_[a-z0-9_]+)`/\1/g' "$f" > "$f.new"
+        mv "$f.new" "$f"
+    done
+    expect_fail "no skill names a metadata key" "no metadata key was harvested from any skill" "$t"
+
     return 0
 }
 echo "Running suite against $checker"
-failures=0
 run_suite "$checker"
 failures="$misses"
 real_cases="$cases"
