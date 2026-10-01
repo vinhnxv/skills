@@ -159,6 +159,15 @@ run_suite() {
     replace_all "$t" "$CONSUMER" 'issue_type` is `gate`' 'issue_type` is `blocker`'
     expect_fail "consumer loses native gate type" "no longer recognizes native gate issues" "$t"
 
+    # Producer contract (R18): the loop keeps recognizing a gate a person
+    # reserved and never repairs or decides it; the writer files that form.
+    both_replace "consumer loses the human-gate label" "backlog-loop: .*no longer recognizes the human-gate label" backlog-loop 'carries the `human-gate` label, or' 'carries the `person-gate` label, or'
+    both_replace "consumer repairs native gate edges" "backlog-loop: .*no longer exempts native gate edges from gate repair" backlog-loop 'A native gate (`issue_type=gate`) is NEVER repaired or quarantined: its blocking edge is declared by construction, so every edge a producer such as `source-to-beads` writes on one stands.' 'A native gate (`issue_type=gate`) is repaired like any other gate.'
+    both_replace "consumer treats any decision as owner-decision" "backlog-loop: .*no longer limits owner-decision issues to a decision that grants the choice" backlog-loop 'an issue is one only when its `issue_type` is `decision` and its body says the loop may choose' 'an issue is one when its body asks for a product or design call'
+    both_replace "consumer decides a reserved question" "backlog-loop: .*no longer reports a decision it may not choose as needs-person" backlog-loop 'Any other `decision` issue is a person'"'"'s question, however it reads: never pick an option for it, never batch it, and open no PR for it.' 'Pick the recommended option for any other decision issue too.'
+    both_replace "writer loses the native gate form" "source-to-beads: .*missing native gate form for hard-blockers" source-to-beads 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`: `backlog-loop` declares a native gate'"'"'s edges by construction, so no `hard-blocker` label is needed.' 'File a hard-blocker as an ordinary issue.'
+    both_replace "writer loses the agent-decidable decision form" "source-to-beads: .*missing agent-decidable decision form" source-to-beads 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.' 'Keep a technical choice a decision issue.'
+
     both_replace "audit loses the handoff section" "repo-audit: .*missing worktree handoff section" repo-audit '## Worktree handoff' '## Worktree notes'
     both_replace "writer loses the handoff section" "source-to-beads: .*missing worktree handoff section" source-to-beads 'Worktree handoff' 'Worktree notes'
     both_replace "audit loses root resolution" "repo-audit: .*missing handoff root resolution" repo-audit 'Resolve `<root>` as the first `worktree` entry of `git worktree list --porcelain`' 'Resolve the root somehow'

@@ -68,6 +68,8 @@ for f in $writer_copies; do
     grep -qF 'with no parent and no dependency on agent work' "$f" || fail "source-to-beads: $f missing standalone human-gate contract"
     grep -qF 'unless no agent work can run' "$f" || fail "source-to-beads: $f missing hard-blocker exception"
     grep -qi 'read.back' "$f" || fail "source-to-beads: $f missing tracker read-back contract"
+    grep -qF 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`: `backlog-loop` declares a native gate'"'"'s edges by construction, so no `hard-blocker` label is needed.' "$f" || fail "source-to-beads: $f missing native gate form for hard-blockers"
+    grep -qF 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.' "$f" || fail "source-to-beads: $f missing agent-decidable decision form"
 done
 
 # Worktree handoff: both skills carry one procedure, print the remove command
@@ -156,6 +158,10 @@ for f in $consumer_copies; do
     [ -n "$responsible" ] || fail "backlog-loop: $f missing LOOP-RESPONSIBLE SET"
     sed -n "${responsible}p" "$f" | grep -q '`deferred`' && fail "backlog-loop: $f includes deferred in LOOP-RESPONSIBLE SET"
     grep -q 'issue_type` is `gate`' "$f" || fail "backlog-loop: $f no longer recognizes native gate issues"
+    grep -qF 'carries the `human-gate` label, or' "$f" || fail "backlog-loop: $f no longer recognizes the human-gate label"
+    grep -qF 'A native gate (`issue_type=gate`) is NEVER repaired or quarantined: its blocking edge is declared by construction, so every edge a producer such as `source-to-beads` writes on one stands.' "$f" || fail "backlog-loop: $f no longer exempts native gate edges from gate repair"
+    grep -qF 'an issue is one only when its `issue_type` is `decision` and its body says the loop may choose' "$f" || fail "backlog-loop: $f no longer limits owner-decision issues to a decision that grants the choice"
+    grep -qF 'Any other `decision` issue is a person'"'"'s question, however it reads: never pick an option for it, never batch it, and open no PR for it.' "$f" || fail "backlog-loop: $f no longer reports a decision it may not choose as needs-person"
     grep -qF 'backlog_loop_run' "$f" || fail "backlog-loop: $f missing claim marker"
     grep -qF 'hard-blocker' "$f" || fail "backlog-loop: $f missing author-only adoption signal"
 done
