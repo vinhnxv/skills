@@ -649,6 +649,77 @@ export_of "$ad" "$work/export.ad.after"
     && pass "a second adopter is refused and writes nothing, so two runs never hold one parked PR" \
     || fail "a second adoption of the same parked issue: exit $rc, or the store changed"
 
+# RECOVERY parks a dead run's in_progress member before adopting it. The
+# status guard must refuse a member another invocation or person moved first,
+# without overwriting that decision or clearing its heartbeat.
+park_store=$(fresh_store)
+park_issue=$(bd -C "$park_store" create "dead-run member awaiting adoption" --silent)
+bd -C "$park_store" update "$park_issue" --status=in_progress \
+    --set-metadata backlog_loop_run=OLD-RUN \
+    --set-metadata "backlog_loop_heartbeat=$(iso_ago 60) | live" >/dev/null
+rc=$(status_of bd -C "$park_store" update "$park_issue" --if-status in_progress --status=blocked \
+    --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open)
+[ "$rc" -eq 0 ] && [ "$(field_of "$park_store" "$park_issue" status)" = blocked ] \
+    && [ -z "$(meta_of "$park_store" "$park_issue" backlog_loop_heartbeat)" ] \
+    && [ "$(meta_of "$park_store" "$park_issue" backlog_loop_cause)" = transient:pr-open ] \
+    && pass "ADOPTION's guarded park succeeds for an in_progress member and clears its heartbeat" \
+    || fail "ADOPTION's matching park: exit $rc, wrong status/cause, or the heartbeat survived"
+bd -C "$park_store" update "$park_issue" --status=deferred \
+    --set-metadata "backlog_loop_heartbeat=$(iso_ago 60) | live" \
+    --append-notes "a person deferred this member before adoption" >/dev/null
+export_of "$park_store" "$work/export.park.before"
+rc=$(status_of bd -C "$park_store" update "$park_issue" --if-status in_progress --status=blocked \
+    --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open)
+export_of "$park_store" "$work/export.park.after"
+[ "$rc" -eq 13 ] && cmp -s "$work/export.park.before" "$work/export.park.after" \
+    && [ "$(field_of "$park_store" "$park_issue" status)" = deferred ] \
+    && [ -n "$(meta_of "$park_store" "$park_issue" backlog_loop_heartbeat)" ] \
+    && pass "ADOPTION's park exits 13 with export unchanged after the member moves to deferred" \
+    || fail "ADOPTION's stale park: exit $rc, export changed, or deferred status/heartbeat was overwritten"
+
+# A person-closed PR releases RUN and FORGE-LINK keys but leaves the durable
+# needs-person cause and the first note line. These are the stored fields row 6
+# and REPORT consume; classification itself remains owned by the skill.
+release_store=$(fresh_store)
+release_issue=$(bd -C "$release_store" create "pull request closed by a person" --silent)
+bd -C "$release_store" update "$release_issue" --status=in_progress \
+    --set-metadata backlog_loop_run=OLD-RUN \
+    --set-metadata "backlog_loop_heartbeat=$(iso_ago 60) | live" \
+    --set-metadata backlog_loop_phase=pr-open \
+    --set-metadata backlog_loop_trunk_ci=on --set-metadata backlog_loop_ci=on \
+    --set-metadata backlog_loop_base=base-sha \
+    --set-metadata backlog_loop_worktrees=/tmp/released-run \
+    --set-metadata backlog_loop_branch=old-branch --set-metadata backlog_loop_head=head-sha \
+    --set-metadata backlog_loop_pr=https://example.com/pull/1 \
+    --set-metadata backlog_loop_merge=merge-sha \
+    --set-metadata backlog_loop_postmerge_ci=pending \
+    --set-metadata backlog_loop_gate_receipt=head-sha@base-sha@gates >/dev/null
+release_note='person closed PR: https://example.com/pull/1
+A person decides whether to reopen the issue.'
+bd -C "$release_store" update "$release_issue" --status=blocked \
+    --set-metadata backlog_loop_cause=needs-person \
+    --unset-metadata backlog_loop_run --unset-metadata backlog_loop_heartbeat \
+    --unset-metadata backlog_loop_phase --unset-metadata backlog_loop_trunk_ci \
+    --unset-metadata backlog_loop_ci --unset-metadata backlog_loop_base \
+    --unset-metadata backlog_loop_worktrees --unset-metadata backlog_loop_compose_projects \
+    --unset-metadata backlog_loop_branch --unset-metadata backlog_loop_head \
+    --unset-metadata backlog_loop_pr --unset-metadata backlog_loop_merge \
+    --unset-metadata backlog_loop_postmerge_ci --unset-metadata backlog_loop_gate_receipt \
+    --append-notes "$release_note" >/dev/null
+release_first_line=$(field_of "$release_store" "$release_issue" notes | sed -n '1p')
+[ "$(field_of "$release_store" "$release_issue" status)" = blocked ] \
+    && [ "$(meta_of "$release_store" "$release_issue" backlog_loop_cause)" = needs-person ] \
+    && [ "$release_first_line" = 'person closed PR: https://example.com/pull/1' ] \
+    && pass "person-close release preserves blocked needs-person and the first note line for row 6 and REPORT" \
+    || fail "person-close release changed the blocked status, needs-person cause, or first note line"
+release_keys_left=$(bd -C "$release_store" show "$release_issue" --json | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+keys="backlog_loop_run backlog_loop_heartbeat backlog_loop_phase backlog_loop_trunk_ci backlog_loop_ci backlog_loop_base backlog_loop_worktrees backlog_loop_compose_projects backlog_loop_branch backlog_loop_head backlog_loop_pr backlog_loop_merge backlog_loop_postmerge_ci backlog_loop_gate_receipt".split()
+print(" ".join(k for k in keys if k in (r.get("metadata") or {})))')
+[ -z "$release_keys_left" ] \
+    && pass "person-close release removes every RUN and FORGE-LINK key, including the run marker" \
+    || fail "person-close release left RUN or FORGE-LINK keys: $release_keys_left"
+
 # `bd ready` stops at 100 rows unless told otherwise, which silently truncates a
 # large backlog. One import seeds the 102 issues that make that visible. The ids
 # are explicit: batch creation draws random three-character ids, and at this
@@ -901,6 +972,14 @@ c1_block=$(bd -C "$c1" create "left blocked by an earlier run" --silent)
 # written for, and it is recognized from the ABSENCE of both fields -- never
 # from the note, which a person may have written and which no query can trust.
 c1_legacy=$(bd -C "$c1" create "blocked by a loop that recorded only a note" --silent)
+c1_person=$(bd -C "$c1" create "pull request closed by a person" --silent)
+c1_transient=$(bd -C "$c1" create "open pull request awaiting checks" --silent)
+bd -C "$c1" update "$c1_person" --status=blocked \
+    --set-metadata backlog_loop_cause=needs-person \
+    --append-notes "person closed PR: https://example.com/pull/1" >/dev/null
+bd -C "$c1" update "$c1_transient" --status=blocked \
+    --set-metadata backlog_loop_run=OLD-RUN \
+    --set-metadata backlog_loop_cause=transient:pr-open >/dev/null
 bd -C "$c1" dep "$c1_gate" --blocks "$c1_dep" >/dev/null
 bd -C "$c1" update "$c1_legacy" --status=blocked \
     --append-notes "backlog-loop cannot ship this unit: release-boundary conflict" >/dev/null
@@ -919,15 +998,26 @@ if census_usable "$out"; then
     expect_category "$out" "$c1_legacy" legacy-blocked \
         "a blocked issue with no marker and no edge is legacy, not dependency-blocked"
 
+    expect_category "$out" "$c1_person" self-blocked-needs-person \
+        "a person-closed PR released without RUN keys still waits on a person"
+    expect_category "$out" "$c1_transient" self-blocked-transient \
+        "a run-marked transient PR block remains transient"
+    printf '%s\n' "$out" | grep -qE "^census +$c1_person +\| +self-blocked-needs-person +\| +needs-person([[:space:]]|$)" \
+        && pass "the released person-close retains cause needs-person" \
+        || fail "the released person-close lost its needs-person cause"
+    printf '%s\n' "$out" | grep -qE "^census +$c1_legacy +\| +legacy-blocked +\| +no-marker-no-edge([[:space:]]|$)" \
+        && pass "a no-run no-cause block retains the legacy cause" \
+        || fail "the no-run no-cause legacy block has the wrong cause"
+
     # Count the data shape, not the word "census": the header is prose the
     # model composes, and a counter that merely looks for a prefix reports one
     # issue too many the moment that wording drifts. Naming the categories
     # makes the count independent of the header entirely, and makes this line
     # fail loudly if the procedure ever renames one.
     emitted=$(printf '%s\n' "$out" | grep -cE "^census +[^ |]+ +\\| +($CATEGORIES) +\\|" || true)
-    [ "$emitted" -eq 6 ] \
+    [ "$emitted" -eq 8 ] \
         && pass "exactly one line per non-closed non-epic issue" \
-        || fail "expected 6 census lines, got $emitted"
+        || fail "expected 8 census lines, got $emitted"
 fi
 
 echo "  case: a native gate is a gate and is never repaired"

@@ -38,55 +38,68 @@ sys.stdout.write(s.replace(c, "", 1))
 PY
 }
 
+requirements() {
+    cat <<'REQUIREMENTS'
+brainstorm or requirements
+implementation plan
+audit report
+cited research
+current session
+bd prime
+bd ready
+bd list --all --include-gates --limit 0 --json
+source_to_beads_key
+source_to_beads_source
+repo_audit_fingerprint
+both open and closed issues
+stable `RA-` finding ID
+bd show <id> --json
+[HUMAN]
+human-gate
+no parent
+Do not run `backlog-loop`
+Revalidate every audit finding against the default-branch tip, never the checked-out branch.
+run `git fetch <remote> refs/heads/<default>`, which updates only the remote-tracking ref and touches no worktree or local branch
+Read the cited evidence with `git show <tip>:<path>`
+Defer a finding, and say so in the receipt, only when the fetch fails.
+Evidence that exists only on the checked-out branch defers unless the operator opted in to branch-only evidence
+Refuse a refuted finding: when the tip no longer shows the cited defect, file nothing
+File a finding that cannot be evaluated only as a `spike` with action kind `verify`.
+Record `revalidated-at: <tip sha>` in the body of every finding filed.
+A `disagree` or `correct` verdict in a companion `docs/audits/<run-id>-review-*.md` file defers the finding or turns it into a verification task.
+s2b1|<repo-id>|<anchor>|<action-kind>[|<n>]
+`git@GitHub.com:Org/Repo.git` and `https://github.com/Org/Repo` both give `github.com/org/repo`
+fall back to the root commit SHA when there is no origin
+Assert that each metadata key name matches `^[a-z_][a-z0-9_]*$` before create.
+Create each issue with `--id <prefix>-s<first 8 hex of sha256(key)>`
+a duplicate id is refused even with `--force`
+--if-assignee '' --if-status open
+exit 13 means the issue was claimed or left `open`
+File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`
+Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.
+An ambiguous match defers that candidate only
+stop tracker writes only when the listing itself is incomplete
+Pass `--no-inherit-labels` on a child that sets explicit labels.
+List every gate filed with how to resolve it: `bd gate resolve <id>`.
+Run reconcile mode only when the operator asks to reconcile issues already filed
+Never read an earlier result note as a verdict
+--append-notes <note> --if-assignee '' --if-status open
+Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`
+Resolve `<remote>` in this order: the remote of the current branch's upstream, else `origin`, else the only remote. When there is no remote, or several remotes with no upstream and none named `origin`, record `Remote: unresolved` and record the tip probes as `unresolved`.
+Read `<remote>` from the audit report's `Remote` header when the source is an audit report whose header names a remote; otherwise use the following resolution rule.
+A legacy `repo-audit-report/v1` report with no `Remote` header, or a header that reads `unresolved`, uses that rule too, and the receipt says the remote was derived during revalidation.
+REQUIREMENTS
+    printf '%s\n' "$close_clause"
+}
+
 check() {
     file=$1
     [ -f "$file" ] || fail "missing $file"
-    require "$file" 'brainstorm or requirements'
-    require "$file" 'implementation plan'
-    require "$file" 'audit report'
-    require "$file" 'cited research'
-    require "$file" 'current session'
-    require "$file" 'bd prime'
-    require "$file" 'bd ready'
-    require "$file" 'bd list --all --include-gates --limit 0 --json'
-    require "$file" 'source_to_beads_key'
-    require "$file" 'source_to_beads_source'
-    require "$file" 'repo_audit_fingerprint'
-    require "$file" 'both open and closed issues'
-    require "$file" 'stable `RA-` finding ID'
-    require "$file" 'bd show <id> --json'
-    require "$file" '[HUMAN]'
-    require "$file" 'human-gate'
-    require "$file" 'no parent'
-    require "$file" 'Do not run `backlog-loop`'
-    require "$file" 'Revalidate every audit finding against the default-branch tip, never the checked-out branch.'
-    require "$file" 'run `git fetch <remote> refs/heads/<default>`, which updates only the remote-tracking ref and touches no worktree or local branch'
-    require "$file" 'Read the cited evidence with `git show <tip>:<path>`'
-    require "$file" 'Defer a finding, and say so in the receipt, only when the fetch fails.'
-    require "$file" 'Evidence that exists only on the checked-out branch defers unless the operator opted in to branch-only evidence'
-    require "$file" 'Refuse a refuted finding: when the tip no longer shows the cited defect, file nothing'
-    require "$file" 'File a finding that cannot be evaluated only as a `spike` with action kind `verify`.'
-    require "$file" 'Record `revalidated-at: <tip sha>` in the body of every finding filed.'
-    require "$file" 'A `disagree` or `correct` verdict in a companion `docs/audits/<run-id>-review-*.md` file defers the finding or turns it into a verification task.'
-    require "$file" 's2b1|<repo-id>|<anchor>|<action-kind>[|<n>]'
-    require "$file" '`git@GitHub.com:Org/Repo.git` and `https://github.com/Org/Repo` both give `github.com/org/repo`'
-    require "$file" 'fall back to the root commit SHA when there is no origin'
-    require "$file" 'Assert that each metadata key name matches `^[a-z_][a-z0-9_]*$` before create.'
-    require "$file" 'Create each issue with `--id <prefix>-s<first 8 hex of sha256(key)>`'
-    require "$file" 'a duplicate id is refused even with `--force`'
-    require "$file" "--if-assignee '' --if-status open"
-    require "$file" 'exit 13 means the issue was claimed or left `open`'
-    require "$file" 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`'
-    require "$file" 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.'
-    require "$file" 'An ambiguous match defers that candidate only'
-    require "$file" 'stop tracker writes only when the listing itself is incomplete'
-    require "$file" 'Pass `--no-inherit-labels` on a child that sets explicit labels.'
-    require "$file" 'List every gate filed with how to resolve it: `bd gate resolve <id>`.'
-    require "$file" 'Run reconcile mode only when the operator asks to reconcile issues already filed'
-    require "$file" 'Never read an earlier result note as a verdict'
-    require "$file" "--append-notes <note> --if-assignee '' --if-status open"
-    require "$file" 'Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`'
-    require "$file" "$close_clause"
+    while IFS= read -r clause; do
+        require "$file" "$clause"
+    done <<REQUIREMENTS
+$(requirements)
+REQUIREMENTS
     rest=$(outside_clause "$file" "$close_clause") || fail "$file lacks exactly one reconcile close clause"
     if printf '%s\n' "$rest" | grep -Eq "$closure_pattern"; then
         fail "$file closes or reopens an issue outside the reconcile confirmation clause"
@@ -103,13 +116,6 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/source-to-beads-contract.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT HUP TERM
 
-# Delete every line holding the literal; fail the case when none does, so a
-# reworded anchor cannot leave a case silently testing nothing.
-drop_line() {
-    grep -Fq -- "$2" "$1" || fail "test bug: $1 has no line with $2"
-    grep -Fv -- "$2" "$1" > "$1.new"
-    mv "$1.new" "$1"
-}
 # Replace one literal with another inside a copy.
 mutate() {
     OLD=$2 NEW=$3 python3 - "$1" <<'PY'
@@ -127,7 +133,7 @@ PY
 cases=0
 misses=0
 run_case() {
-    # $1 checker, $2 case name, $3 mutation kind, $4 literal, $5 replacement
+    # $1 checker, $2 case name, $3 mutation kind, $4 literal, $5 replacement, $6 expected reason
     for host in claude codex; do
         cases=$((cases + 1))
         src="$root/skills/$host/source-to-beads/SKILL.md"
@@ -136,10 +142,12 @@ run_case() {
             drop) mutate "$tmp/SKILL.md" "$4" "" ;;
             replace) mutate "$tmp/SKILL.md" "$4" "$5" ;;
             append) printf '%s\n' "$4" >> "$tmp/SKILL.md" ;;
-            delete-line) drop_line "$tmp/SKILL.md" "$4" ;;
         esac
-        if ("$1" "$tmp/SKILL.md") >/dev/null 2>&1; then
+        if out=$("$1" "$tmp/SKILL.md" 2>&1); then
             [ "$1" = check_control ] || echo "  MISS: $2 ($host)" >&2
+            misses=$((misses + 1))
+        elif ! printf '%s\n' "$out" | grep -Fq -- "$6"; then
+            echo "  WRONG REASON: $2 ($host)" >&2
             misses=$((misses + 1))
         fi
     done
@@ -149,50 +157,34 @@ run_cases() {
     checker=$1
     cases=0
     misses=0
-    run_case "$checker" "metadata key deletion" delete-line 'source_to_beads_key'
-    run_case "$checker" "issue closure outside the clause" append 'bd close example'
-    run_case "$checker" "issue reopening" append 'bd reopen example'
-    run_case "$checker" "issue closure behind a directory option" append 'bd -C . close example'
-    run_case "$checker" "issue reopening behind a directory option" append 'bd -C /tmp/example reopen example'
-    run_case "$checker" "issue closure behind a quiet option" append 'bd -q close example'
-    run_case "$checker" "closed status written by long flag" append 'bd update example --status closed'
-    run_case "$checker" "closed status written by long flag with equals" append 'bd update example --status=closed'
-    run_case "$checker" "closed status written by short flag" append 'bd update example -s closed'
-    run_case "$checker" "closed status written by quoted flag value" append 'bd update example --status "closed"'
-    run_case "$checker" "directory-option close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd -C . close example\`."
-    run_case "$checker" "close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd close example\`."
-    run_case "$checker" "second copy of the confirmation clause" append "$close_clause"
-    run_case "$checker" "confirmation clause removed" drop "$close_clause"
-    run_case "$checker" "confirmation requirement removed" replace 'only after the operator confirms the close-candidate list' 'without asking the operator'
-    run_case "$checker" "close limited to issues this skill created" replace 'and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`)' 'and any issue'
-    run_case "$checker" "reconcile runs only on request" drop 'Run reconcile mode only when the operator asks to reconcile issues already filed'
-    run_case "$checker" "result note is never a verdict" drop 'Never read an earlier result note as a verdict'
-    run_case "$checker" "status-guarded result note" drop "--append-notes <note> --if-assignee '' --if-status open"
-    run_case "$checker" "legacy and foreign issues untouched" drop 'Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`'
-    run_case "$checker" "default-tip revalidation sentence" drop 'Revalidate every audit finding against the default-branch tip, never the checked-out branch.'
-    run_case "$checker" "fetch that touches only the remote-tracking ref" drop 'which updates only the remote-tracking ref and touches no worktree or local branch'
-    run_case "$checker" "evidence read from the tip object" drop 'Read the cited evidence with `git show <tip>:<path>`'
-    run_case "$checker" "fetch-failure-only deferral" drop 'Defer a finding, and say so in the receipt, only when the fetch fails.'
-    run_case "$checker" "branch-only evidence deferral" drop 'Evidence that exists only on the checked-out branch defers unless the operator opted in to branch-only evidence'
-    run_case "$checker" "refuted findings refused" drop 'Refuse a refuted finding: when the tip no longer shows the cited defect, file nothing'
-    run_case "$checker" "unevaluable findings only as verification spikes" drop 'File a finding that cannot be evaluated only as a `spike` with action kind `verify`.'
-    run_case "$checker" "revalidated-at record" drop 'Record `revalidated-at: <tip sha>` in the body of every finding filed.'
-    run_case "$checker" "companion review verdicts" drop 'A `disagree` or `correct` verdict in a companion `docs/audits/<run-id>-review-*.md` file defers the finding or turns it into a verification task.'
-    run_case "$checker" "key grammar" drop 's2b1|<repo-id>|<anchor>|<action-kind>[|<n>]'
-    run_case "$checker" "ssh and https repo-id equivalence example" drop '`git@GitHub.com:Org/Repo.git` and `https://github.com/Org/Repo` both give `github.com/org/repo`'
-    run_case "$checker" "root commit fallback" drop 'fall back to the root commit SHA when there is no origin'
-    run_case "$checker" "metadata key name assertion" drop 'Assert that each metadata key name matches `^[a-z_][a-z0-9_]*$` before create.'
-    run_case "$checker" "deterministic id create" drop 'Create each issue with `--id <prefix>-s<first 8 hex of sha256(key)>`'
-    run_case "$checker" "duplicate id means reuse" drop 'a duplicate id is refused even with `--force`'
-    run_case "$checker" "status-guarded update" drop "--if-assignee '' --if-status open"
-    run_case "$checker" "exit 13 defers" drop 'exit 13 means the issue was claimed or left `open`'
-    run_case "$checker" "native gate form" drop 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`'
-    run_case "$checker" "agent-decidable decision issue" drop 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.'
-    run_case "$checker" "ambiguous match defers one candidate" drop 'An ambiguous match defers that candidate only'
-    run_case "$checker" "global stop only for an incomplete listing" drop 'stop tracker writes only when the listing itself is incomplete'
-    run_case "$checker" "no-inherit-labels" drop 'Pass `--no-inherit-labels` on a child that sets explicit labels.'
-    run_case "$checker" "receipt gate resolution" drop 'List every gate filed with how to resolve it: `bd gate resolve <id>`.'
+    while IFS= read -r clause; do
+        run_case "$checker" "requirement deletion: $clause" drop "$clause" '' "lacks $clause"
+    done <<REQUIREMENTS
+$(requirements)
+REQUIREMENTS
+    run_case "$checker" "issue closure outside the clause" append 'bd close example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "issue reopening" append 'bd reopen example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "issue closure behind a directory option" append 'bd -C . close example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "issue reopening behind a directory option" append 'bd -C /tmp/example reopen example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "issue closure behind a quiet option" append 'bd -q close example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "closed status written by long flag" append 'bd update example --status closed' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "closed status written by long flag with equals" append 'bd update example --status=closed' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "closed status written by short flag" append 'bd update example -s closed' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "closed status written by quoted flag value" append 'bd update example --status "closed"' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "directory-option close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd -C . close example\`." 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "close trailing the confirmation clause" replace "$close_clause" "$close_clause Then run \`bd close example\`." 'closes or reopens an issue outside the reconcile confirmation clause'
+    run_case "$checker" "second copy of the confirmation clause" append "$close_clause" '' 'lacks exactly one reconcile close clause'
+    run_case "$checker" "confirmation clause removed" drop "$close_clause" '' "lacks $close_clause"
+    run_case "$checker" "confirmation requirement removed" replace 'only after the operator confirms the close-candidate list' 'without asking the operator' "lacks $close_clause"
+    run_case "$checker" "close limited to issues this skill created" replace 'and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`)' 'and any issue' "lacks $close_clause"
+    run_case "$checker" "status-guarded result note" drop "--append-notes <note> --if-assignee '' --if-status open" '' 'lacks --append-notes <note> --if-assignee '"'"''"'"' --if-status open'
+    run_case "$checker" "fetch that touches only the remote-tracking ref" drop 'which updates only the remote-tracking ref and touches no worktree or local branch' '' 'lacks run `git fetch <remote> refs/heads/<default>`, which updates only the remote-tracking ref and touches no worktree or local branch'
+    run_case "$checker" "status-guarded update" drop "--if-assignee '' --if-status open" '' 'lacks --if-assignee '"'"''"'"' --if-status open'
 }
+
+check_unrelated() { echo 'FAIL: deliberately unrelated reason' >&2; return 1; }
+run_case check_unrelated 'unrelated-reason probe' append 'bd close example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
+[ "$misses" -eq 2 ] || fail 'the unrelated-reason probe did not miss both hosts'
 
 run_cases check
 [ "$misses" -eq 0 ] || fail "$misses of $cases break cases escaped the contract check"

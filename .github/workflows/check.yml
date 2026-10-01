@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 15
     env:
       CLAUDE_CODE_VERSION: 2.1.286
+      # Pins the wrapper tarball; its optional platform packages remain unpinned.
+      CLAUDE_CODE_INTEGRITY: sha512-5UNEDKy2znv81PWqNqgPJO4qPqH5NRenh52XTtx2tT5Q6xIxjI1q0RyucY+AUHMABImzDOlh6ztuj4qNiAaRvA==
     steps:
       # Third-party actions are pinned to a full commit SHA, the version in the
       # trailing comment. A tag can be moved after the fact; a SHA cannot.
@@ -73,7 +75,12 @@ jobs:
         run: |
           set -eu
           prefix="$RUNNER_TEMP/claude-cli"
-          npm install --global --prefix "$prefix" "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+          pack_dir=$(mktemp -d "$RUNNER_TEMP/claude-pack.XXXXXX")
+          trap 'rm -rf "$pack_dir"' EXIT
+          tarball=$(npm pack "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" --pack-destination "$pack_dir" --silent)
+          integrity="sha512-$(openssl dgst -sha512 -binary "$pack_dir/$tarball" | openssl base64 -A)"
+          [ "$integrity" = "$CLAUDE_CODE_INTEGRITY" ] || { echo "claude tarball integrity mismatch" >&2; exit 1; }
+          npm install --global --prefix "$prefix" "$pack_dir/$tarball"
           echo "$prefix/bin" >> "$GITHUB_PATH"
 
       # The validator only scans one level below a directory literally named

@@ -169,3 +169,8 @@ This is the rationale of this skill, not of LFG: the `references/` files LFG own
 - **Previous run's block must still appear.** Scoping the report to the current run is what let a restart report a backlog cleared over work an earlier run failed to land.
 - **Both flags are load-bearing.** `bd list` hides closed issues unless `--all` is passed and returns at most 50 rows unless `--limit 0` is, so the plain form omits precisely the members a successful run has just closed.
 - **Scope of the report.** An unscoped report covering every marker ever written grows without bound.
+
+## RESIDUAL RECOVERY AND MERGE RULES
+
+- **CLAIM records ownership.** I1 creates the trunk worktree and fixes `<worktree-root>` before CLAIM. A crash between I1 and CLAIM claimed no members and leaves an unowned empty root. RECOVERY never sweeps roots no ledger names, because their ownership cannot be proved. CLAIM records the root on every claimed member; the first CLEAN-TREE GATE RUN rewrites it idempotently.
+- **Optional checks can be unavailable.** Optional `startup_failure` and billing or quota errors count as missing on purpose. A stricter reading would block every merge when Actions quota is exhausted even though the complete exact-head local gates pass. Completed optional failures of other kinds still block.
