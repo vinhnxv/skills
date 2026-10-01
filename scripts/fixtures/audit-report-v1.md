@@ -12,6 +12,7 @@ Warning: the remote default tip is 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21 and 
 - Repository: example.com/acme/widget-service
 - Base SHA: 4be07a19c3d8f5e2a61b9047cd3e8f12a5b6c7d0
 - Branch: audit/widget-service
+- Remote: origin
 - Remote default tip: 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21
 - Behind: 3
 - Off default branch: no

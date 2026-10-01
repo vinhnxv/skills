@@ -131,10 +131,12 @@ done
 
 # Worktree handoff: both skills carry one procedure, print the remove command
 # only behind the safety verdict, and never run a worktree removal themselves.
+remote_resolution='Resolve `<remote>` in this order: the remote of the current branch'"'"'s upstream, else `origin`, else the only remote. When there is no remote, or several remotes with no upstream and none named `origin`, record `Remote: unresolved` and record the tip probes as `unresolved`.'
+handoff_main='In a main checkout print the verdict `not applicable (main checkout)`, with the copy marked not needed and no remove command, because the root checkout is not a removable worktree.'
 handoff_root='Resolve `<root>` as the first `worktree` entry of `git worktree list --porcelain`'
 handoff_copy='compare the sha256 of each copy with its source'
 handoff_sidecar='makes the verdict `not safe to delete`, names the worktree path of the sidecar, and suppresses the remove command'
-handoff_print='When the verdict is `safe to delete`, print the literal `git worktree remove <worktree>` command for the operator to run.'
+handoff_print='Only when the checkout is a linked worktree and the verdict is `safe to delete`, print the literal `git worktree remove <worktree>` command for the operator to run.'
 handoff_never='Never run `git worktree remove` or `git worktree prune`; removal belongs to the operator.'
 without_allowed_worktree_commands() {
     awk -v a="$handoff_print" -v b="$handoff_never" '
@@ -149,6 +151,8 @@ for pair in "repo-audit:$audit_copies" "source-to-beads:$writer_copies"; do
     skill=${pair%%:*}
     for f in ${pair#*:}; do
         grep -qE '^## .*Worktree handoff$' "$f" || fail "$skill: $f missing worktree handoff section"
+        grep -qF -- "$remote_resolution" "$f" || fail "$skill: $f missing shared remote resolution"
+        grep -qF -- "$handoff_main" "$f" || fail "$skill: $f missing main-checkout verdict"
         grep -qF -- "$handoff_root" "$f" || fail "$skill: $f missing handoff root resolution"
         grep -qF -- "$handoff_copy" "$f" || fail "$skill: $f missing handoff copy verification"
         grep -qF -- "$handoff_sidecar" "$f" || fail "$skill: $f missing handoff sidecar safety"

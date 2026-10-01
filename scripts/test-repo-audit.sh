@@ -34,6 +34,22 @@ grep -qF -- "BD_COMMAND='$bd_command'" "$root/scripts/check-cross-skill.sh" || f
 # One whole clause per line; each must appear verbatim in the skill text.
 skill_anchors() {
     cat <<'ANCHORS'
+Resolve `<remote>` in this order: the remote of the current branch's upstream, else `origin`, else the only remote. When there is no remote, or several remotes with no upstream and none named `origin`, record `Remote: unresolved` and record the tip probes as `unresolved`.
+1. **Run and source snapshot:** schema, run ID, UTC times, host/model if known, repo identity, base SHA and branch, `Remote`, remote default tip, `behind` (or its unknown form with the fetch command), off-default state, linked-worktree status, audited scope, per-path dirty status and local snapshot marker, visibility, restriction level, and report VCS status.
+status (`confirmed`, `refuted`, `unevaluable`)
+repo-audit-report/v1
+docs/audits/
+## Criterion roster
+all 32 criteria
+## Candidate verification
+## Portable report
+## Cross-model review
+## Recommendation and user choice
+Fix all confirmed, actionable findings
+Fix a subset
+Stop with the report
+source-to-beads
+withheld-no-ignored-path
 Never fetch or mutate refs; a read-only `git ls-remote` is allowed.
 Record the remote default tip from `git ls-remote <remote> refs/heads/<default>`
 record a failed probe as `unresolved`
@@ -68,19 +84,6 @@ ANCHORS
 check() {
     file=$1
     [ -f "$file" ] || fail "missing $file"
-    require "$file" 'repo-audit-report/v1'
-    require "$file" 'docs/audits/'
-    require "$file" '## Criterion roster'
-    require "$file" 'all 32 criteria'
-    require "$file" '## Candidate verification'
-    require "$file" '## Portable report'
-    require "$file" '## Cross-model review'
-    require "$file" '## Recommendation and user choice'
-    require "$file" 'Fix all confirmed, actionable findings'
-    require "$file" 'Fix a subset'
-    require "$file" 'Stop with the report'
-    require "$file" 'source-to-beads'
-    require "$file" 'withheld-no-ignored-path'
     while IFS= read -r clause; do
         require "$file" "$clause"
     done < "$tmp/skill-anchors"
@@ -109,6 +112,7 @@ Host/model
 Repository
 Base SHA
 Branch
+Remote
 Remote default tip
 Behind
 Off default branch
@@ -125,7 +129,7 @@ FIELDS
 # the skill must fail here rather than leave the fixture silently stale.
 header_anchors() {
     cat <<'ANCHORS'
-remote default tip, `behind` (or its unknown form with the fetch command), off-default state, linked-worktree status
+1. **Run and source snapshot:** schema, run ID, UTC times, host/model if known, repo identity, base SHA and branch, `Remote`, remote default tip, `behind` (or its unknown form with the fetch command), off-default state, linked-worktree status, audited scope, per-path dirty status and local snapshot marker, visibility, restriction level, and report VCS status.
 status (`confirmed`, `refuted`, `unevaluable`)
 ANCHORS
 }
@@ -175,6 +179,9 @@ check_report() {
     value 'Base SHA' | grep -Eq '^[0-9a-f]{40}$' || fail "$f has a malformed base SHA"
     tip=$(value 'Remote default tip')
     printf '%s\n' "$tip" | grep -Eq '^([0-9a-f]{40}|unresolved)$' || fail "$f has a malformed remote default tip"
+    if [ "$(value Remote)" = unresolved ]; then
+        [ "$tip" = unresolved ] || fail "$f unresolved remote must have an unresolved tip probe"
+    fi
     behind=$(value Behind)
     printf '%s\n' "$behind" | grep -Eq '^([0-9]+|unknown \(tip [0-9a-f]+ not fetched\))$' || fail "$f has a malformed behind value"
     off=$(value 'Off default branch')
@@ -245,6 +252,10 @@ check "$codex"
 while IFS= read -r p; do check_prompt "$p"; done < "$tmp/prompts"
 check_report "$fixture"
 
+# An unresolved remote is explicit provenance, and an unresolved probe is valid.
+sed -e 's/^- Remote: origin$/- Remote: unresolved/' -e 's/^- Remote default tip: .*$/- Remote default tip: unresolved/' "$fixture" > "$tmp/unresolved-report.md"
+check_report "$tmp/unresolved-report.md"
+
 # remove_clause <src> <dst> <clause>: copy src to dst without the clause.
 remove_clause() {
     CLAUSE="$3" python3 - "$1" "$2" <<'PY'
@@ -298,7 +309,7 @@ run_cases() {
         src="$root/skills/$host/repo-audit/SKILL.md"
         cases=$((cases + 1))
         sed '/repo-audit-report\/v1/d' "$src" > "$tmp/no-schema.md"
-        if ( "$fn" "$tmp/no-schema.md" ) >/dev/null 2>&1; then misses=$((misses + 1)); echo "  MISS: $host schema deletion" >&2; fi
+        expect_rejected "$host schema deletion" "lacks repo-audit-report/v1" "$fn" "$tmp/no-schema.md"
         # Every spelling of a Beads command must fail, behind global options too.
         for cmd in 'bd create --title example' 'bd -C . create example' 'bd dep add a b' 'bd label add a b' 'bd q example' 'bd -q list' 'bd --version'; do
             cases=$((cases + 1))
@@ -315,11 +326,38 @@ run_cases() {
         while IFS= read -r clause; do
             cases=$((cases + 1))
             remove_clause "$p" "$tmp/case.md" "$clause"
-            if ( "$pfn" "$tmp/case.md" ) >/dev/null 2>&1; then
-                misses=$((misses + 1)); echo "  MISS: $(basename "$p") drops: $clause" >&2
-            fi
+            expect_rejected "$(basename "$p") drops: $clause" "lacks $clause" "$pfn" "$tmp/case.md"
         done < "$tmp/prompt-anchors"
     done < "$tmp/prompts"
+    while IFS= read -r field; do
+        line=$(awk -v prefix="- $field: " 'index($0, prefix) == 1 { print }' "$fixture")
+        report_case "$rfn" "header deletion: $field" "lacks header field: $field" "$line
+" ''
+    done < "$tmp/fields"
+    report_case "$rfn" 'unresolved remote with resolved tip' 'unresolved remote must have an unresolved tip probe' '- Remote: origin' '- Remote: unresolved'
+    report_case "$rfn" 'malformed base SHA' 'malformed base SHA' '- Base SHA: 4be07a19c3d8f5e2a61b9047cd3e8f12a5b6c7d0' '- Base SHA: invalid'
+    report_case "$rfn" 'malformed remote default tip' 'malformed remote default tip' '- Remote default tip: 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21' '- Remote default tip: invalid'
+    report_case "$rfn" 'malformed behind' 'malformed behind value' '- Behind: 3' '- Behind: stale'
+    report_case "$rfn" 'malformed off-default state' 'malformed off-default state' '- Off default branch: no' '- Off default branch: maybe'
+    report_case "$rfn" 'malformed visibility' 'malformed visibility' '- Visibility: private' '- Visibility: invalid'
+    report_case "$rfn" 'duplicate finding IDs' 'repeats a finding id' '### RA-dce059c6b5' '### RA-166172a2cc'
+    report_case "$rfn" 'severity vocabulary' 'malformed severity' '- Severity: P2 - a zero quantity reaches the price division; likely on any empty order line.' '- Severity: invalid'
+    report_case "$rfn" 'warning missing behind' 'Warning: block does not name behind' 'Warning: the remote default tip is 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21 and this checkout is behind it by 3 commits; it is a linked worktree. Findings may already be fixed on the default branch, or exist only on this branch.' 'Warning: the remote default tip is 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21 and this checkout is stale it by 3 commits; it is a linked worktree. Findings may already be fixed on the default branch, or exist only on this branch.'
+    report_case "$rfn" 'warning missing worktree status' 'Warning: block does not name the worktree status' 'Warning: the remote default tip is 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21 and this checkout is behind it by 3 commits; it is a linked worktree. Findings may already be fixed on the default branch, or exist only on this branch.' 'Warning: the remote default tip is 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21 and this checkout is behind it by 3 commits; it is a linked checkout. Findings may already be fixed on the default branch, or exist only on this branch.'
+    report_case "$rfn" 'warning missing tip' 'Warning: block does not name the tip' 'Warning: the remote default tip is 9f2c41d7a8b3e65f0c1d2e4a7b9c8d6e5f4a3b21 and this checkout is behind it by 3 commits; it is a linked worktree. Findings may already be fixed on the default branch, or exist only on this branch.' 'Warning: the remote default tip is unresolved and this checkout is behind it by 3 commits; it is a linked worktree. Findings may already be fixed on the default branch, or exist only on this branch.'
+    report_case "$rfn" 'extra numbered section' 'does not have exactly six sections' '## 6. Closing summary' '## 7. Extra
+
+## 6. Closing summary'
+    report_case "$rfn" 'malformed finding heading' 'has a malformed finding heading' '### RA-166172a2cc' '### RA-166172a2cc extra'
+    report_case "$rfn" 'missing clean caveat' 'does not say that clean means covered search' 'not defect-free' healthy
+    report_case "$rfn" 'missing finding Status' 'does not give every finding a Status' '- Status: confirmed
+' ''
+    report_case "$rfn" 'missing finding Severity' 'does not give every finding a Severity' '- Severity: P2 - a zero quantity reaches the price division; likely on any empty order line.
+' ''
+    report_case "$rfn" 'missing finding Criterion' 'does not give every finding a Criterion' '- Criterion: `cc-existing`
+' ''
+    report_case "$rfn" 'missing finding Redaction' 'does not give every finding a Redaction' '- Redaction: none
+' ''
     report_case "$rfn" 'schema field deletion' 'lacks header field: Schema' '- Schema: repo-audit-report/v1
 ' ''
     report_case "$rfn" 'wrong schema marker' 'lacks the repo-audit-report/v1 marker' '- Schema: repo-audit-report/v1' '- Schema: repo-audit-report/v2'
