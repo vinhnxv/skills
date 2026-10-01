@@ -37,6 +37,13 @@ CLAUDE_ONLY_KEY="disable-model-invocation"
 # copy: a third file added identically to BOTH copies passes a copy-to-copy
 # comparison, so that check alone leaves the shape unbounded in exactly the
 # direction a careless edit takes it.
+#
+# Both sets also admit ./references/<name>.md -- a Markdown file directly in the
+# skill's references/ directory, in either host -- through path_allowed below
+# rather than by name, because the file names are the skill's own. Nothing
+# deeper (./references/sub/x.md) and no other extension (./references/x.txt)
+# passes. A reference file is shared, so check 1 requires it in both copies
+# and check 2 requires it byte-identical.
 CLAUDE_ALLOWED_FILES="./SKILL.md"
 CODEX_ALLOWED_FILES="./SKILL.md ./agents/openai.yaml"
 
@@ -128,16 +135,28 @@ list_files() {
     ( CDPATH= cd -- "$1" && find . -type f | LC_ALL=C sort )
 }
 
+# Whether relative path $2 is allowed by the space-separated set $1: named in
+# the set, or a Markdown file directly under ./references/. The case patterns
+# are ordered because `*` in a case pattern also matches `/`, so the nested
+# pattern has to be refused before the flat one can claim it; `?*.md` keeps a
+# bare `.md` from counting as a name.
+path_allowed() {
+    case " $1 " in
+        *" $2 "*) return 0 ;;
+    esac
+    case "$2" in
+        ./references/*/*) return 1 ;;
+        ./references/?*.md) return 0 ;;
+    esac
+    return 1
+}
+
 # Files under directory $1 that the space-separated allowed set $2 does not
-# name. Prints nothing when the directory is clean.
+# allow. Prints nothing when the directory is clean.
 disallowed_files() {
-    allowed="$2"
     list_files "$1" | while IFS= read -r rel; do
         [ -n "$rel" ] || continue
-        case " $allowed " in
-            *" $rel "*) ;;
-            *) echo "$rel" ;;
-        esac
+        path_allowed "$2" "$rel" || echo "$rel"
     done
 }
 

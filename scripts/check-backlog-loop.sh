@@ -205,6 +205,15 @@
 # Every check runs over BOTH host copies, because a rule deleted from one copy
 # is a rule that is gone for every operator on that host.
 #
+# A copy may carry `references/*.md` beside SKILL.md (R31). Two kinds of check
+# treat those files differently, on purpose. SCAN checks look for text that
+# must appear nowhere -- the R8 status writes, the R17 `gh pr close`, the R28
+# `bd ready` span without `--limit 0`, the R30 `git worktree prune` -- and read
+# SKILL.md plus every `references/*.md` of the same copy, naming the file the
+# text sits in. ANCHOR checks look for a clause that must appear in SKILL.md and
+# read SKILL.md only, so a clause moved into `references/` fails loudly instead
+# of passing from a file the loop is not obliged to read.
+#
 # Exits 0 with a one-line summary, or non-zero naming the specific rule.
 
 set -eu
@@ -251,6 +260,20 @@ copies_of() {
     for host in claude codex; do
         f="$root/skills/$host/$1/SKILL.md"
         [ -f "$f" ] && echo "$f"
+    done
+    return 0
+}
+
+# The files a scan-type rule reads for one copy: its SKILL.md, then each
+# Markdown file directly in the `references/` directory beside it, one path per
+# line. A skill with no `references/` directory yields SKILL.md alone, so it is
+# read exactly as before. Anchor-type rules never call this and keep reading
+# SKILL.md only, which is what makes an anchor moved into `references/` fail
+# loudly. check-parity.sh bounds `references/` to this same flat shape.
+scan_files_of() { # SKILL.md of one copy
+    printf '%s\n' "$1"
+    for r in "$(dirname -- "$1")"/references/*.md; do
+        [ -f "$r" ] && printf '%s\n' "$r"
     done
     return 0
 }
@@ -369,6 +392,90 @@ cause_categories() { # file
         grep -oE '`[a-z][a-z0-9-]*`' | tr -d '`' | LC_ALL=C sort -u || true
 }
 
+# R8's status-write scan over ONE file: SKILL.md or a references/*.md of the
+# same copy (`$f` is the SKILL.md of the copy being checked, `$sf` the file
+# scanned). The anchored adoption write may appear in SKILL.md only, so a
+# `--status=in_progress` in a reference file is a stray status.
+check_status_writes() { # scanned file
+    sf="$1"
+    sq="'"
+    status_pattern="--status=(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
+    raw_status_writes=$(grep -o -- '--status=' "$sf" | grep -c . || true)
+    status_matches=$(grep -oE -- "$status_pattern" "$sf" || true)
+    parsed_status_writes=$(printf '%s\n' "$status_matches" | grep -c . || true)
+    [ "$raw_status_writes" -eq "$parsed_status_writes" ] ||
+        fail "$sf: $((raw_status_writes - parsed_status_writes)) literal \`--status=\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census below, so the status it writes is never checked)"
+
+    # `grep .` drops the blank line an empty match list would leave: SKILL.md
+    # always carries a status write, but a reference file need not, and a blank
+    # line there would read as a write with an empty value.
+    printf '%s\n' "$status_matches" | grep . |
+        sed -e 's/^--status=//' -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/" > "$work/status-values"
+
+    # `in_progress` is the one carve-out: each occurrence, quoted or not, must
+    # be the anchored adoption write, so the counts have to agree.
+    in_progress_writes=$(grep -cx 'in_progress' "$work/status-values" || true)
+    adoption_writes=0
+    [ "$sf" != "$f" ] || adoption_writes=$(grep -oF -- "$ADOPTION_WRITE" "$sf" | grep -c . || true)
+    [ "$in_progress_writes" -eq "$adoption_writes" ] ||
+        fail "$sf: writes \`--status=in_progress\` $in_progress_writes time(s) but the anchored adoption write appears $adoption_writes time(s) (breaks R8: \`in_progress\` is a literal status flag in the status-guarded adoption write only, and anywhere else it writes a status the claim path owns)"
+
+    grep -vx 'in_progress' "$work/status-values" | LC_ALL=C sort -u > "$work/status-writes"
+    while read -r status; do
+        [ -n "$status" ] ||
+            fail "$sf: a literal \`--status=\` write carries an empty value (breaks R8: an empty status is not one of { $ALLOWED_STATUS_WRITES }, and it is invisible to the allowed-value check below unless this fails)"
+        case " $ALLOWED_STATUS_WRITES " in
+            *" $status "*) ;;
+            *) fail "$sf: writes \`--status=$status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking an issue under a status this loop does not own overrides whoever reads that status next)" ;;
+        esac
+    done < "$work/status-writes"
+
+    # R8, the other forms. `--status X` and `-s X` write a status exactly as
+    # `--status=X` does, and the census above cannot see them. They are read
+    # only inside an inline code span that is a `bd update`, `bd create`, or
+    # `bd q` command, because `bd list --status closed` reads and writes
+    # nothing. No value other than `open` or `blocked` is allowed in these
+    # forms: the adoption write is the one `--status=in_progress`, and it is
+    # anchored above.
+    flag_pattern="(^|[[:space:]])(--status[[:space:]]+|-s[[:space:]=]+)(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
+    write_spans=$(grep -oE '`[^`]*`' "$sf" | grep -E -- "(^|[^[:alnum:]_])${BD_WORDS}(update|create|q)[[:space:]]" || true)
+    raw_flag_writes=$(printf '%s\n' "$write_spans" | grep -oE -- '(^|[[:space:]])(--status[[:space:]]|-s[[:space:]=])' | grep -c . || true)
+    flag_matches=$(printf '%s\n' "$write_spans" | grep -oE -- "$flag_pattern" || true)
+    parsed_flag_writes=$(printf '%s\n' "$flag_matches" | grep -c . || true)
+    [ "$raw_flag_writes" -eq "$parsed_flag_writes" ] ||
+        fail "$sf: $((raw_flag_writes - parsed_flag_writes)) \`--status X\` or \`-s X\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census, so the status it writes is never checked)"
+    printf '%s\n' "$flag_matches" |
+        sed -E -e 's/^[[:space:]]+//' -e 's/^(--status|-s)[[:space:]=]+/\1 /' > "$work/status-flag-writes"
+    while read -r flag status; do
+        [ -n "$flag" ] || continue
+        status=$(printf '%s\n' "$status" | sed -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/")
+        case " $ALLOWED_STATUS_WRITES " in
+            *" $status "*) ;;
+            *) fail "$sf: writes \`$flag $status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking or closing an issue by a status flag the census reads overrides whoever reads that status next)" ;;
+        esac
+    done < "$work/status-flag-writes"
+
+    # `bd defer` writes `deferred`, the sibling skill's parking status.
+    defer_line=$(grep -nE -- "(^|[^[:alnum:]_])${BD_WORDS}defer([^a-z-]|\$)" "$sf" | head -n 1 | cut -d: -f1 || true)
+    [ -z "$defer_line" ] ||
+        fail "$sf: line $defer_line runs \`bd defer\` (breaks R8: \`deferred\` is a person's or a sibling skill's parking decision, and a run that wrote it would park work under the authority of whoever reads that status next)"
+
+    # `bd close` writes `closed`: step 7 VERIFY, THEN CLOSE and the RECOVERY
+    # `verified` arm are the only places that may run it, because a close
+    # anywhere else closes work no merge has been proven for.
+    close_line=$(awk -v pat="(^|[^[:alnum:]_])${BD_WORDS}close([^a-z-]|\$)" '
+        /^7\. \*\*VERIFY, THEN CLOSE\.\*\*/ { step7 = 1 }
+        step7 && /^[0-9]+\. / && !/^7\. / { step7 = 0 }
+        step7 && /^## / { step7 = 0 }
+        /^RECOVERY,/ { rec = 1; seen = 0 }
+        rec && seen && /^$/ { rec = 0; arm = 0 }
+        rec && /^- / { seen = 1; arm = ($0 ~ /^- [^:]*`verified`[^:]*:/) }
+        $0 ~ pat && !step7 && !(rec && arm) { print NR; exit }
+    ' "$sf")
+    [ -z "$close_line" ] ||
+        fail "$sf: line $close_line runs \`bd close\` outside step 7 VERIFY, THEN CLOSE and the RECOVERY \`verified\` arm (breaks R8: a close anywhere else closes work whose merge and post-merge CI nothing has proven)"
+}
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/check-backlog-loop.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT HUP TERM
@@ -393,6 +500,7 @@ checked=0
 for f in "$@"; do
     checked=$((checked + 1))
 
+    scan_files=$(scan_files_of "$f")
     classify=$(classify_rows "$f")
     causes=$(cause_rows "$f")
     phases=$(phase_values "$f")
@@ -656,78 +764,11 @@ for f in "$@"; do
     # anticipate -- fails loudly instead of vanishing from the census the
     # same way.
     # -----------------------------------------------------------------------
-    sq="'"
-    status_pattern="--status=(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
-    raw_status_writes=$(grep -o -- '--status=' "$f" | grep -c . || true)
-    status_matches=$(grep -oE -- "$status_pattern" "$f" || true)
-    parsed_status_writes=$(printf '%s\n' "$status_matches" | grep -c . || true)
-    [ "$raw_status_writes" -eq "$parsed_status_writes" ] ||
-        fail "$f: $((raw_status_writes - parsed_status_writes)) literal \`--status=\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census below, so the status it writes is never checked)"
-
-    printf '%s\n' "$status_matches" |
-        sed -e 's/^--status=//' -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/" > "$work/status-values"
-
-    # `in_progress` is the one carve-out: each occurrence, quoted or not, must
-    # be the anchored adoption write, so the counts have to agree.
-    in_progress_writes=$(grep -cx 'in_progress' "$work/status-values" || true)
-    adoption_writes=$(grep -oF -- "$ADOPTION_WRITE" "$f" | grep -c . || true)
-    [ "$in_progress_writes" -eq "$adoption_writes" ] ||
-        fail "$f: writes \`--status=in_progress\` $in_progress_writes time(s) but the anchored adoption write appears $adoption_writes time(s) (breaks R8: \`in_progress\` is a literal status flag in the status-guarded adoption write only, and anywhere else it writes a status the claim path owns)"
-
-    grep -vx 'in_progress' "$work/status-values" | LC_ALL=C sort -u > "$work/status-writes"
-    while read -r status; do
-        [ -n "$status" ] ||
-            fail "$f: a literal \`--status=\` write carries an empty value (breaks R8: an empty status is not one of { $ALLOWED_STATUS_WRITES }, and it is invisible to the allowed-value check below unless this fails)"
-        case " $ALLOWED_STATUS_WRITES " in
-            *" $status "*) ;;
-            *) fail "$f: writes \`--status=$status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking an issue under a status this loop does not own overrides whoever reads that status next)" ;;
-        esac
-    done < "$work/status-writes"
-
-    # R8, the other forms. `--status X` and `-s X` write a status exactly as
-    # `--status=X` does, and the census above cannot see them. They are read
-    # only inside an inline code span that is a `bd update`, `bd create`, or
-    # `bd q` command, because `bd list --status closed` reads and writes
-    # nothing. No value other than `open` or `blocked` is allowed in these
-    # forms: the adoption write is the one `--status=in_progress`, and it is
-    # anchored above.
-    flag_pattern="(^|[[:space:]])(--status[[:space:]]+|-s[[:space:]=]+)(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[A-Za-z0-9_-]+)"
-    write_spans=$(grep -oE '`[^`]*`' "$f" | grep -E -- "(^|[^[:alnum:]_])${BD_WORDS}(update|create|q)[[:space:]]" || true)
-    raw_flag_writes=$(printf '%s\n' "$write_spans" | grep -oE -- '(^|[[:space:]])(--status[[:space:]]|-s[[:space:]=])' | grep -c . || true)
-    flag_matches=$(printf '%s\n' "$write_spans" | grep -oE -- "$flag_pattern" || true)
-    parsed_flag_writes=$(printf '%s\n' "$flag_matches" | grep -c . || true)
-    [ "$raw_flag_writes" -eq "$parsed_flag_writes" ] ||
-        fail "$f: $((raw_flag_writes - parsed_flag_writes)) \`--status X\` or \`-s X\` occurrence(s) could not be parsed into a value (breaks R8: an unparsable write is invisible to the census, so the status it writes is never checked)"
-    printf '%s\n' "$flag_matches" |
-        sed -E -e 's/^[[:space:]]+//' -e 's/^(--status|-s)[[:space:]=]+/\1 /' > "$work/status-flag-writes"
-    while read -r flag status; do
-        [ -n "$flag" ] || continue
-        status=$(printf '%s\n' "$status" | sed -e 's/^"\(.*\)"$/\1/' -e "s/^${sq}\\(.*\\)${sq}\$/\\1/")
-        case " $ALLOWED_STATUS_WRITES " in
-            *" $status "*) ;;
-            *) fail "$f: writes \`$flag $status\`, which is outside the { $ALLOWED_STATUS_WRITES } this procedure may write (breaks R8: parking or closing an issue by a status flag the census reads overrides whoever reads that status next)" ;;
-        esac
-    done < "$work/status-flag-writes"
-
-    # `bd defer` writes `deferred`, the sibling skill's parking status.
-    defer_line=$(grep -nE -- "(^|[^[:alnum:]_])${BD_WORDS}defer([^a-z-]|\$)" "$f" | head -n 1 | cut -d: -f1 || true)
-    [ -z "$defer_line" ] ||
-        fail "$f: line $defer_line runs \`bd defer\` (breaks R8: \`deferred\` is a person's or a sibling skill's parking decision, and a run that wrote it would park work under the authority of whoever reads that status next)"
-
-    # `bd close` writes `closed`: step 7 VERIFY, THEN CLOSE and the RECOVERY
-    # `verified` arm are the only places that may run it, because a close
-    # anywhere else closes work no merge has been proven for.
-    close_line=$(awk -v pat="(^|[^[:alnum:]_])${BD_WORDS}close([^a-z-]|\$)" '
-        /^7\. \*\*VERIFY, THEN CLOSE\.\*\*/ { step7 = 1 }
-        step7 && /^[0-9]+\. / && !/^7\. / { step7 = 0 }
-        step7 && /^## / { step7 = 0 }
-        /^RECOVERY,/ { rec = 1; seen = 0 }
-        rec && seen && /^$/ { rec = 0; arm = 0 }
-        rec && /^- / { seen = 1; arm = ($0 ~ /^- [^:]*`verified`[^:]*:/) }
-        $0 ~ pat && !step7 && !(rec && arm) { print NR; exit }
-    ' "$f")
-    [ -z "$close_line" ] ||
-        fail "$f: line $close_line runs \`bd close\` outside step 7 VERIFY, THEN CLOSE and the RECOVERY \`verified\` arm (breaks R8: a close anywhere else closes work whose merge and post-merge CI nothing has proven)"
+    while IFS= read -r sf; do
+        check_status_writes "$sf"
+    done <<SCAN_FILES_END
+$scan_files
+SCAN_FILES_END
 
     # -----------------------------------------------------------------------
     # R8, second half. `## CONSTRAINTS` names the three statuses it refuses.
@@ -828,9 +869,13 @@ for f in "$@"; do
     done
 
     # An unmerged PR stays open, and a merged PR keeps a durable CI watch.
-    if grep -qF -- 'gh pr close' "$f"; then
-        fail "$f: backlog-loop may close a PR automatically (breaks R17)"
-    fi
+    while IFS= read -r sf; do
+        if grep -qF -- 'gh pr close' "$sf"; then
+            fail "$sf: backlog-loop may close a PR automatically (breaks R17)"
+        fi
+    done <<SCAN_FILES_END
+$scan_files
+SCAN_FILES_END
     grep -qF -- 'Never close a PR automatically.' "$f" ||
         fail "$f: open-PR preservation rule is missing (breaks R17)"
     grep -qF -- '| `backlog_loop_postmerge_ci` |' "$f" ||
@@ -1076,9 +1121,13 @@ for f in "$@"; do
     bd_ready_calls=$(grep -o '`bd ready [^`]*`' "$f" || true)
     [ -n "$bd_ready_calls" ] ||
         fail "$f: extracted no \`bd ready\` call with arguments (breaks R28: the --limit 0 scan would pass over nothing)"
-    bd_ready_bad=$(printf '%s\n' "$bd_ready_calls" | grep -vF -- '--limit 0' || true)
-    [ -z "$bd_ready_bad" ] ||
-        fail "$f: a \`bd ready\` call carries no \`--limit 0\`: $(printf '%s' "$bd_ready_bad" | head -n 1) (breaks R28: the tracker returns at most 100 rows by default, so a larger backlog reads as a smaller one)"
+    while IFS= read -r sf; do
+        bd_ready_bad=$(grep -o '`bd ready [^`]*`' "$sf" | grep -vF -- '--limit 0' || true)
+        [ -z "$bd_ready_bad" ] ||
+            fail "$sf: a \`bd ready\` call carries no \`--limit 0\`: $(printf '%s' "$bd_ready_bad" | head -n 1) (breaks R28: the tracker returns at most 100 rows by default, so a larger backlog reads as a smaller one)"
+    done <<SCAN_FILES_END
+$scan_files
+SCAN_FILES_END
     grep -qF -- '`bd prime` and `bd ready --json --limit 0` must both work.' "$f" ||
         fail "$f: preflight no longer probes \`bd ready --json --limit 0\` (breaks R28: the tracker probe runs the call the loop never makes)"
     grep -qF -- 'Every `bd ready` call carries `--limit 0`: without it the tracker returns at most 100 rows, so a larger backlog reads as a smaller one.' "$f" ||
@@ -1146,9 +1195,13 @@ for f in "$@"; do
     switch_default=$(grep -nE 'git[[:space:]]+(switch|checkout)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*<default>|--ff-only' "$f" || true)
     [ -z "$switch_default" ] ||
         fail "$f: the skill restores \`git switch <default>\` or a fast-forward: $(printf '%s' "$switch_default" | head -n 1 | cut -c1-120) (breaks R29: from a linked worktree the switch fails because another worktree holds the default branch, and a fast-forward past that failure moves the branch the operator has checked out)"
-    worktree_prune=$(grep -nE 'worktree[[:space:]]+prune' "$f" || true)
-    [ -z "$worktree_prune" ] ||
-        fail "$f: instructs \`git worktree prune\`: $(printf '%s' "$worktree_prune" | head -n 1 | cut -c1-120) (breaks R30: a repository-wide prune also drops the registration of a worktree of the operator whose directory is temporarily missing)"
+    while IFS= read -r sf; do
+        worktree_prune=$(grep -nE 'worktree[[:space:]]+prune' "$sf" || true)
+        [ -z "$worktree_prune" ] ||
+            fail "$sf: instructs \`git worktree prune\`: $(printf '%s' "$worktree_prune" | head -n 1 | cut -c1-120) (breaks R30: a repository-wide prune also drops the registration of a worktree of the operator whose directory is temporarily missing)"
+    done <<SCAN_FILES_END
+$scan_files
+SCAN_FILES_END
     merge_delete_branch=$(grep -nE 'gh pr merge[^`]*--delete-branch' "$f" || true)
     [ -z "$merge_delete_branch" ] ||
         fail "$f: step 6 passes \`--delete-branch\` to \`gh pr merge\`: $(printf '%s' "$merge_delete_branch" | head -n 1 | cut -c1-120) (breaks R29: its local cleanup switches the checkout and deletes the local head branch, which a worktree that holds either one refuses, and the refusal can leave the remote branch undeleted)"

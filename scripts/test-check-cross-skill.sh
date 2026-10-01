@@ -63,6 +63,18 @@ both_append() {
         expect_fail "$label ($host)" "$want" "$t" "$host"
     done
 }
+# A line planted in references/rationale.md of one skill, in each host copy in
+# turn. The failure must name that host's path, so a checker that scans only
+# SKILL.md, or only one host's references/, misses the case.
+both_reference() {
+    label="$1"; want="$2"; skill="$3"; text="$4"
+    for host in claude codex; do
+        t=$(fresh_tree)
+        mkdir -p "$t/skills/$host/$skill/references"
+        printf '%s\n' "$text" > "$t/skills/$host/$skill/references/rationale.md"
+        expect_fail "$label ($host)" "$want" "$t" "$host"
+    done
+}
 run_suite() {
     under_test="$1"; cases=0; misses=0
     both_append "audit calls Beads" "repo-audit: .*contains a Beads command" repo-audit 'Run `bd list --all --json` before audit.'
@@ -176,6 +188,17 @@ run_suite() {
     both_replace "writer loses the database comparison" "source-to-beads: .*missing bd where comparison" source-to-beads 'compare `bd where` in the current directory with `bd -C <root> where`' 'assume the database'
     both_append "audit compares databases itself" "repo-audit: .*contains a Beads command" repo-audit 'Compare `bd where` with `bd -C <root> where` before the copy.'
 
+    # Scan-type checks read references/*.md beside SKILL.md. The metadata
+    # harvest and the author-only label check are the two this suite covers;
+    # the contract anchors above still read SKILL.md only.
+    both_reference "a reference file crosses the consumer namespace" "reserved to 'source-to-beads'" backlog-loop 'Run `bd update <id> --set-metadata source_to_beads_probe=1`.'
+    both_reference "a reference file crosses the writer namespace" "reserved to 'backlog-loop'" source-to-beads 'Run `bd update <id> --set-metadata backlog_loop_run=1`.'
+    both_reference "a writer reference file mutates legacy audit metadata" "legacy audit metadata key" source-to-beads 'Run `bd update <id> --set-metadata repo_audit_sha=abc`.'
+    both_reference "a writer reference file forges an author-only label write" "write site for author-only label 'hard-blocker'" source-to-beads 'Run `bd create work -l hard-blocker`.'
+    both_reference "a writer reference file claims an author-only label in prose" "claims in prose to write author-only label 'audit-suppressed'" source-to-beads 'The writer adds `audit-suppressed` to new gates.'
+    both_reference "a consumer reference file forges a legacy label write" "write site for author-only label 'audit-suppressed'" backlog-loop 'Run `bd update <id> --add-label audit-suppressed`.'
+    both_reference "a writer reference file records a consumer key in prose" "reserved to 'backlog-loop'" source-to-beads 'Also record metadata key `backlog_loop_run` on each created issue.'
+
     return 0
 }
 echo "Running suite against $checker"
@@ -189,6 +212,16 @@ spaced="$work/checkout with space"
 mkdir "$spaced"
 cp -R "$repo_root/skills" "$spaced/skills"
 sh "$checker" "$spaced" >/dev/null 2>&1 || { echo "FAIL: the checker rejects a tree whose path contains a space" >&2; exit 1; }
+# A valid reference file, identical in both hosts, changes nothing: prose with
+# no Beads write and no reserved key trips none of the scans that now read it.
+t=$(fresh_tree)
+for skill in repo-audit source-to-beads backlog-loop; do
+    for host in claude codex; do
+        mkdir -p "$t/skills/$host/$skill/references"
+        printf '%s\n' 'Rationale. A gate is a person'"'"'s question; the loop reads it and never answers it.' > "$t/skills/$host/$skill/references/rationale.md"
+    done
+done
+sh "$checker" "$t" >/dev/null 2>&1 || { echo "FAIL: the checker rejects a tree with a valid references/rationale.md in every skill" >&2; sh "$checker" "$t" >&2 || true; exit 1; }
 weak="$work/weakened.sh"
 printf '#!/bin/sh\nexit 0\n' > "$weak"
 echo "Running suite against a deliberately weakened checker"

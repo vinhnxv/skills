@@ -239,6 +239,52 @@ metadata:\
     printf 'shared\n' > "$(skill_dir "$t" codex "$skill")/reference.md"
     expect_fail "a third file added identically to both copies" "$t" "outside the allowed set"
 
+    # references/*.md is the one directory of shared files a skill may carry.
+    # Each case below plants the file in `references/` of a skill copy, so the
+    # per-host allowed set and the copy-to-copy comparison are both exercised.
+    for host in claude codex; do
+        t=$(fresh_tree)
+        mkdir "$(skill_dir "$t" "$host" "$skill")/references"
+        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/x.md"
+        expect_fail "references/x.md present in the $host copy only" "$t" "only in $host: ./references/x.md"
+    done
+
+    t=$(fresh_tree)
+    for host in claude codex; do
+        mkdir "$(skill_dir "$t" "$host" "$skill")/references"
+    done
+    printf 'one\n' > "$(skill_dir "$t" claude "$skill")/references/x.md"
+    printf 'two\n' > "$(skill_dir "$t" codex "$skill")/references/x.md"
+    expect_fail "references/x.md differs between copies" "$t" "./references/x.md differs between the two host copies"
+
+    t=$(fresh_tree)
+    for host in claude codex; do
+        mkdir -p "$(skill_dir "$t" "$host" "$skill")/references/sub"
+        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/sub/x.md"
+    done
+    expect_fail "a nested references/sub/x.md in both copies" "$t" "outside the allowed set: ./references/sub/x.md"
+
+    t=$(fresh_tree)
+    for host in claude codex; do
+        mkdir "$(skill_dir "$t" "$host" "$skill")/references"
+        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/x.txt"
+    done
+    expect_fail "references/x.txt, not Markdown, in both copies" "$t" "outside the allowed set: ./references/x.txt"
+
+    t=$(fresh_tree)
+    for host in claude codex; do
+        mkdir "$(skill_dir "$t" "$host" "$skill")/references"
+        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/.md"
+    done
+    expect_fail "references/.md, a Markdown extension with no name, in both copies" "$t" "outside the allowed set: ./references/.md"
+
+    t=$(fresh_tree)
+    for host in claude codex; do
+        mkdir "$(skill_dir "$t" "$host" "$skill")/references"
+        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/rationale.md"
+    done
+    expect_pass "an identical references/rationale.md in both copies" "$t"
+
     t=$(fresh_tree)
     cp -R "$(skill_dir "$t" claude "$skill")" "$t/skills/claude/only-on-one-host"
     expect_fail "skill present under skills/claude only" "$t" "missing from skills/codex"
