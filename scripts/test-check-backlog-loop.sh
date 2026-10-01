@@ -152,6 +152,25 @@ both_append() { # name, text, expected-message-ERE
     done
 }
 
+# A reference file planted in one host's copy of the skill: tree, host, text.
+# The message a scan-type rule gives must name this path, so a checker that
+# reads only SKILL.md, or only one host's references/, misses the case.
+plant_reference() {
+    mkdir -p "$1/skills/$2/backlog-loop/references"
+    printf '%s\n' "$3" > "$1/skills/$2/backlog-loop/references/rationale.md"
+}
+
+# One line planted in references/rationale.md of each host copy in turn. The
+# message must name the planted file's path.
+both_reference_lines() { # name, text, expected-message-ERE
+    for host in claude codex; do
+        t=$(fresh_tree)
+        plant_reference "$t" "$host" "$2"
+        expect_fail "$1 (skills/$host/backlog-loop/references/rationale.md)" \
+            "skills/$host/backlog-loop/references/rationale.md: $3" "$t"
+    done
+}
+
 # ---------------------------------------------------------------------------
 # The suite. Every case builds its own tree, applies exactly one break, and
 # states the message it expects.
@@ -1333,6 +1352,40 @@ Never ask me for input.'
     expect_fail "THE RUN LEDGER's key table header changes shape and no row parses" \
         'backlog_loop_phase. row declares no phase value' "$t"
 
+    # -- REFERENCES: scan-type rules read references/*.md, anchors do not ----
+
+    both_reference_lines "a --status=deferred write is planted in references/rationale.md" \
+        'Park it with `bd update <id> --status=deferred` and move on.' \
+        'writes .--status=deferred., which is outside'
+
+    both_reference_lines "a bd defer is planted in references/rationale.md" \
+        'Park it with `bd defer <id>`.' \
+        'line [0-9]+ runs .bd defer.'
+
+    both_reference_lines "a gh pr close is planted in references/rationale.md" \
+        'Run `gh pr close <url>` after a review timeout.' \
+        'backlog-loop may close a PR automatically'
+
+    both_reference_lines "a git worktree prune is planted in references/rationale.md" \
+        'Then run `git worktree prune` to clear the registrations.' \
+        'instructs .git worktree prune.'
+
+    both_reference_lines "a bd ready call without --limit 0 is planted in references/rationale.md" \
+        'Read the queue with `bd ready --json`.' \
+        'a .bd ready. call carries no .--limit 0.'
+
+    # An anchor moved out of SKILL.md into references/ is gone for the checker:
+    # the anchor-type checks read SKILL.md only, so the move fails loudly.
+    for host in claude codex; do
+        t=$(fresh_tree)
+        replace_first "$t" "skills/$host/backlog-loop/SKILL.md" \
+            'Never close a PR automatically.' \
+            'A PR may be closed when it is stale.'
+        plant_reference "$t" "$host" 'Never close a PR automatically.'
+        expect_fail "an anchor sentence moves from SKILL.md into references/ (skills/$host)" \
+            "skills/$host/backlog-loop/SKILL.md: open-PR preservation rule is missing" "$t"
+    done
+
     # Not `return "$case_failures"`: a shell return status wraps at 256, so a
     # suite with 256 or more cases misreported its miss count. The callers read
     # `case_failures` itself.
@@ -1360,6 +1413,33 @@ spaced="$work/checkout with space"
 mkdir "$spaced"
 cp -R "$t/skills" "$t/prompts" "$spaced/"
 sh "$checker" "$spaced" >/dev/null 2>&1 || { echo "FAIL: the checker rejects a tree whose path contains a space" >&2; exit 1; }
+
+# A valid reference file, identical in both hosts, changes nothing -- whether it
+# is plain prose with none of the text the scan-type rules look for, or carries
+# text they read and none of them rejects.
+t=$(fresh_tree)
+for host in claude codex; do
+    plant_reference "$t" "$host" 'Rationale. A gate is a person'"'"'s question; the loop reads it and never answers it.'
+done
+if sh "$checker" "$t" >/dev/null 2>&1; then
+    echo "  ok: a plain-prose references/rationale.md in both hosts passes"
+else
+    echo "FAIL: the checker rejects a tree with a plain-prose references/rationale.md in both hosts:" >&2
+    sh "$checker" "$t" >&2 || true
+    exit 1
+fi
+
+t=$(fresh_tree)
+for host in claude codex; do
+    plant_reference "$t" "$host" 'Rationale. Read the queue with `bd ready --json --limit 0`; park an issue with `bd update <id> --status=blocked`; remove a run-owned worktree with `git worktree remove --force <path>`.'
+done
+if sh "$checker" "$t" >/dev/null 2>&1; then
+    echo "  ok: a valid references/rationale.md in both hosts passes"
+else
+    echo "FAIL: the checker rejects a tree with a valid references/rationale.md in both hosts:" >&2
+    sh "$checker" "$t" >&2 || true
+    exit 1
+fi
 
 run_suite "$checker"
 suite_failures="$case_failures"

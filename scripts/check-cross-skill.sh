@@ -18,6 +18,21 @@ copies_of() {
     done
     return 0
 }
+# SKILL.md of each copy, then every Markdown file directly in that copy's
+# `references/` directory. Scan-type checks (the metadata harvest and the
+# author-only label check) read these, so a write moved out of SKILL.md into a
+# reference file is still seen and still names its own path. Every contract
+# anchor below keeps reading copies_of, SKILL.md only, so a clause moved into
+# `references/` fails loudly. A skill with no `references/` yields SKILL.md alone.
+scan_copies_of() {
+    for f in $(copies_of "$1"); do
+        printf '%s\n' "$f"
+        for r in "$(dirname -- "$f")"/references/*.md; do
+            [ -f "$r" ] && printf '%s\n' "$r"
+        done
+    done
+    return 0
+}
 [ -d "$root/skills/claude" ] || fail "no Claude skills tree"
 skills=$(for host in claude codex; do
     [ -d "$root/skills/$host" ] || continue
@@ -91,7 +106,7 @@ written_metadata_keys() {
         # The writer's metadata contract lives in prose, with no `bd` write line
         # of its own, so a reserved key it names in backticks is a key it writes.
         case "$1" in
-            */source-to-beads/SKILL.md)
+            */source-to-beads/SKILL.md|*/source-to-beads/references/*.md)
                 grep -oE '`(backlog_loop|source_to_beads)_[a-z0-9_]+`' "$1" | tr -d '`' || true ;;
         esac
     } | grep -E '^[a-z][a-z0-9_]*$' | LC_ALL=C sort -u || true
@@ -159,7 +174,7 @@ tab=$(printf '\t')
 total_keys=0
 for skill in $skills; do
     : > "$scratch/keyed.$skill"
-    for f in $(copies_of "$skill"); do
+    for f in $(scan_copies_of "$skill"); do
         written_metadata_keys "$f" | while IFS= read -r key; do printf '%s\t%s\n' "$key" "$f"; done >> "$scratch/keyed.$skill"
     done
     cut -f1 "$scratch/keyed.$skill" | LC_ALL=C sort -u > "$scratch/keys.$skill"
@@ -191,7 +206,7 @@ for a in $skills; do
     done
 done
 for skill in $skills; do
-    for f in $(copies_of "$skill"); do
+    for f in $(scan_copies_of "$skill"); do
         for label in hard-blocker audit-suppressed; do
             sites=$(bd_set_lines "$f" | grep -F -- "$label" || true)
             [ -z "$sites" ] || fail "$skill: $f has a write site for author-only label '$label'"
