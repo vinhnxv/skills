@@ -1117,7 +1117,7 @@ SCAN_FILES_END
         fail "$f: preflight no longer reads the required approving review count from both branch protection and pull_request rulesets (breaks R27: a ruleset-only approval requirement is never named)"
     grep -qF -- 'Name it before the first claim as `approval required: <n> review(s) (<protection|ruleset>)`, or `approval required: none`.' "$f" ||
         fail "$f: preflight no longer names the approval requirement before the first claim (breaks R27: the operator learns of it from a parked PR)"
-    grep -qF -- 'wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict' "$f" ||
+    grep -qF -- '| `OPEN`, `reviewDecision` is `REVIEW_REQUIRED` | wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict | no | `blocked`, `transient:pr-open` |' "$f" ||
         fail "$f: the \`REVIEW_REQUIRED\` row no longer waits and reports the required approval without holding back the clear verdict (breaks R27: the PR is either abandoned or approved by the loop)"
     grep -qF -- 'waiting on a required approval, an interruption park in RECOVERY' "$f" ||
         fail "$f: CHARGING no longer lists waiting on a required approval as never charged (breaks R27: a PR waiting on a person reaches the attempt ceiling)"
@@ -1309,8 +1309,10 @@ SCAN_FILES_END
         fail "$f: residual contract missing: needs-person outside loop set"
     grep -qF -- 'No issue in the loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval, and no PR this census'"'"'s RESIDUE PASS stripped is still `OPEN` -> the backlog is clear. Report that approval-waiting issue as awaiting a person; it does not hold back the clear verdict.' "$f" ||
         fail "$f: residual contract missing: approval termination"
-    grep -qF -- 'wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict' "$f" ||
-        fail "$f: residual contract missing: approval disposition"
+    grep -qF -- 'required checks pass, `mergeStateStatus` is `CLEAN` or `HAS_HOOKS` (or `UNSTABLE` when every non-passing check is optional and still pending or missing, where `startup_failure` and billing or quota errors count as missing), no unresolved feedback | adopt the issue through ADOPTION'"'"'s guarded write;' "$f" ||
+        fail "$f: residual contract missing: adopt row UNSTABLE"
+    grep -qF -- 'or LINKED PR DISPOSITION sends it to `needs-person`, except that an issue whose open linked PR REPORT lists as awaiting a required approval is reported as awaiting a person and does not hold back the clear verdict. Nothing here decides' "$f" ||
+        fail "$f: residual contract missing: approval exception in recoverable-PR rule"
     [ "$(disposition_rows "$f" | tail -n 1)" = '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' ] ||
         fail "$f: residual contract missing: catch-all must be the last disposition row"
 

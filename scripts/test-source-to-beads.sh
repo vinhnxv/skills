@@ -86,7 +86,8 @@ Never read an earlier result note as a verdict
 --append-notes <note> --if-assignee '' --if-status open
 Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`
 Resolve `<remote>` in this order: the remote of the current branch's upstream, else `origin`, else the only remote. When there is no remote, or several remotes with no upstream and none named `origin`, record `Remote: unresolved` and record the tip probes as `unresolved`.
-Read `<remote>` from the audit report's `Remote` header when the source is an audit report; otherwise use the following resolution rule.
+Read `<remote>` from the audit report's `Remote` header when the source is an audit report whose header names a remote; otherwise use the following resolution rule.
+A legacy `repo-audit-report/v1` report with no `Remote` header, or a header that reads `unresolved`, uses that rule too, and the receipt says the remote was derived during revalidation.
 REQUIREMENTS
     printf '%s\n' "$close_clause"
 }
@@ -161,7 +162,6 @@ run_cases() {
     done <<REQUIREMENTS
 $(requirements)
 REQUIREMENTS
-    run_case "$checker" "metadata key deletion" drop 'source_to_beads_key' '' 'lacks source_to_beads_key'
     run_case "$checker" "issue closure outside the clause" append 'bd close example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
     run_case "$checker" "issue reopening" append 'bd reopen example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
     run_case "$checker" "issue closure behind a directory option" append 'bd -C . close example' '' 'closes or reopens an issue outside the reconcile confirmation clause'
@@ -177,33 +177,9 @@ REQUIREMENTS
     run_case "$checker" "confirmation clause removed" drop "$close_clause" '' "lacks $close_clause"
     run_case "$checker" "confirmation requirement removed" replace 'only after the operator confirms the close-candidate list' 'without asking the operator' "lacks $close_clause"
     run_case "$checker" "close limited to issues this skill created" replace 'and only an issue this skill created (its `source_to_beads_key` begins `s2b1|`)' 'and any issue' "lacks $close_clause"
-    run_case "$checker" "reconcile runs only on request" drop 'Run reconcile mode only when the operator asks to reconcile issues already filed' '' 'lacks Run reconcile mode only when the operator asks to reconcile issues already filed'
-    run_case "$checker" "result note is never a verdict" drop 'Never read an earlier result note as a verdict' '' 'lacks Never read an earlier result note as a verdict'
     run_case "$checker" "status-guarded result note" drop "--append-notes <note> --if-assignee '' --if-status open" '' 'lacks --append-notes <note> --if-assignee '"'"''"'"' --if-status open'
-    run_case "$checker" "legacy and foreign issues untouched" drop 'Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`' '' 'lacks Never touch an issue whose `source_to_beads_key` does not begin `s2b1|`'
-    run_case "$checker" "default-tip revalidation sentence" drop 'Revalidate every audit finding against the default-branch tip, never the checked-out branch.' '' 'lacks Revalidate every audit finding against the default-branch tip, never the checked-out branch.'
     run_case "$checker" "fetch that touches only the remote-tracking ref" drop 'which updates only the remote-tracking ref and touches no worktree or local branch' '' 'lacks run `git fetch <remote> refs/heads/<default>`, which updates only the remote-tracking ref and touches no worktree or local branch'
-    run_case "$checker" "evidence read from the tip object" drop 'Read the cited evidence with `git show <tip>:<path>`' '' 'lacks Read the cited evidence with `git show <tip>:<path>`'
-    run_case "$checker" "fetch-failure-only deferral" drop 'Defer a finding, and say so in the receipt, only when the fetch fails.' '' 'lacks Defer a finding, and say so in the receipt, only when the fetch fails.'
-    run_case "$checker" "branch-only evidence deferral" drop 'Evidence that exists only on the checked-out branch defers unless the operator opted in to branch-only evidence' '' 'lacks Evidence that exists only on the checked-out branch defers unless the operator opted in to branch-only evidence'
-    run_case "$checker" "refuted findings refused" drop 'Refuse a refuted finding: when the tip no longer shows the cited defect, file nothing' '' 'lacks Refuse a refuted finding: when the tip no longer shows the cited defect, file nothing'
-    run_case "$checker" "unevaluable findings only as verification spikes" drop 'File a finding that cannot be evaluated only as a `spike` with action kind `verify`.' '' 'lacks File a finding that cannot be evaluated only as a `spike` with action kind `verify`.'
-    run_case "$checker" "revalidated-at record" drop 'Record `revalidated-at: <tip sha>` in the body of every finding filed.' '' 'lacks Record `revalidated-at: <tip sha>` in the body of every finding filed.'
-    run_case "$checker" "companion review verdicts" drop 'A `disagree` or `correct` verdict in a companion `docs/audits/<run-id>-review-*.md` file defers the finding or turns it into a verification task.' '' 'lacks A `disagree` or `correct` verdict in a companion `docs/audits/<run-id>-review-*.md` file defers the finding or turns it into a verification task.'
-    run_case "$checker" "key grammar" drop 's2b1|<repo-id>|<anchor>|<action-kind>[|<n>]' '' 'lacks s2b1|<repo-id>|<anchor>|<action-kind>[|<n>]'
-    run_case "$checker" "ssh and https repo-id equivalence example" drop '`git@GitHub.com:Org/Repo.git` and `https://github.com/Org/Repo` both give `github.com/org/repo`' '' 'lacks `git@GitHub.com:Org/Repo.git` and `https://github.com/Org/Repo` both give `github.com/org/repo`'
-    run_case "$checker" "root commit fallback" drop 'fall back to the root commit SHA when there is no origin' '' 'lacks fall back to the root commit SHA when there is no origin'
-    run_case "$checker" "metadata key name assertion" drop 'Assert that each metadata key name matches `^[a-z_][a-z0-9_]*$` before create.' '' 'lacks Assert that each metadata key name matches `^[a-z_][a-z0-9_]*$` before create.'
-    run_case "$checker" "deterministic id create" drop 'Create each issue with `--id <prefix>-s<first 8 hex of sha256(key)>`' '' 'lacks Create each issue with `--id <prefix>-s<first 8 hex of sha256(key)>`'
-    run_case "$checker" "duplicate id means reuse" drop 'a duplicate id is refused even with `--force`' '' 'lacks a duplicate id is refused even with `--force`'
     run_case "$checker" "status-guarded update" drop "--if-assignee '' --if-status open" '' 'lacks --if-assignee '"'"''"'"' --if-status open'
-    run_case "$checker" "exit 13 defers" drop 'exit 13 means the issue was claimed or left `open`' '' 'lacks exit 13 means the issue was claimed or left `open`'
-    run_case "$checker" "native gate form" drop 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`' '' 'lacks File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`'
-    run_case "$checker" "agent-decidable decision issue" drop 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.' '' 'lacks Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.'
-    run_case "$checker" "ambiguous match defers one candidate" drop 'An ambiguous match defers that candidate only' '' 'lacks An ambiguous match defers that candidate only'
-    run_case "$checker" "global stop only for an incomplete listing" drop 'stop tracker writes only when the listing itself is incomplete' '' 'lacks stop tracker writes only when the listing itself is incomplete'
-    run_case "$checker" "no-inherit-labels" drop 'Pass `--no-inherit-labels` on a child that sets explicit labels.' '' 'lacks Pass `--no-inherit-labels` on a child that sets explicit labels.'
-    run_case "$checker" "receipt gate resolution" drop 'List every gate filed with how to resolve it: `bd gate resolve <id>`.' '' 'lacks List every gate filed with how to resolve it: `bd gate resolve <id>`.'
 }
 
 check_unrelated() { echo 'FAIL: deliberately unrelated reason' >&2; return 1; }

@@ -743,6 +743,13 @@ Never ask me for input.'
         '' \
         'residual contract missing: catch-all disposition'
 
+    both_hosts 'catch-all moved above the adopt row' \
+        '| `OPEN`, head equals `backlog_loop_head`, base equals the gated base, required checks pass, `mergeStateStatus` is `CLEAN` or `HAS_HOOKS` (or `UNSTABLE` when every non-passing check is optional and still pending or missing, where `startup_failure` and billing or quota errors count as missing), no unresolved feedback | adopt the issue through ADOPTION'"'"'s guarded write; rerun the exact-head gates only when `backlog_loop_gate_receipt` does not hold this head, this base, and the current gate-set digest; then I6'"'"'s guarded merge | no | `in_progress` at `merge-requested` |
+| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' \
+        '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |
+| `OPEN`, head equals `backlog_loop_head`, base equals the gated base, required checks pass, `mergeStateStatus` is `CLEAN` or `HAS_HOOKS` (or `UNSTABLE` when every non-passing check is optional and still pending or missing, where `startup_failure` and billing or quota errors count as missing), no unresolved feedback | adopt the issue through ADOPTION'"'"'s guarded write; rerun the exact-head gates only when `backlog_loop_gate_receipt` does not hold this head, this base, and the current gate-set digest; then I6'"'"'s guarded merge | no | `in_progress` at `merge-requested` |' \
+        'residual contract missing: catch-all must be the last disposition row'
+
     both_hosts 'released needs-person census' \
         '| 6 | `self-blocked-needs-person` | (`status=blocked`, `backlog_loop_run` present, and `backlog_loop_cause` is `needs-person` or still absent), or (`status=blocked`, no `backlog_loop_run`, and `backlog_loop_cause` is `needs-person`) |' \
         '| 6 | `self-blocked-needs-person` | `status=blocked`, `backlog_loop_run` present, and `backlog_loop_cause` is `needs-person` or still absent |' \
@@ -773,9 +780,19 @@ Never ask me for input.'
         'No issue in the loop-responsible set, and no PR this census'"'"'s RESIDUE PASS stripped is still `OPEN` -> the backlog is clear.' \
         'residual contract missing: approval termination'
 
-    both_hosts 'approval disposition' \
-        'wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict' \
-        'wait for the required approval and never approve; this loop stays responsible and lists the PR in the report as awaiting a required approval' \
+    both_hosts 'adopt row UNSTABLE' \
+        'required checks pass, `mergeStateStatus` is `CLEAN` or `HAS_HOOKS` (or `UNSTABLE` when every non-passing check is optional and still pending or missing, where `startup_failure` and billing or quota errors count as missing), no unresolved feedback | adopt the issue through ADOPTION'"'"'s guarded write;' \
+        'required checks pass, `mergeStateStatus` is `CLEAN` or `HAS_HOOKS`, no unresolved feedback | adopt the issue through ADOPTION'"'"'s guarded write;' \
+        'residual contract missing: adopt row UNSTABLE'
+
+    both_hosts 'approval exception in recoverable-PR rule' \
+        'or LINKED PR DISPOSITION sends it to `needs-person`, except that an issue whose open linked PR REPORT lists as awaiting a required approval is reported as awaiting a person and does not hold back the clear verdict. Nothing here decides' \
+        'or LINKED PR DISPOSITION sends it to `needs-person`. Nothing here decides' \
+        'residual contract missing: approval exception in recoverable-PR rule'
+
+    both_hosts 'REVIEW_REQUIRED row charged' \
+        '| `OPEN`, `reviewDecision` is `REVIEW_REQUIRED` | wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict | no | `blocked`, `transient:pr-open` |' \
+        '| `OPEN`, `reviewDecision` is `REVIEW_REQUIRED` | wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict | yes | `blocked`, `transient:pr-open` |' \
         'the .REVIEW_REQUIRED. row no longer waits and reports the required approval without holding back the clear verdict'
 
     both_hosts 'catch-all merges' \
