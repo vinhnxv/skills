@@ -5,6 +5,9 @@
 # every case.
 set -eu
 
+# No arguments: a typo such as `--fixtures-only` must not pass for a flag.
+[ "$#" -eq 0 ] || { echo "usage: test-source-to-beads.sh (takes no arguments)" >&2; exit 2; }
+
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 claude="$root/skills/claude/source-to-beads/SKILL.md"
 codex="$root/skills/codex/source-to-beads/SKILL.md"
@@ -97,7 +100,8 @@ check "$claude"
 check "$codex"
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/source-to-beads-contract.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' INT HUP TERM
 
 # Delete every line holding the literal; fail the case when none does, so a
 # reworded anchor cannot leave a case silently testing nothing.

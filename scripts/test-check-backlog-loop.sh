@@ -43,11 +43,15 @@
 
 set -eu
 
+# At most one argument, and never an option: anything else is a typo to reject.
+case "${1:-}" in -*) echo "usage: test-check-backlog-loop.sh [path-to-check-backlog-loop.sh]" >&2; exit 2 ;; esac
+[ "$#" -le 1 ] || { echo "usage: test-check-backlog-loop.sh [path-to-check-backlog-loop.sh]" >&2; exit 2; }
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 checker="${1:-$repo_root/scripts/check-backlog-loop.sh}"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/test-check-backlog-loop.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT HUP TERM
 
 # A fresh copy of the real tree, one per case, so no case can see another's
 # break. `prompts/` is included because the backlog-loop goal shares terminal

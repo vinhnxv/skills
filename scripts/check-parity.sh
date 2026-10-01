@@ -55,13 +55,17 @@ codex_only_files() {
     done
 }
 
+# At most one argument, and never an option: anything else is a typo to reject.
+case "${1:-}" in -*) echo "usage: check-parity.sh [tree-root]" >&2; exit 2 ;; esac
+[ "$#" -le 1 ] || { echo "usage: check-parity.sh [tree-root]" >&2; exit 2; }
 root="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
 claude_root="$root/skills/claude"
 codex_root="$root/skills/codex"
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/check-parity.XXXXXX")
 cleanup() { rm -rf "$scratch"; }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT HUP TERM
 
 fail() {
     echo "FAIL: $*" >&2

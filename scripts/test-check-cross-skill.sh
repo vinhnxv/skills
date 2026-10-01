@@ -2,10 +2,14 @@
 # Mutation tests for the cross-skill contract. Every case must fail for its
 # named reason; a checker that always succeeds must miss every case.
 set -eu
+# At most one argument, and never an option: anything else is a typo to reject.
+case "${1:-}" in -*) echo "usage: test-check-cross-skill.sh [path-to-check-cross-skill.sh]" >&2; exit 2 ;; esac
+[ "$#" -le 1 ] || { echo "usage: test-check-cross-skill.sh [path-to-check-cross-skill.sh]" >&2; exit 2; }
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 checker="${1:-$repo_root/scripts/check-cross-skill.sh}"
 work=$(mktemp -d "${TMPDIR:-/tmp}/test-check-cross-skill.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT HUP TERM
 fresh_tree() {
     tree=$(mktemp -d "$work/case-XXXXXX")
     cp -R "$repo_root/skills" "$tree/skills"
@@ -172,11 +176,12 @@ run_suite() {
     both_replace "writer loses the database comparison" "source-to-beads: .*missing bd where comparison" source-to-beads 'compare `bd where` in the current directory with `bd -C <root> where`' 'assume the database'
     both_append "audit compares databases itself" "repo-audit: .*contains a Beads command" repo-audit 'Compare `bd where` with `bd -C <root> where` before the copy.'
 
-    return "$misses"
+    return 0
 }
 echo "Running suite against $checker"
 failures=0
-run_suite "$checker" || failures=$?
+run_suite "$checker"
+failures="$misses"
 real_cases="$cases"
 [ "$failures" -eq 0 ] || { echo "FAIL: $failures mutation case(s) missed" >&2; exit 1; }
 # A checkout path with a space must not split into two paths.
@@ -187,7 +192,7 @@ sh "$checker" "$spaced" >/dev/null 2>&1 || { echo "FAIL: the checker rejects a t
 weak="$work/weakened.sh"
 printf '#!/bin/sh\nexit 0\n' > "$weak"
 echo "Running suite against a deliberately weakened checker"
-weak_misses=0
-run_suite "$weak" || weak_misses=$?
+run_suite "$weak"
+weak_misses="$misses"
 [ "$weak_misses" -eq "$real_cases" ] || { echo "FAIL: weakened checker missed only $weak_misses of $real_cases cases" >&2; exit 1; }
 echo "OK: all $real_cases breaks detected; weakened checker rejected"

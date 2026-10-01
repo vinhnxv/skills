@@ -8,13 +8,17 @@
 # and each mutation of it must fail the report check for its stated reason.
 set -eu
 
+# No arguments: a typo such as `--fixtures-only` must not pass for a flag.
+[ "$#" -eq 0 ] || { echo "usage: test-repo-audit.sh (takes no arguments)" >&2; exit 2; }
+
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 claude="$root/skills/claude/repo-audit/SKILL.md"
 codex="$root/skills/codex/repo-audit/SKILL.md"
 fixture="$root/scripts/fixtures/audit-report-v1.md"
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/audit-contract.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' INT HUP TERM
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 require() { grep -Fq -- "$2" "$1" || fail "$1 lacks $2"; }

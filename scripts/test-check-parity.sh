@@ -19,7 +19,7 @@
 # Every case is run once per skill in the tree rather than against one
 # hardcoded name, because a checker that stops after the first skill it finds
 # passes a suite that only ever breaks the first skill. To make that
-# discriminate before a second real skill exists, fresh_tree() plants a
+# discriminate before a second real skill exists, the base tree plants a
 # synthetic clone of the first skill in every case tree.
 #
 # Finally the whole suite runs again against a deliberately weakened checker
@@ -29,13 +29,17 @@
 
 set -eu
 
+# At most one argument, and never an option: anything else is a typo to reject.
+case "${1:-}" in -*) echo "usage: test-check-parity.sh [path-to-check-parity.sh]" >&2; exit 2 ;; esac
+[ "$#" -le 1 ] || { echo "usage: test-check-parity.sh [path-to-check-parity.sh]" >&2; exit 2; }
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 checker="${1:-$repo_root/scripts/check-parity.sh}"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/test-check-parity.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT HUP TERM
 
-# The clone fresh_tree() plants in every case tree. Its name must sort after a
+# The clone the base tree carries into every case tree. Its name must sort after a
 # real skill's for no reason the suite depends on -- the cases are run per
 # skill, in whatever order discovery returns.
 SYNTHETIC_SKILL="synthetic-parity-probe"
@@ -89,15 +93,22 @@ plant_synthetic_skill() {
     done
 }
 
-# Fresh copy of the real tree plus the synthetic skill; echoes the tree root to
-# build cases against. mktemp -d gives each case its own empty directory: this
-# function runs inside a command substitution, so a shell variable used as a
-# counter would live in a subshell and never advance, silently making every
-# case share one tree.
+# The real tree plus the synthetic skill, built once per run. Every case copies
+# it instead of rebuilding it, so the clone is planted once rather than once per
+# case. A plain copy and never a hard link: some cases append to a file in place,
+# which would write through a link into the base and every later case.
+base=$work/base
+mkdir "$base"
+cp -R "$repo_root/skills" "$base/skills"
+plant_synthetic_skill "$base"
+
+# Fresh copy of the base tree; echoes the tree root to build cases against.
+# mktemp -d gives each case its own empty directory: this function runs inside
+# a command substitution, so a shell variable used as a counter would live in a
+# subshell and never advance, silently making every case share one tree.
 fresh_tree() {
     dir=$(mktemp -d "$work/case.XXXXXX")
-    cp -R "$repo_root/skills" "$dir/skills"
-    plant_synthetic_skill "$dir"
+    cp -R "$base/skills" "$dir/skills"
     echo "$dir"
 }
 
@@ -412,7 +423,7 @@ run_suite() {
     done
     case_skill=""
 
-    return "$failures"
+    return 0
 }
 
 # Discovered once, from a fresh tree rather than from the repository root, and
@@ -423,8 +434,8 @@ discovered_skills=$(list_tree_skills "$(fresh_tree)")
 echo "Skills under test: $(echo "$discovered_skills" | tr '\n' ' ')"
 
 echo "Running suite against $checker"
-suite_failures=0
-run_suite "$checker" || suite_failures=$?
+run_suite "$checker"
+suite_failures="$failures"
 real_breaks="$break_cases"
 
 if [ "$suite_failures" -ne 0 ]; then
@@ -438,8 +449,8 @@ fi
 weak="$work/weakened-check-parity.sh"
 printf '#!/bin/sh\nexit 0\n' > "$weak"
 echo "Running suite against a deliberately weakened checker (every break must go undetected)"
-weak_failures=0
-run_suite "$weak" || weak_failures=$?
+run_suite "$weak"
+weak_failures="$failures"
 
 if [ "$weak_failures" -ne "$real_breaks" ]; then
     echo "FAIL: the weakened checker went undetected in only $weak_failures of $real_breaks break cases;" >&2

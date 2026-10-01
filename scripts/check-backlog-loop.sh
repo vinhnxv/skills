@@ -232,6 +232,9 @@ PARKED_STATUSES="hooked pinned deferred"
 # read the same command the same way as `check-cross-skill.sh` does.
 BD_WORDS='bd([[:space:]]+-[^[:space:]`]+([[:space:]]+[^-[:space:]`][^[:space:]`]*)?)*[[:space:]]+'
 
+# At most one argument, and never an option: anything else is a typo to reject.
+case "${1:-}" in -*) echo "usage: check-backlog-loop.sh [tree-root]" >&2; exit 2 ;; esac
+[ "$#" -le 1 ] || { echo "usage: check-backlog-loop.sh [tree-root]" >&2; exit 2; }
 root="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
 
 fail() {
@@ -367,7 +370,8 @@ cause_categories() { # file
 }
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/check-backlog-loop.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT HUP TERM
 
 copies=$(copies_of "$SKILL_NAME")
 [ -n "$copies" ] ||

@@ -105,10 +105,10 @@ jobs:
       # Pure shell checks cover the report contract and the separate Beads
       # writer. Host-driven model runs remain outside the push path.
       - name: The audit report contract holds
-        run: sh scripts/test-repo-audit.sh --fixtures-only
+        run: sh scripts/test-repo-audit.sh
 
       - name: The source-to-Beads contract holds
-        run: sh scripts/test-source-to-beads.sh --fixtures-only
+        run: sh scripts/test-source-to-beads.sh
 
   install:
     # The README's install command is the first thing a stranger runs, and it

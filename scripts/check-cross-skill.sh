@@ -6,6 +6,9 @@ set -eu
 # survives every `for f in $list`; nothing here relies on splitting at a space.
 IFS='
 '
+# At most one argument, and never an option: anything else is a typo to reject.
+case "${1:-}" in -*) echo "usage: check-cross-skill.sh [tree-root]" >&2; exit 2 ;; esac
+[ "$#" -le 1 ] || { echo "usage: check-cross-skill.sh [tree-root]" >&2; exit 2; }
 root="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 copies_of() {
@@ -150,7 +153,8 @@ for f in $writer_copies; do
 done
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/check-cross-skill.XXXXXX")
-trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+trap 'rm -rf "$scratch"' EXIT
+trap 'exit 130' INT HUP TERM
 tab=$(printf '\t')
 total_keys=0
 for skill in $skills; do

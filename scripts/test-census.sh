@@ -1,13 +1,14 @@
 #!/bin/sh
 # Prove that backlog-loop's CENSUS section classifies a real Beads backlog.
 #
-# Usage: test-census.sh [--contract-only]
+# Usage: test-census.sh [--full | --contract-only]
 #
-# This suite is NOT part of the push path. Half of it drives a model, so it is
-# non-deterministic and slow, and a gate that goes yellow on every third run
-# stops being read. Run it by hand before changing the CENSUS section, or
-# nightly. `--contract-only` runs just the deterministic half, which is safe
-# anywhere.
+# With no argument it runs the deterministic half only, which is safe anywhere.
+# `--contract-only` says the same thing explicitly. `--full` also runs PART 2,
+# which drives a model, so it is non-deterministic and slow, and a gate that
+# goes yellow on every third run stops being read: run it by hand before
+# changing the CENSUS section, or nightly. Any other argument exits 2, and so
+# does `--full` together with `--contract-only`.
 #
 # It comes in two parts, and they fail for different reasons.
 #
@@ -31,8 +32,17 @@
 set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-contract_only=0
-[ "${1:-}" = "--contract-only" ] && contract_only=1
+usage() { echo "usage: test-census.sh [--full | --contract-only]" >&2; exit 2; }
+contract_only=1
+asked_contract=0
+for arg in "$@"; do
+    case "$arg" in
+        --full) contract_only=0 ;;
+        --contract-only) asked_contract=1 ;;
+        *) usage ;;
+    esac
+done
+[ "$contract_only" -eq 1 ] || [ "$asked_contract" -eq 0 ] || usage
 
 # Every tracker command names its store with `-C`, so bd runs with this
 # suite's working directory -- the repository -- rather than the store's. bd
@@ -46,7 +56,8 @@ GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-contributor}
 export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/test-census.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT HUP TERM
 
 failures=0
 checks=0
@@ -64,7 +75,15 @@ fail() { checks=$((checks + 1)); failures=$((failures + 1)); printf '  FAIL: %s\
 # case from reading whichever store the previous one happened to leave as cwd.
 fresh_store() {
     dir=$(mktemp -d "$work/store.XXXXXX")
-    ( cd "$dir" && bd init --prefix cx >/dev/null 2>&1 )
+    # Keep bd's output for the failure path only: this runs inside a command
+    # substitution, so a failed init cannot `fail` the case, and swallowing its
+    # stderr would leave a suite that stops with no reason. Print it, then
+    # return non-zero so `set -e` ends the run.
+    if ! ( cd "$dir" && bd init --prefix cx ) > "$dir.init.log" 2>&1; then
+        echo "FAIL: bd init --prefix cx failed in $dir:" >&2
+        cat "$dir.init.log" >&2
+        return 1
+    fi
     echo "$dir"
 }
 
@@ -760,12 +779,16 @@ between those markers."
     # variable form silently passes "--allowedTools Bash(bd:*)" as ONE argument
     # under some shells and the CLI rejects it. `store_dir` and `mode` are
     # already saved above, so reusing the positional parameters here is safe.
+    # Codex has no `-p` prompt flag (`-p` is `--profile` there); it takes the
+    # prompt as the argument of `exec`.
     if [ "$host_cli" = "claude" ]; then
-        set -- --allowedTools 'Bash(bd:*)'
+        set -- claude -p "$prompt" --allowedTools 'Bash(bd:*)'
     else
-        set --
+        set -- codex exec "$prompt"
     fi
-    raw=$("$deadline" 600 "$host_cli" -p "$prompt" "$@" 2>&1); status=$?
+    # `raw=$(...); status=$?` would end the whole suite here under `set -e`
+    # the first time the CLI fails, before the runner-failed report below.
+    raw=$("$deadline" 600 "$@" 2>&1) && status=0 || status=$?
     # The census is executed by a model, so a case can fail because the
     # procedure is wrong OR because that run skipped a pass it should have run.
     # Those two look identical in the pass/fail line, and re-running the suite
