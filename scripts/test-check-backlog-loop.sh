@@ -937,6 +937,16 @@ Never ask me for input.'
         'At each step boundary it writes `backlog_loop_heartbeat="<iso> | live"`' \
         "HEARTBEAT REFRESHER no longer refreshes every 10 minutes"
 
+    both_hosts "the heartbeat refresher loses its lifetime bound" \
+        'so its lifetime is bounded another way: 36 ticks (6 hours), and it stops at the first `<refresh>` that fails or that finds no `in_progress` issue carrying `backlog_loop_run=<run-id>`.' \
+        'so it runs until I8 REAP ends it.' \
+        "HEARTBEAT REFRESHER no longer bounds its own lifetime"
+
+    both_hosts "LIVENESS counts a refresher as proof of a live run" \
+        'A process that also carries `BACKLOG_LOOP_ROLE=refresher` is a refresher, and a refresher alone does not prove a live run: it outlives a dead run by up to 6 hours.' \
+        'A process that also carries `BACKLOG_LOOP_ROLE=refresher` is a refresher.' \
+        "LIVENESS no longer says a refresher alone does not prove a live run"
+
     both_hosts "FINAL REPORT stops releasing the members still held" \
         'write `backlog_loop_heartbeat="<iso> | released"` on every member this run still holds `in_progress`' \
         'leave the heartbeat on every member this run still holds `in_progress`' \
