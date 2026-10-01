@@ -4,11 +4,32 @@ on:
   push:
   pull_request:
 
+# Nothing here writes to the repository, so the token gets read access to its
+# contents and nothing else.
+permissions:
+  contents: read
+
+# A newer push to the same ref makes the older run's result irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   parity:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      # Third-party actions are pinned to a full commit SHA, the version in the
+      # trailing comment. A tag can be moved after the fact; a SHA cannot.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # Every script is POSIX sh, so it is checked as sh. SC1007 is excluded
+      # because the scripts write `CDPATH= cd -- ...` on purpose: an empty
+      # CDPATH for that one command.
+      - name: Scripts pass shellcheck at warning level
+        run: shellcheck -s sh -S warning -e SC1007 scripts/*.sh
 
       - name: Host copies stay in parity
         run: sh scripts/check-parity.sh
@@ -46,24 +67,40 @@ jobs:
       - name: The backlog-loop check can still fail
         run: sh scripts/test-check-backlog-loop.sh
 
-      # Supplementary gate only, and a partial one: probed against this
-      # skill, `claude plugin validate --strict` catches a missing
+      # `claude plugin validate --strict` is a supplementary gate, and a
+      # partial one: probed against this skill, it catches a missing
       # `description` and a missing or empty frontmatter block, but passes a
       # SKILL.md with no `name:`, with a name that does not match its
       # directory, or with malformed frontmatter YAML. check-parity.sh covers
-      # those and is the gate that always runs -- `claude` is absent from a
-      # stock runner, so this step usually skips.
-      #
+      # those. What the validator adds is Claude Code's own reading of the
+      # frontmatter, so it is installed at an exact version and required: a
+      # runner without it fails the job instead of skipping. Only `plugin
+      # validate` runs; no model is driven.
+      - name: Install pinned claude 2.1.286
+        env:
+          CLAUDE_CODE_VERSION: 2.1.286
+        run: |
+          set -eu
+          prefix="$RUNNER_TEMP/claude-cli"
+          npm install --global --prefix "$prefix" "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+
       # The validator only scans one level below a directory literally named
       # `skills`. Pointed at this repository's own skills/ it would find
       # claude/ and codex/, validate nothing, and report success -- so each
       # host tree is staged into its own temporary skills/ first.
-      - name: Validate each host tree against Claude Code
+      - name: Each host tree passes claude plugin validate --strict
+        env:
+          CLAUDE_CODE_VERSION: 2.1.286
+          DISABLE_AUTOUPDATER: "1"
         run: |
-          if ! command -v claude >/dev/null 2>&1; then
-            echo "::notice::claude is not on PATH; skipping plugin validate"
-            exit 0
-          fi
+          set -eu
+          have=$(claude --version)
+          echo "claude $have"
+          case "$have" in
+            "$CLAUDE_CODE_VERSION"*) ;;
+            *) echo "expected claude $CLAUDE_CODE_VERSION, got: $have"; exit 1 ;;
+          esac
           status=0
           for host in claude codex; do
             tmp=$(mktemp -d)
@@ -80,100 +117,215 @@ jobs:
 
   census:
     runs-on: ubuntu-latest
+    # The contract suite and the harness suite each spend a few minutes
+    # creating real `bd` stores.
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      # `--contract-only` is load-bearing: the other half of that suite drives
-      # a model through the host CLI, which is slow, non-deterministic, and has
-      # no place on a push path. The contract half is pure shell and pins the
-      # `bd` behaviours BOTH skills are built on -- which flags hide rows, what
-      # a native gate looks like, that a human gate is offered as ready work,
-      # that `--readonly` refuses a write, and that `bd export` rather than a
-      # file diff is the non-mutation oracle, plus the write-protocol behaviours
-      # `source-to-beads` rests on the same issue and gate contracts.
-      #
-      # `bd` is absent from a stock runner, so on this repository's own CI this
-      # step SKIPS and proves nothing -- the step name says so, because a green
-      # check named as an assertion is exactly the silent pass this whole
-      # feature exists to stop. It earns its place anyway: the day someone runs
-      # it on a runner with `bd` installed, a tracker change that invalidated
-      # the procedure fails here instead of inside an unattended loop that has
-      # already claimed a batch. Install `bd` on the runner to turn it on.
-      - name: Tracker contract for Beads skills (skipped unless bd is installed)
-        run: sh scripts/test-census.sh --contract-only
+      # The tracker contract is only worth running against the tracker the
+      # skills are written for, so `bd` is installed at an exact version from
+      # the project's release archive, and the archive is checked against a
+      # pinned sha256 before anything in it runs. The digest is the
+      # linux_amd64 line of that release's checksums.txt. The release lives
+      # under gastownhall/beads; the old steveyegge/beads path only redirects.
+      - name: Install pinned bd 1.3.0
+        env:
+          BD_VERSION: 1.3.0
+          BD_SHA256: 2f92b904ecf35b607e44dc5c39229173af69c54f1183e8d709f1773540cdcf3b
+        run: |
+          set -eu
+          archive="beads_${BD_VERSION}_linux_amd64.tar.gz"
+          bin="$RUNNER_TEMP/bd-bin"
+          mkdir -p "$bin"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gastownhall/beads/releases/download/v$BD_VERSION/$archive"
+          echo "$BD_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$bin" bd
+          echo "$bin" >> "$GITHUB_PATH"
 
-      # Pure shell checks cover the report contract and the separate Beads
-      # writer. Host-driven model runs remain outside the push path.
-      - name: The audit report contract holds
+      # test-census.sh exits 0 with SKIP when `bd` is absent, so a missing or
+      # wrong binary has to fail here or the next step would pass on nothing.
+      - name: bd 1.3.0 is on PATH
+        env:
+          BD_VERSION: 1.3.0
+        run: |
+          set -eu
+          command -v bd
+          have=$(bd --version)
+          echo "$have"
+          case "$have" in
+            "bd version $BD_VERSION"*) ;;
+            *) echo "expected bd $BD_VERSION, got: $have"; exit 1 ;;
+          esac
+
+      # `test-census.sh` with no argument is the contract half: pure shell
+      # against a seeded store, and no model. It pins the `bd` behaviours BOTH
+      # skills are built on -- which flags hide rows, what a native gate looks
+      # like, that a human gate is offered as ready work, that `--readonly`
+      # refuses a write, and that `bd export` rather than a file diff is the
+      # non-mutation oracle, plus the write-protocol behaviours
+      # `source-to-beads` rests on the same issue and gate contracts. The other
+      # half drives a model through the host CLI (`--full`), so it stays off
+      # the push path.
+      - name: Tracker contract holds against pinned bd
+        run: sh scripts/test-census.sh
+
+      # Stub host CLIs and a real TERM prove the properties every script
+      # shares; its two census runs use the `bd` installed above.
+      - name: Script harness safety properties hold
+        run: sh scripts/test-harness.sh
+
+      # Pure shell checks of the audit skill's clauses and of the sample report
+      # in scripts/fixtures/, and of the separate Beads writer's clauses.
+      # Host-driven model runs remain outside the push path.
+      - name: The repo-audit clauses and sample report hold
         run: sh scripts/test-repo-audit.sh
 
-      - name: The source-to-Beads contract holds
+      - name: The source-to-beads clauses hold
         run: sh scripts/test-source-to-beads.sh
 
   install:
-    # The README's install command is the first thing a stranger runs, and it
-    # is the one piece of this repository that executes on their machine, not
-    # ours. `--strip-components` and member selection behave the same on GNU
-    # tar and bsdtar in principle; this proves it on both rather than assuming.
-    # A `git archive --prefix=skills-main/` stand-in reproduces exactly what
-    # GitHub serves for the main branch, so the check needs no network and no
-    # published commit.
+    # The README's install commands are the first thing a stranger runs, and
+    # they are the one piece of this repository that executes on their
+    # machine, not ours. `--strip-components` and member selection behave the
+    # same on GNU tar and bsdtar in principle; this proves it on both rather
+    # than assuming. A `git archive --prefix=<repo>-main/` stand-in reproduces
+    # exactly what GitHub serves for the main branch, so the check needs no
+    # network and no published commit.
+    #
+    # The commands are not retyped here. They are cut out of the fenced blocks
+    # under README.md's `## Install` heading and run as written, so a README
+    # edit that breaks them breaks this job. The one substitution is `curl`:
+    # a stand-in on PATH that insists on the exact arguments the README gives,
+    # URL included, and prints the stand-in archive instead of fetching it.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      - name: The documented install command works on this platform
+      - name: README install blocks are extracted and each is recognized
+        run: |
+          set -eu
+          blocks="$RUNNER_TEMP/readme-blocks"
+          rm -rf "$blocks"; mkdir -p "$blocks"
+          awk -v dir="$blocks" '
+            /^## /                  { in_install = ($0 == "## Install"); in_fence = 0; next }
+            in_install && /^```sh$/ { in_fence = 1; n++; next }
+            in_install && /^```$/   { in_fence = 0; next }
+            in_install && in_fence  { print > (dir "/block" n ".sh") }
+          ' README.md
+          count=0; archive=0; clone=0
+          for f in "$blocks"/block*.sh; do
+            [ -e "$f" ] || break
+            count=$((count + 1))
+            if grep -q 'curl' "$f"; then archive=$((archive + 1)); mv "$f" "$f.archive"
+            elif grep -q 'cp -R' "$f"; then clone=$((clone + 1)); mv "$f" "$f.clone"
+            else echo "README.md Install block $f is neither an archive nor a clone install; CI would not run it"; cat "$f"; exit 1
+            fi
+          done
+          echo "install blocks: $count ($archive archive, $clone clone)"
+          # One archive block per host and one clone block. Any other count
+          # means a block was added, dropped, or no longer fenced as sh.
+          [ "$archive" -eq 2 ] && [ "$clone" -eq 1 ] || { echo "expected 2 archive blocks and 1 clone block"; exit 1; }
+
+      # A skill nobody can find the command for is not installable, however
+      # cleanly it extracts. The member path each command names must match the
+      # skill's directory exactly, whole and not as a prefix, and the README
+      # must carry no member path for a skill that does not exist. The prefix
+      # is the repository name plus `-main`, which is what GitHub names the
+      # top directory of a main-branch archive.
+      - name: README names the full archive member path of every skill on both hosts
+        run: |
+          set -eu
+          blocks="$RUNNER_TEMP/readme-blocks"
+          top="${GITHUB_REPOSITORY#*/}-main"
+          for host in claude codex; do
+            for skill in $(ls "skills/$host"); do echo "$top/skills/$host/$skill"; done
+          done | sort -u > "$RUNNER_TEMP/members.want"
+          cat "$blocks"/*.archive | tr -s ' \t\\' '\n' | grep "^$top/" | sort -u > "$RUNNER_TEMP/members.have" || true
+          diff "$RUNNER_TEMP/members.want" "$RUNNER_TEMP/members.have"
+          echo "README.md names exactly these archive members:"
+          cat "$RUNNER_TEMP/members.have"
+
+      - name: The README archive install commands run as written and install every skill
         run: |
           set -eu
           tar --version | head -1
-          git archive --format=tar.gz --prefix=skills-main/ HEAD > "$RUNNER_TEMP/main.tar.gz"
-          home="$RUNNER_TEMP/fakehome"
+          blocks="$RUNNER_TEMP/readme-blocks"
+          top="${GITHUB_REPOSITORY#*/}-main"
+          url="https://github.com/$GITHUB_REPOSITORY/archive/refs/heads/main.tar.gz"
+          git archive --format=tar.gz --prefix="$top/" HEAD > "$RUNNER_TEMP/main.tar.gz"
+
+          stub="$RUNNER_TEMP/stub-bin"
+          rm -rf "$stub"; mkdir -p "$stub"
+          cat > "$stub/curl" <<EOF
+          #!/bin/sh
+          [ "\$*" = "-fsSL $url" ] || { echo "README.md runs 'curl \$*', not 'curl -fsSL $url'" >&2; exit 1; }
+          cat "$RUNNER_TEMP/main.tar.gz"
+          EOF
+          chmod +x "$stub/curl"
+
+          home="$RUNNER_TEMP/fakehome-archive"
           rm -rf "$home"; mkdir -p "$home"
-
-          # Every skill, not one named here: a skill this job does not extract
-          # is a skill whose install command nobody has ever run.
-          for skill in $(ls skills/claude); do
-            # Verbatim from README.md, with the archive standing in for the
-            # curl and the skill name substituted.
-            HOME="$home" sh -c "mkdir -p ~/.claude/skills && tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/$skill" < "$RUNNER_TEMP/main.tar.gz"
-            HOME="$home" sh -c "mkdir -p ~/.codex/skills  && tar -xz -C ~/.codex/skills  --strip-components=3 skills-main/skills/codex/$skill"  < "$RUNNER_TEMP/main.tar.gz"
-
-            diff -r "$home/.claude/skills/$skill" "skills/claude/$skill"
-            diff -r "$home/.codex/skills/$skill"  "skills/codex/$skill"
-            echo "install produced byte-identical trees for both hosts: $skill"
+          for f in "$blocks"/*.archive; do
+            echo "running $f"
+            HOME="$home" PATH="$stub:$PATH" sh -eu "$f"
           done
 
-      # A skill nobody can find the command for is not installable, however
-      # cleanly it extracts. Checked against the archive member path both
-      # one-liners carry, which is the part that must name the skill exactly.
-      - name: The README documents an install command for every skill
-        run: |
-          set -eu
-          status=0
-          for skill in $(ls skills/claude); do
-            for host in claude codex; do
-              if ! grep -qF "skills-main/skills/$host/$skill" README.md; then
-                echo "README.md documents no $host install command for '$skill'"
-                status=1
-              fi
-            done
-          done
-          [ "$status" -eq 0 ] || exit 1
-          echo "every skill has an install command for both hosts in README.md"
+          # The whole installed tree, not a named skill: a skill the README
+          # forgot is a missing directory here, and a skill that was
+          # installed for the wrong host is a tree that differs.
+          diff -r "$home/.claude/skills" skills/claude
+          diff -r "$home/.codex/skills"  skills/codex
+          echo "install produced byte-identical trees for both hosts: $(ls skills/claude | tr '\n' ' ')"
 
-      # Deliberately one literal skill: this is a negative control on tar's
-      # behaviour, not on the skill set, and looping it would prove the same
-      # thing once per skill.
-      - name: A missing target directory fails loudly instead of mis-installing
+      - name: The README clone install commands run as written and install every skill
         run: |
           set -eu
-          git archive --format=tar.gz --prefix=skills-main/ HEAD > "$RUNNER_TEMP/main.tar.gz"
+          blocks="$RUNNER_TEMP/readme-blocks"
+          home="$RUNNER_TEMP/fakehome-clone"
+          rm -rf "$home"; mkdir -p "$home"
+          for f in "$blocks"/*.clone; do
+            echo "running $f"
+            HOME="$home" sh -eu "$f"
+          done
+          diff -r "$home/.claude/skills" skills/claude
+          diff -r "$home/.codex/skills"  skills/codex
+          echo "clone install produced byte-identical trees for both hosts"
+
+      # The README says why `mkdir -p` is in every command. Each claim there is
+      # a behaviour of the platform's tar or cp, so each is observed here, on
+      # both runners, rather than asserted. The tar control uses one literal
+      # skill on purpose: it is a negative control on tar, not on the skill set.
+      - name: A missing target directory behaves as the README states
+        run: |
+          set -eu
+          top="${GITHUB_REPOSITORY#*/}-main"
+          git archive --format=tar.gz --prefix="$top/" HEAD > "$RUNNER_TEMP/main.tar.gz"
+          ctl="$RUNNER_TEMP/controls"
+          rm -rf "$ctl"; mkdir -p "$ctl"
+
           status=0
-          tar -xzf "$RUNNER_TEMP/main.tar.gz" -C "$RUNNER_TEMP/absent" \
-              --strip-components=3 skills-main/skills/claude/backlog-loop 2>/dev/null || status=$?
+          tar -xzf "$RUNNER_TEMP/main.tar.gz" -C "$ctl/absent-tar" \
+              --strip-components=3 "$top/skills/claude/backlog-loop" 2>/dev/null || status=$?
           [ "$status" -ne 0 ] || { echo "tar silently accepted a missing -C directory"; exit 1; }
-          echo "tar into a missing directory exits $status, as the README states"
+          echo "tar into a missing directory exits $status"
+
+          status=0
+          cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads "$ctl/absent-cp-many/" 2>/dev/null || status=$?
+          [ "$status" -ne 0 ] || { echo "cp -R of several directories silently accepted a missing target"; exit 1; }
+          echo "cp -R of several directories into a missing target exits $status"
+
+          cp -R skills/claude/backlog-loop "$ctl/absent-cp-one/"
+          [ -f "$ctl/absent-cp-one/SKILL.md" ] && [ ! -d "$ctl/absent-cp-one/backlog-loop" ] \
+            || { echo "cp -R of one directory into a missing target did not copy its contents into it"; exit 1; }
+          echo "cp -R of one directory into a missing target exits 0 and copies its contents into the target"

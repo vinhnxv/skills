@@ -107,7 +107,7 @@ mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive
 ```
 
 The `mkdir -p` is not optional: `tar -C` on a directory that does not exist
-fails, and on the `cp -R` path below it silently mis-installs instead.
+fails.
 
 **Upgrading.** Delete the installed skill first — `rm -rf
 ~/.claude/skills/backlog-loop` (or the Codex path, or the other skill's) — then
@@ -122,9 +122,13 @@ mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo
 mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  ~/.codex/skills/
 ```
 
-`cp -R` into a directory that does not exist exits 0 and copies the skill's
-*contents* there, leaving you with a stray `SKILL.md` and no skill — hence the
-`mkdir -p`.
+The `mkdir -p` matters here too. With several source directories, as above,
+`cp -R` into a target that does not exist fails with a "not a directory" error. With a
+single source directory it exits 0 and copies the skill's *contents* into the
+target, leaving you with a stray `SKILL.md` and no skill.
+
+CI runs every command in these install blocks as written, with only `curl`
+replaced by an archive of the commit under test, on Linux and macOS.
 
 Claude Code also loads skills from a project's `.claude/skills/`, so the same
 commands work per project with `<your-repo>/.claude/skills` as the target.
