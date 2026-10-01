@@ -119,6 +119,21 @@ both_copies() {
     done
 }
 
+# One file under references/ of one host's copy of a skill, parent directories
+# included: tree, host, skill, name relative to references/, content.
+plant_reference_file() {
+    ref_path="$(skill_dir "$1" "$2" "$3")/references/$4"
+    mkdir -p "$(dirname "$ref_path")"
+    printf '%s\n' "$5" > "$ref_path"
+}
+
+# The same one-line references/ file in BOTH host copies: tree, skill, name.
+plant_shared_reference() {
+    for ref_host in claude codex; do
+        plant_reference_file "$1" "$ref_host" "$2" "$3" shared
+    done
+}
+
 # Delete the frontmatter's closing '---' in both host copies. Done by matching
 # the delimiter rather than by line number because the block's length differs
 # between skills, and between the two copies of one skill: the Claude copy
@@ -139,9 +154,8 @@ run_checker() {
     echo "$status"
 }
 
-failures=0
-break_cases=0
-case_skill=""
+# `failures`, `break_cases` and `case_skill` are set by `run_suite` before its
+# first case, so they need no initial value here.
 
 # Every case label names the skill it broke, so a checker that only ever looks
 # at the first skill reports which one it stopped at.
@@ -244,45 +258,29 @@ metadata:\
     # per-host allowed set and the copy-to-copy comparison are both exercised.
     for host in claude codex; do
         t=$(fresh_tree)
-        mkdir -p "$(skill_dir "$t" "$host" "$skill")/references"
-        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/x.md"
+        plant_reference_file "$t" "$host" "$skill" x.md shared
         expect_fail "references/x.md present in the $host copy only" "$t" "only in $host: ./references/x.md"
     done
 
     t=$(fresh_tree)
-    for host in claude codex; do
-        mkdir -p "$(skill_dir "$t" "$host" "$skill")/references"
-    done
-    printf 'one\n' > "$(skill_dir "$t" claude "$skill")/references/x.md"
-    printf 'two\n' > "$(skill_dir "$t" codex "$skill")/references/x.md"
+    plant_reference_file "$t" claude "$skill" x.md one
+    plant_reference_file "$t" codex "$skill" x.md two
     expect_fail "references/x.md differs between copies" "$t" "./references/x.md differs between the two host copies"
 
     t=$(fresh_tree)
-    for host in claude codex; do
-        mkdir -p "$(skill_dir "$t" "$host" "$skill")/references/sub"
-        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/sub/x.md"
-    done
+    plant_shared_reference "$t" "$skill" sub/x.md
     expect_fail "a nested references/sub/x.md in both copies" "$t" "outside the allowed set: ./references/sub/x.md"
 
     t=$(fresh_tree)
-    for host in claude codex; do
-        mkdir -p "$(skill_dir "$t" "$host" "$skill")/references"
-        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/x.txt"
-    done
+    plant_shared_reference "$t" "$skill" x.txt
     expect_fail "references/x.txt, not Markdown, in both copies" "$t" "outside the allowed set: ./references/x.txt"
 
     t=$(fresh_tree)
-    for host in claude codex; do
-        mkdir -p "$(skill_dir "$t" "$host" "$skill")/references"
-        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/.md"
-    done
+    plant_shared_reference "$t" "$skill" .md
     expect_fail "references/.md, a Markdown extension with no name, in both copies" "$t" "outside the allowed set: ./references/.md"
 
     t=$(fresh_tree)
-    for host in claude codex; do
-        mkdir -p "$(skill_dir "$t" "$host" "$skill")/references"
-        printf 'shared\n' > "$(skill_dir "$t" "$host" "$skill")/references/rationale.md"
-    done
+    plant_shared_reference "$t" "$skill" rationale.md
     expect_pass "an identical references/rationale.md in both copies" "$t"
 
     t=$(fresh_tree)
@@ -467,7 +465,6 @@ run_suite() {
         case_skill="$skill_under_test"
         run_skill_cases "$skill_under_test"
     done
-    case_skill=""
 
     return 0
 }

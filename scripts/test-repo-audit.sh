@@ -238,7 +238,7 @@ prompt_anchors > "$tmp/prompt-anchors"
 report_vocab
 
 # A deliberately weakened check: it must miss every case below.
-weak_check() { return 0; }
+check_control() { return 0; }
 
 check "$claude"
 check "$codex"
@@ -271,16 +271,23 @@ open(sys.argv[2], "w").write(s.replace(old, os.environ["NEW"], 1))
 PY
 }
 
+# expect_rejected <label> <reason> <fn> <file>: run the check on one mutated
+# file and count a miss when it passes, or when it fails for another reason.
+# The always-passing control never reaches the reason test.
+expect_rejected() {
+    if out=$("$3" "$4" 2>&1); then
+        misses=$((misses + 1)); echo "  MISS: $1" >&2
+    elif ! printf '%s\n' "$out" | grep -Fq -- "$2"; then
+        misses=$((misses + 1)); echo "  WRONG REASON: $1" >&2
+    fi
+}
+
 # report_case <fn> <name> <reason> <old> <new>: mutate the fixture, then require
 # the report check to fail for that reason; an empty <new> deletes the text.
 report_case() {
     cases=$((cases + 1))
     replace_first "$fixture" "$tmp/report.md" "$4" "$5"
-    if out=$("$1" "$tmp/report.md" 2>&1); then
-        misses=$((misses + 1)); echo "  MISS: report $2" >&2
-    elif [ "$1" = check_report ] && ! printf '%s\n' "$out" | grep -Fq -- "$3"; then
-        misses=$((misses + 1)); echo "  WRONG REASON: report $2" >&2
-    fi
+    expect_rejected "report $2" "$3" "$1" "$tmp/report.md"
 }
 
 # run_cases <check-fn> <prompt-check-fn> <report-check-fn>: run every case,
@@ -296,20 +303,12 @@ run_cases() {
         for cmd in 'bd create --title example' 'bd -C . create example' 'bd dep add a b' 'bd label add a b' 'bd q example' 'bd -q list' 'bd --version'; do
             cases=$((cases + 1))
             { cat "$src"; printf '\n%s\n' "$cmd"; } > "$tmp/SKILL.md"
-            if out=$("$fn" "$tmp/SKILL.md" 2>&1); then
-                misses=$((misses + 1)); echo "  MISS: $host Beads command: $cmd" >&2
-            elif [ "$fn" = check ] && ! printf '%s\n' "$out" | grep -Fq -- 'contains a Beads command'; then
-                misses=$((misses + 1)); echo "  WRONG REASON: $host Beads command: $cmd" >&2
-            fi
+            expect_rejected "$host Beads command: $cmd" 'contains a Beads command' "$fn" "$tmp/SKILL.md"
         done
         while IFS= read -r clause; do
             cases=$((cases + 1))
             remove_clause "$src" "$tmp/case.md" "$clause"
-            if out=$("$fn" "$tmp/case.md" 2>&1); then
-                misses=$((misses + 1)); echo "  MISS: $host drops: $clause" >&2
-            elif [ "$fn" = check ] && ! printf '%s\n' "$out" | grep -Fq -- "lacks $clause"; then
-                misses=$((misses + 1)); echo "  WRONG REASON: $host drops: $clause" >&2
-            fi
+            expect_rejected "$host drops: $clause" "lacks $clause" "$fn" "$tmp/case.md"
         done < "$tmp/skill-anchors"
     done
     while IFS= read -r p; do
@@ -372,7 +371,7 @@ run_cases check check_prompt check_report
 real_cases=$cases
 # Weakened pass: it must miss every case, not merely one, so a crashed run
 # cannot pass for a discriminating one.
-run_cases weak_check weak_check weak_check 2>/dev/null
+run_cases check_control check_control check_control 2>/dev/null
 [ "$misses" -eq "$cases" ] || fail "weakened check missed only $misses of $cases cases; the cases prove nothing"
 [ "$cases" -eq "$real_cases" ] || fail "the weakened pass ran a different number of cases"
 

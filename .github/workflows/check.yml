@@ -18,6 +18,8 @@ jobs:
   parity:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CLAUDE_CODE_VERSION: 2.1.286
     steps:
       # Third-party actions are pinned to a full commit SHA, the version in the
       # trailing comment. A tag can be moved after the fact; a SHA cannot.
@@ -58,15 +60,6 @@ jobs:
       - name: The backlog-loop internal invariants hold
         run: sh scripts/check-backlog-loop.sh
 
-      # Every assertion in that checker is a loop over a table matched on its
-      # exact header line, so a reformatting edit that touches no rule at all
-      # can empty the loop and leave a green run asserting nothing. This suite
-      # breaks each rule in turn and requires the right message back, then runs
-      # the whole set against a checker that cannot fail and requires every
-      # break to go undetected.
-      - name: The backlog-loop check can still fail
-        run: sh scripts/test-check-backlog-loop.sh
-
       # `claude plugin validate --strict` is a supplementary gate, and a
       # partial one: probed against this skill, it catches a missing
       # `description` and a missing or empty frontmatter block, but passes a
@@ -77,8 +70,6 @@ jobs:
       # runner without it fails the job instead of skipping. Only `plugin
       # validate` runs; no model is driven.
       - name: Install pinned claude 2.1.286
-        env:
-          CLAUDE_CODE_VERSION: 2.1.286
         run: |
           set -eu
           prefix="$RUNNER_TEMP/claude-cli"
@@ -91,7 +82,6 @@ jobs:
       # host tree is staged into its own temporary skills/ first.
       - name: Each host tree passes claude plugin validate --strict
         env:
-          CLAUDE_CODE_VERSION: 2.1.286
           DISABLE_AUTOUPDATER: "1"
         run: |
           set -eu
@@ -115,11 +105,32 @@ jobs:
           done
           exit "$status"
 
+  # Its own job so the suite, the longest one here, runs beside the others
+  # instead of after them.
+  backlog-loop-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # Every assertion in the backlog-loop checker is a loop over a table
+      # matched on its exact header line, so a reformatting edit that touches no
+      # rule at all can empty the loop and leave a green run asserting nothing.
+      # This suite breaks each rule in turn and requires the right message back,
+      # then runs the whole set against a checker that cannot fail and requires
+      # every break to go undetected.
+      - name: The backlog-loop check can still fail
+        run: sh scripts/test-check-backlog-loop.sh
+
   census:
     runs-on: ubuntu-latest
     # The contract suite and the harness suite each spend a few minutes
     # creating real `bd` stores.
     timeout-minutes: 25
+    env:
+      BD_VERSION: 1.3.0
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -133,7 +144,6 @@ jobs:
       # under gastownhall/beads; the old steveyegge/beads path only redirects.
       - name: Install pinned bd 1.3.0
         env:
-          BD_VERSION: 1.3.0
           BD_SHA256: 2f92b904ecf35b607e44dc5c39229173af69c54f1183e8d709f1773540cdcf3b
         run: |
           set -eu
@@ -149,8 +159,6 @@ jobs:
       # test-census.sh exits 0 with SKIP when `bd` is absent, so a missing or
       # wrong binary has to fail here or the next step would pass on nothing.
       - name: bd 1.3.0 is on PATH
-        env:
-          BD_VERSION: 1.3.0
         run: |
           set -eu
           command -v bd
@@ -212,6 +220,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # What GitHub serves for the main branch, built once and shared by the
+      # two steps that run the archive install and the tar controls. The top
+      # directory is the repository name plus `-main`.
+      - name: Stage a stand-in main-branch archive
+        run: |
+          set -eu
+          top="${GITHUB_REPOSITORY#*/}-main"
+          echo "ARCHIVE_TOP=$top" >> "$GITHUB_ENV"
+          git archive --format=tar.gz --prefix="$top/" HEAD > "$RUNNER_TEMP/main.tar.gz"
+
       - name: README install blocks are extracted and each is recognized
         run: |
           set -eu
@@ -247,7 +265,7 @@ jobs:
         run: |
           set -eu
           blocks="$RUNNER_TEMP/readme-blocks"
-          top="${GITHUB_REPOSITORY#*/}-main"
+          top="$ARCHIVE_TOP"
           for host in claude codex; do
             for skill in $(ls "skills/$host"); do echo "$top/skills/$host/$skill"; done
           done | sort -u > "$RUNNER_TEMP/members.want"
@@ -261,9 +279,8 @@ jobs:
           set -eu
           tar --version | head -1
           blocks="$RUNNER_TEMP/readme-blocks"
-          top="${GITHUB_REPOSITORY#*/}-main"
+          top="$ARCHIVE_TOP"
           url="https://github.com/$GITHUB_REPOSITORY/archive/refs/heads/main.tar.gz"
-          git archive --format=tar.gz --prefix="$top/" HEAD > "$RUNNER_TEMP/main.tar.gz"
 
           stub="$RUNNER_TEMP/stub-bin"
           rm -rf "$stub"; mkdir -p "$stub"
@@ -309,8 +326,7 @@ jobs:
       - name: A missing target directory behaves as the README states
         run: |
           set -eu
-          top="${GITHUB_REPOSITORY#*/}-main"
-          git archive --format=tar.gz --prefix="$top/" HEAD > "$RUNNER_TEMP/main.tar.gz"
+          top="$ARCHIVE_TOP"
           ctl="$RUNNER_TEMP/controls"
           rm -rf "$ctl"; mkdir -p "$ctl"
 

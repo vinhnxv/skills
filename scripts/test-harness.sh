@@ -120,8 +120,8 @@ done
 echo "a suite's failure count never travels through a return status"
 
 # A shell status wraps at 256: 256 failures read as success and 272 as 16.
-if grep -nE '^[^#]*(return "\$|run_suite[^#]*\|\|)' "$scripts"/*.sh >/dev/null; then
-    fail "a script returns a failure count or reads one from run_suite's status: $(grep -nE '^[^#]*(return "\$|run_suite[^#]*\|\|)' "$scripts"/*.sh | head -n 1)"
+if status_hits=$(grep -nE '^[^#]*(return "\$|run_suite[^#]*\|\|)' "$scripts"/*.sh); then
+    fail "a script returns a failure count or reads one from run_suite's status: $(printf '%s\n' "$status_hits" | head -n 1)"
 else
     pass "no script returns a count or reads a count from run_suite's status"
 fi
