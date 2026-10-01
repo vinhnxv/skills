@@ -7,7 +7,7 @@ Every `bd` command carries the global `--readonly` flag, so a write is refused b
 Success means all four:
 1. Every non-closed non-epic issue appears exactly once in the census output, on its own `census <id> | <category> | <cause>` line.
 2. The header line names the census token, the count per category, and the enumeration flags the run used.
-3. Every repair and every reopen a loop run would perform is reported, with the issues involved and the marker state it would rely on -- and none of them is performed.
+3. Every repair, every reopen, and every residue strip a loop run would perform is reported, with the issues involved and the marker state it would rely on -- and none of them is performed.
 4. The tracker's exported issue records are unchanged. Compare `bd export` output taken before and after; a filesystem diff is not a valid check, because a plain `bd show` rewrites tracker bookkeeping without changing any issue field.
 
 In the final goal turn:
@@ -15,7 +15,7 @@ In the final goal turn:
 - Paste the loop-responsible count and, when it is zero, say so plainly.
 - Paste every open human gate with what the person must do, and every labeling defect with the exact label to apply.
 - Paste every reported dependency cycle.
-- Paste every repair and reopen the run would have performed, and say that none was.
+- Paste every repair, reopen, and residue strip the run would have performed, and say that none was.
 - Paste the `bd export` comparison result.
 
 Never ask me for input. Report what you found; do not act on it.

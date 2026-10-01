@@ -30,8 +30,8 @@ These skills are not general-purpose.
 3. **The `compound-engineering` plugin** for your host, providing `lfg`,
    `ce-plan`, `ce-work`, `ce-simplify-code`, `ce-code-review`,
    `ce-test-browser`, `ce-doc-review`, `ce-commit-push-pr`,
-   `ce-babysit-pr`, and `ce-resolve-pr-feedback`. The skill's child-skill list
-   was checked against **compound-engineering 3.28.2**; if a later version renames one of these,
+   `ce-babysit-pr`, `ce-resolve-pr-feedback`, and `ce-debug`. The skill's
+   child-skill list was checked against **compound-engineering 3.30.1**; if a later version renames one of these,
    preflight will stop on a skill that no longer exists — that is a bug in this
    repository, not a misconfiguration on your side. A missing plugin → preflight
    stops before any issue is claimed.
@@ -48,8 +48,12 @@ need a GitHub remote, `gh`, or the `compound-engineering` plugin.
 `source-to-beads` creates Beads work for the current repository from an audit
 report, brainstorm, implementation plan, document, cited research, or context
 accessible in the current session. It runs independently of `repo-audit` and
-requires an initialized, working Beads tracker. It does not start
-`backlog-loop`.
+requires an initialized, working Beads tracker: preflight runs `bd prime` and
+`bd ready`, and without a working tracker it writes nothing and returns a draft
+that names the missing prerequisite. Run from a linked worktree, it writes to
+the root checkout's Beads database, not to a copy in the worktree. It does not
+start `backlog-loop`. `repo-audit` itself never needs Beads; only the optional
+step of filing its findings does.
 
 **Also know what you are starting.** `backlog-loop` is autonomous. It claims
 issues, opens branches and pull requests, and **merges its own PRs** without
@@ -103,7 +107,7 @@ mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive
 ```
 
 The `mkdir -p` is not optional: `tar -C` on a directory that does not exist
-fails, and on the `cp -R` path below it silently mis-installs instead.
+fails.
 
 **Upgrading.** Delete the installed skill first — `rm -rf
 ~/.claude/skills/backlog-loop` (or the Codex path, or the other skill's) — then
@@ -118,9 +122,13 @@ mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo
 mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  ~/.codex/skills/
 ```
 
-`cp -R` into a directory that does not exist exits 0 and copies the skill's
-*contents* there, leaving you with a stray `SKILL.md` and no skill — hence the
-`mkdir -p`.
+The `mkdir -p` matters here too. With several source directories, as above,
+`cp -R` into a target that does not exist fails with a "not a directory" error. With a
+single source directory it exits 0 and copies the skill's *contents* into the
+target, leaving you with a stray `SKILL.md` and no skill.
+
+CI runs every command in these install blocks as written, with only `curl`
+replaced by an archive of the commit under test, on Linux and macOS.
 
 Claude Code also loads skills from a project's `.claude/skills/`, so the same
 commands work per project with `<your-repo>/.claude/skills` as the target.
@@ -169,6 +177,13 @@ finding IDs, evidence, source snapshot, verification result, and coverage limits
 person, Codex session, or Claude Code session can review it without the original
 chat. The audit does not require or write to Beads.
 
+The report header records the remote default tip, how far the checkout is
+behind it, whether the checkout is a linked worktree, and whether HEAD is off
+the default branch. When the checkout is behind the tip or off the default
+branch, the report opens with a `Warning:` block, because a finding may already
+be fixed on the default branch. The audit reads the tip with `git ls-remote`
+only; it never fetches and never changes a ref.
+
 The audit can reuse a validated local coverage cache. If the cache is missing
 or stale, it audits the full scope. Every skipped criterion and source snapshot
 is recorded in the report, so the cache is not needed to review the result.
@@ -193,6 +208,51 @@ repository's Beads backlog. It reports created, reused, and deferred work. It
 does not claim to read a different host's private transcript unless that
 transcript was supplied, and it does not run `backlog-loop`.
 
+## Worktree audit workflow
+
+Auditing from a throwaway worktree keeps the audit off your working checkout.
+The skills support that flow end to end, and they never remove a worktree for
+you.
+
+1. **Create the worktree from the default branch tip.** From the repository,
+   run `git fetch origin` and then
+   `git worktree add <path> -b <audit-branch> origin/<default>`. This step is
+   yours; the skills create no worktree.
+2. **Run `repo-audit` in the worktree.** The report is written to
+   `docs/audits/` in the worktree and finalized before any choice is offered.
+3. **Optionally have a second reviewer check it.** Invoke `repo-audit` on the
+   report from another host or model; the review is a companion file beside
+   the report and does not replace it.
+4. **Run `/source-to-beads <absolute-report-path> <IDs>`** (`$source-to-beads`
+   on Codex) to file the findings you choose. It revalidates each finding
+   against the default branch tip, not the checked-out branch, and writes to
+   the root checkout's Beads database.
+5. **Handoff.** In a linked worktree, both skills copy the report and its
+   companion review files to the root checkout's `docs/audits/` and compare the
+   sha256 of each copy with its source. `source-to-beads` also reads every
+   filed issue id back from the root Beads database. A sensitive-detail file
+   under `docs/audits/private/` is copied only into a root path that Git
+   reports as ignored. The handoff ends with a verdict, `safe to delete` or
+   `not safe to delete`, with the blocking reasons.
+6. **You decide about cleanup.** Only when the verdict is `safe to delete` does
+   the skill print the `git worktree remove <worktree>` command; you run it, or
+   you keep the worktree. Neither skill runs `git worktree remove` or
+   `git worktree prune`.
+
+**An ignored report is deleted with the worktree unless it was handed off.**
+In a repository that ignores `docs/`, a report left only in the worktree is
+lost when you remove the worktree. Do not remove the worktree until the
+verdict is `safe to delete`, or copy the report out yourself.
+
+**Auditing a non-default branch is allowed.** A detached HEAD, a missing
+remote, or a commit off the default branch does not block the audit; the
+report records the branch, the base SHA, the remote default tip, and the
+off-default state instead. The audit describes the checked-out tree, but filing
+always revalidates a finding against the default branch tip. A finding the tip
+no longer shows is refused and listed under rejected items, and a finding that
+exists only on the audited branch is deferred unless you opted in to file it
+as branch-only evidence, in which case the issue body carries a branch note.
+
 ## Repository layout
 
 ```
@@ -203,6 +263,7 @@ scripts/check-parity.sh        keeps the two host copies from drifting
 scripts/check-cross-skill.sh   checks Beads writer and backlog-loop boundaries
 scripts/check-backlog-loop.sh  keeps backlog-loop's own internal rules in both copies
 scripts/test-*.sh              proves each checker still fails on a broken tree
+scripts/fixtures/              model-neutral audit report fixture that test-repo-audit.sh validates
 ```
 
 Each skill exists twice, once per host, because the two hosts declare

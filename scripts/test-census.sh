@@ -1,13 +1,14 @@
 #!/bin/sh
 # Prove that backlog-loop's CENSUS section classifies a real Beads backlog.
 #
-# Usage: test-census.sh [--contract-only]
+# Usage: test-census.sh [--full | --contract-only]
 #
-# This suite is NOT part of the push path. Half of it drives a model, so it is
-# non-deterministic and slow, and a gate that goes yellow on every third run
-# stops being read. Run it by hand before changing the CENSUS section, or
-# nightly. `--contract-only` runs just the deterministic half, which is safe
-# anywhere.
+# With no argument it runs the deterministic half only, which is safe anywhere.
+# `--contract-only` says the same thing explicitly. `--full` also runs PART 2,
+# which drives a model, so it is non-deterministic and slow, and a gate that
+# goes yellow on every third run stops being read: run it by hand before
+# changing the CENSUS section, or nightly. Any other argument exits 2, and so
+# does `--full` together with `--contract-only`.
 #
 # It comes in two parts, and they fail for different reasons.
 #
@@ -31,8 +32,17 @@
 set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-contract_only=0
-[ "${1:-}" = "--contract-only" ] && contract_only=1
+usage() { echo "usage: test-census.sh [--full | --contract-only]" >&2; exit 2; }
+contract_only=1
+asked_contract=0
+for arg in "$@"; do
+    case "$arg" in
+        --full) contract_only=0 ;;
+        --contract-only) asked_contract=1 ;;
+        *) usage ;;
+    esac
+done
+[ "$contract_only" -eq 1 ] || [ "$asked_contract" -eq 0 ] || usage
 
 # Every tracker command names its store with `-C`, so bd runs with this
 # suite's working directory -- the repository -- rather than the store's. bd
@@ -46,13 +56,20 @@ GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-contributor}
 export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/test-census.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT HUP TERM
 
 failures=0
 checks=0
 
 pass() { checks=$((checks + 1)); printf '  ok: %s\n' "$1"; }
 fail() { checks=$((checks + 1)); failures=$((failures + 1)); printf '  FAIL: %s\n' "$1"; }
+
+# `bd export` of one store into a file: the non-mutation oracle. Snapshot a
+# store before and after an operation and `cmp -s` the two files.
+export_of() { # store, file
+    bd -C "$1" export > "$2" 2>/dev/null
+}
 
 # One empty Beads store per case. Each gets its own directory so a case cannot
 # see another's issues; ids are prefix-scoped, so a shared store would also
@@ -64,7 +81,15 @@ fail() { checks=$((checks + 1)); failures=$((failures + 1)); printf '  FAIL: %s\
 # case from reading whichever store the previous one happened to leave as cwd.
 fresh_store() {
     dir=$(mktemp -d "$work/store.XXXXXX")
-    ( cd "$dir" && bd init --prefix cx >/dev/null 2>&1 )
+    # Keep bd's output for the failure path only: this runs inside a command
+    # substitution, so a failed init cannot `fail` the case, and swallowing its
+    # stderr would leave a suite that stops with no reason. Print it, then
+    # return non-zero so `set -e` ends the run.
+    if ! ( cd "$dir" && bd init --prefix cx ) > "$dir.init.log" 2>&1; then
+        echo "FAIL: bd init --prefix cx failed in $dir:" >&2
+        cat "$dir.init.log" >&2
+        return 1
+    fi
     echo "$dir"
 }
 
@@ -103,6 +128,31 @@ field_of() {
     bd -C "$1" show "$2" --json 2>/dev/null | python3 -c 'import json,sys
 d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
 print(r.get(sys.argv[1]) or "")' "$3"
+}
+
+# An issue's labels, sorted and space-separated, empty when it has none. The
+# gate check below reads the label back rather than trusting the create call's
+# exit status: the loop's human-gate rule is keyed on it.
+labels_of() {
+    bd -C "$1" show "$2" --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); r=d[0] if isinstance(d,list) else d
+print(" ".join(sorted(r.get("labels") or [])))'
+}
+
+# The database a checkout resolves to. Two checkouts that share a store must
+# report the same path, or an issue filed from one is invisible to the other.
+where_db() {
+    bd -C "$1" where --json 2>/dev/null | python3 -c 'import json,sys
+print(json.load(sys.stdin).get("database_path", ""))'
+}
+
+# The exit status of a command that is expected to fail, without tripping
+# `set -e`. The guarded writes below are pinned by exit status as well as by
+# what they leave behind, because the procedure branches on 13.
+status_of() {
+    rc=0
+    "$@" >/dev/null 2>&1 || rc=$?
+    echo "$rc"
 }
 
 # An ISO UTC timestamp a given number of minutes in the past. The liveness test
@@ -323,10 +373,10 @@ bd --readonly -C "$store" list --limit 5 >/dev/null 2>&1 \
 # bd export is the non-mutation oracle. A filesystem diff is not: a plain read
 # rewrites tracker bookkeeping without changing any issue field, so a suite
 # built on file comparison fails on its first case for no real reason.
-bd -C "$store" export > "$work/export.before" 2>/dev/null
+export_of "$store" "$work/export.before"
 bd -C "$store" show "$ready_issue" >/dev/null 2>&1
 bd -C "$store" list --all --limit 0 >/dev/null 2>&1
-bd -C "$store" export > "$work/export.after" 2>/dev/null
+export_of "$store" "$work/export.after"
 cmp -s "$work/export.before" "$work/export.after" \
     && pass "bd export is unchanged by reads, so it is a valid non-mutation oracle" \
     || fail "bd export changed across reads; the census has no non-mutation oracle"
@@ -437,11 +487,233 @@ else
     [ "$gate_type" = gate ] && [ -z "$gate_parent" ] && [ "$gate_key" = plan-access ] \
         && pass "one create call persists a standalone gate with source identity" \
         || fail "gate type, parent, or source identity did not round-trip"
+    [ "$(labels_of "$sb" "$sb_gate")" = human-gate ] \
+        && pass "a gate created with --labels reads back exactly the human-gate label" \
+        || fail "gate label did not round-trip: got '$(labels_of "$sb" "$sb_gate")', expected 'human-gate'"
     sb_gates=$(bd -C "$sb" list --all --include-gates --limit 0 --json | sorted_ids_json)
     case " $sb_gates " in
         *" $sb_gate "*) pass "explicit gate listing includes the human gate" ;;
         *) fail "explicit gate listing omits the human gate" ;;
     esac
+fi
+
+# source-to-beads names each issue `<prefix>-s<first 8 hex of sha256(key)>`, with
+# the key `s2b1|<repo-id>|<anchor>|<action-kind>`. `s2b_repo_id` and `s2b_id`
+# restate the procedure's grammar, so an SSH clone and an HTTPS clone of one
+# repository must land on one id, and the second create must be refused.
+s2b_repo_id() {
+    printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E \
+        -e 's#^[a-z][a-z0-9+.-]*://##' -e 's#^[^@/]*@##' \
+        -e 's#^([^/:]+):[0-9]+/#\1/#' -e 's#^([^/:]+):#\1/#' \
+        -e 's#/$##' -e 's#\.git$##'
+}
+s2b_id() {
+    printf '%s' "$2" | python3 -c 'import hashlib,sys
+print("%s-s%s" % (sys.argv[1], hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:8]))' "$1"
+}
+s2b_ssh=$(s2b_repo_id 'git@GitHub.com:Org/Repo.git')
+s2b_https=$(s2b_repo_id 'https://github.com/Org/Repo')
+s2b_ssh_url=$(s2b_repo_id 'ssh://git@github.com:22/Org/Repo.git')
+[ "$s2b_ssh" = github.com/org/repo ] && [ "$s2b_https" = "$s2b_ssh" ] && [ "$s2b_ssh_url" = "$s2b_ssh" ] \
+    && pass "SSH (scp-style and ssh://) and HTTPS origins normalize to one repo-id" \
+    || fail "repo-id differs across remotes: scp '$s2b_ssh', https '$s2b_https', ssh:// '$s2b_ssh_url'"
+
+s2b_store=$(fresh_store)
+s2b_key_ssh="s2b1|$s2b_ssh|RA-0123456789|fix"
+s2b_key_https="s2b1|$s2b_https|RA-0123456789|fix"
+s2b_id_ssh=$(s2b_id cx "$s2b_key_ssh")
+s2b_id_https=$(s2b_id cx "$s2b_key_https")
+s2b_made=$(bd -C "$s2b_store" create "Fix the audited defect" --type bug --id "$s2b_id_ssh" \
+    --body-file "$sb_body" --metadata "{\"source_to_beads_key\":\"$s2b_key_ssh\"}" --silent 2>/dev/null || true)
+export_of "$s2b_store" "$work/export.s2b.before"
+s2b_rc=$(status_of bd -C "$s2b_store" create "Fix the audited defect, reworded" --type bug --id "$s2b_id_https" \
+    --body-file "$sb_body" --metadata "{\"source_to_beads_key\":\"$s2b_key_https\"}" --silent)
+export_of "$s2b_store" "$work/export.s2b.after"
+[ "$s2b_id_ssh" = "$s2b_id_https" ] && [ "$s2b_made" = "$s2b_id_ssh" ] && [ "$s2b_rc" -ne 0 ] \
+    && cmp -s "$work/export.s2b.before" "$work/export.s2b.after" \
+    && [ "$(field_of "$s2b_store" "$s2b_id_ssh" title)" = "Fix the audited defect" ] \
+    && [ "$(meta_of "$s2b_store" "$s2b_id_ssh" source_to_beads_key)" = "$s2b_key_ssh" ] \
+    && pass "a second create under the key derived from the HTTPS origin is refused and the first issue is unchanged" \
+    || fail "derived-id create-once: ssh id '$s2b_id_ssh', https id '$s2b_id_https', first create '$s2b_made', second exit $s2b_rc, or the first issue changed"
+
+# A gate filed under a derived id keeps its native shape, its label, and the
+# create-once guarantee.
+s2b_gate_key="s2b1|$s2b_ssh|RA-0123456789|human"
+s2b_gate_id=$(s2b_id cx "$s2b_gate_key")
+s2b_gate=$(bd -C "$s2b_store" create "[HUMAN] Decide the release channel" --type gate --id "$s2b_gate_id" \
+    --labels human-gate --body-file "$sb_body" \
+    --metadata "{\"source_to_beads_key\":\"$s2b_gate_key\"}" --silent 2>/dev/null || true)
+s2b_gate_rc=$(status_of bd -C "$s2b_store" create "[HUMAN] Decide the release channel" --type gate --id "$s2b_gate_id" --labels human-gate --silent)
+[ "$s2b_gate" = "$s2b_gate_id" ] && [ "$(field_of "$s2b_store" "$s2b_gate_id" issue_type)" = gate ] \
+    && [ "$(labels_of "$s2b_store" "$s2b_gate_id")" = human-gate ] \
+    && [ "$(meta_of "$s2b_store" "$s2b_gate_id" source_to_beads_key)" = "$s2b_gate_key" ] \
+    && [ "$s2b_gate_rc" -ne 0 ] \
+    && pass "a gate created under a derived id reads back as a labeled gate and a repeat create is refused" \
+    || fail "derived-id gate: id '$s2b_gate', type '$(field_of "$s2b_store" "$s2b_gate_id" issue_type)', labels '$(labels_of "$s2b_store" "$s2b_gate_id")', repeat exit $s2b_gate_rc"
+
+# ---------------------------------------------------------------------------
+# PART 1c - tracker contract for guarded writes, liveness, adoption, and ids.
+#
+# The loop adopts a parked PR with one guarded write, refreshes a lease with
+# `bd heartbeat`, and source-to-beads creates issues under a deterministic id.
+# Each of those leans on a behavior that is absent from `--help` or easy to
+# misread, so each is pinned here by what the tracker does rather than by what
+# the procedure says it does. Every refusal is paired with a write that the same
+# guard permits, so a guard that rejects everything cannot pass.
+echo ""
+echo "PART 1c - tracker contract for guards, liveness, adoption, and ids"
+
+gw=$(fresh_store)
+
+# A status guard that does not match writes nothing and exits 13.
+gw_issue=$(bd -C "$gw" create "guarded write target" --silent)
+export_of "$gw" "$work/export.gw.before"
+rc=$(status_of bd -C "$gw" update "$gw_issue" --if-status blocked --set-metadata probe=1)
+export_of "$gw" "$work/export.gw.after"
+[ "$rc" -eq 13 ] && cmp -s "$work/export.gw.before" "$work/export.gw.after" \
+    && [ -z "$(meta_of "$gw" "$gw_issue" probe)" ] \
+    && pass "--if-status mismatch exits 13 and writes nothing" \
+    || fail "--if-status mismatch: exit $rc, or the store changed (expected exit 13, export unchanged)"
+rc=$(status_of bd -C "$gw" update "$gw_issue" --if-status open --set-metadata probe=1)
+[ "$rc" -eq 0 ] && [ "$(meta_of "$gw" "$gw_issue" probe)" = 1 ] \
+    && pass "--if-status that matches performs the write" \
+    || fail "--if-status that matches did not write: exit $rc"
+
+# An assignee guard likewise. The empty string is the "unclaimed" value the
+# source-to-beads update path relies on.
+export_of "$gw" "$work/export.gw.before"
+rc=$(status_of bd -C "$gw" update "$gw_issue" --if-assignee alice --set-metadata probe=2)
+export_of "$gw" "$work/export.gw.after"
+[ "$rc" -eq 13 ] && cmp -s "$work/export.gw.before" "$work/export.gw.after" \
+    && [ "$(meta_of "$gw" "$gw_issue" probe)" = 1 ] \
+    && pass "--if-assignee mismatch exits 13 and writes nothing" \
+    || fail "--if-assignee mismatch: exit $rc, or the store changed (expected exit 13, export unchanged)"
+rc=$(status_of bd -C "$gw" update "$gw_issue" --if-assignee '' --if-status open --set-metadata probe=3)
+[ "$rc" -eq 0 ] && [ "$(meta_of "$gw" "$gw_issue" probe)" = 3 ] \
+    && pass "--if-assignee '' with --if-status open writes to an unclaimed open issue" \
+    || fail "--if-assignee '' with --if-status open did not write: exit $rc"
+
+# A heartbeat refreshes a lease its owner holds. Nobody else may refresh it, and
+# an issue that is not in_progress has no lease to refresh.
+hb=$(fresh_store)
+hb_issue=$(bd -C "$hb" create "leased work" --silent)
+[ "$(status_of bd -C "$hb" --actor alice heartbeat "$hb_issue")" -ne 0 ] \
+    && pass "bd heartbeat refuses an open, unclaimed issue" \
+    || fail "bd heartbeat succeeded on an open issue that nobody holds"
+bd -C "$hb" --actor alice update "$hb_issue" --claim >/dev/null 2>&1
+[ "$(status_of bd -C "$hb" --actor alice heartbeat "$hb_issue")" -eq 0 ] \
+    && pass "bd heartbeat succeeds for the actor holding the issue in_progress" \
+    || fail "bd heartbeat failed for the owner of an in_progress issue"
+[ "$(status_of bd -C "$hb" --actor bob heartbeat "$hb_issue")" -ne 0 ] \
+    && pass "bd heartbeat refuses an actor that does not own the issue" \
+    || fail "bd heartbeat let a non-owner refresh the lease"
+
+# The adoption of a parked PR (KTD10). `bd heartbeat` refuses a blocked issue
+# and --claim cannot be combined with a guard, so adoption is one guarded write
+# that names the status and assignee itself; a successful heartbeat afterwards
+# proves the adopter now holds a lease it can keep alive.
+ad=$(fresh_store)
+ad_issue=$(bd -C "$ad" create "parked pull request" --silent)
+bd -C "$ad" update "$ad_issue" --status=blocked --set-metadata backlog_loop_run=OLD-RUN \
+    --append-notes "merge blocked: trunk moved | none" >/dev/null
+[ "$(field_of "$ad" "$ad_issue" status)" = blocked ] \
+    && [ "$(status_of bd -C "$ad" --actor alice heartbeat "$ad_issue")" -ne 0 ] \
+    && pass "bd heartbeat refuses a blocked issue, so a parked PR cannot be adopted by heartbeat alone" \
+    || fail "bd heartbeat accepted a blocked issue, or the parked issue is not blocked"
+export_of "$ad" "$work/export.ad.before"
+rc=$(status_of bd -C "$ad" --actor alice update "$ad_issue" --claim --if-status blocked)
+export_of "$ad" "$work/export.ad.after"
+[ "$rc" -ne 0 ] && cmp -s "$work/export.ad.before" "$work/export.ad.after" \
+    && pass "--claim cannot be combined with --if-status, and the refusal writes nothing" \
+    || fail "--claim with --if-status: exit $rc, or the store changed (expected a refusal, export unchanged)"
+ad_write() {
+    bd -C "$ad" update "$ad_issue" --if-status blocked --status=in_progress --assignee "$1" \
+        --set-metadata "backlog_loop_run=$2" --set-metadata "backlog_loop_heartbeat=$3 | live"
+}
+rc=$(status_of ad_write alice NEW-RUN "$(iso_ago 0)")
+[ "$rc" -eq 0 ] \
+    && [ "$(field_of "$ad" "$ad_issue" status)" = in_progress ] \
+    && [ "$(field_of "$ad" "$ad_issue" assignee)" = alice ] \
+    && [ "$(meta_of "$ad" "$ad_issue" backlog_loop_run)" = NEW-RUN ] \
+    && pass "the adoption write moves a blocked issue to in_progress under the adopter and stamps the run" \
+    || fail "the adoption write did not land: exit $rc, status '$(field_of "$ad" "$ad_issue" status)', assignee '$(field_of "$ad" "$ad_issue" assignee)'"
+[ "$(status_of bd -C "$ad" --actor alice heartbeat "$ad_issue")" -eq 0 ] \
+    && pass "bd heartbeat succeeds for the adopter straight after the adoption write" \
+    || fail "bd heartbeat failed for the adopter after the adoption write; the adopter holds no lease"
+export_of "$ad" "$work/export.ad.before"
+rc=$(status_of ad_write bob OTHER-RUN "$(iso_ago 0)")
+export_of "$ad" "$work/export.ad.after"
+[ "$rc" -ne 0 ] && cmp -s "$work/export.ad.before" "$work/export.ad.after" \
+    && [ "$(field_of "$ad" "$ad_issue" assignee)" = alice ] \
+    && [ "$(meta_of "$ad" "$ad_issue" backlog_loop_run)" = NEW-RUN ] \
+    && pass "a second adopter is refused and writes nothing, so two runs never hold one parked PR" \
+    || fail "a second adoption of the same parked issue: exit $rc, or the store changed"
+
+# `bd ready` stops at 100 rows unless told otherwise, which silently truncates a
+# large backlog. One import seeds the 102 issues that make that visible. The ids
+# are explicit: batch creation draws random three-character ids, and at this
+# count two of them collide often enough to fail a run for no reason.
+rd=$(fresh_store)
+rd_file="$work/ready-seed.jsonl"
+: > "$rd_file"
+n=0
+while [ "$n" -lt 102 ]; do
+    printf '{"id":"cx-r%d","title":"ready row %d"}\n' "$n" "$n" >> "$rd_file"
+    n=$((n + 1))
+done
+if bd -C "$rd" import "$rd_file" >/dev/null; then
+    rd_default=$(bd -C "$rd" ready --json 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); print(len(d if isinstance(d,list) else d.get("issues",d)))')
+    rd_all=$(bd -C "$rd" ready --json --limit 0 2>/dev/null | python3 -c 'import json,sys
+d=json.load(sys.stdin); print(len(d if isinstance(d,list) else d.get("issues",d)))')
+    [ "$rd_all" = 102 ] && [ "$rd_default" = 100 ] \
+        && pass "bd ready caps at 100 by default and --limit 0 returns all 102 seeded issues" \
+        || fail "bd ready limit changed: default returned '$rd_default', --limit 0 returned '$rd_all' (expected 100 and 102)"
+else
+    fail "could not seed 102 issues with one 'bd import'; the bd ready limit check cannot run"
+fi
+
+# Create-once is atomic because a duplicate explicit id is refused, and --force
+# does not override it. The refusal must leave the first issue untouched.
+id_store=$(fresh_store)
+id_want="cx-s0123abcd"
+id_got=$(bd -C "$id_store" create "first writer" --id "$id_want" --silent 2>/dev/null || true)
+export_of "$id_store" "$work/export.id.before"
+id_rc=$(status_of bd -C "$id_store" create "second writer" --id "$id_want" --silent)
+id_force_rc=$(status_of bd -C "$id_store" create "second writer" --id "$id_want" --force --silent)
+export_of "$id_store" "$work/export.id.after"
+[ "$id_got" = "$id_want" ] && [ "$id_rc" -ne 0 ] && [ "$id_force_rc" -ne 0 ] \
+    && cmp -s "$work/export.id.before" "$work/export.id.after" \
+    && [ "$(field_of "$id_store" "$id_want" title)" = "first writer" ] \
+    && pass "create --id refuses a duplicate even with --force and leaves the first issue unchanged" \
+    || fail "create --id duplicate: first id '$id_got', exit $id_rc, forced exit $id_force_rc, or the first issue changed"
+
+# A native gate comes out of one create call with its type set; the gate check
+# in PART 1b covers the rest of its shape.
+ng=$(fresh_store)
+ng_gate=$(bd -C "$ng" create "[HUMAN] supply the signing key" --type gate --silent 2>/dev/null || true)
+[ -n "$ng_gate" ] && [ "$(field_of "$ng" "$ng_gate" issue_type)" = gate ] \
+    && pass "bd create --type gate yields issue_type=gate in one call" \
+    || fail "bd create --type gate did not yield issue_type=gate (id '$ng_gate')"
+
+# A linked worktree shares the main checkout's store. The audit and the loop
+# both file issues from throwaway worktrees, and the work is lost if those land
+# in a database that vanishes with the worktree.
+wt=$(fresh_store)
+wt_path="$work/linked-worktree"
+if git -C "$wt" worktree add -q -b linked-branch "$wt_path" >/dev/null 2>&1; then
+    wt_issue=$(bd -C "$wt_path" create "filed from a linked worktree" --silent 2>/dev/null || true)
+    [ -n "$wt_issue" ] \
+        && [ "$(field_of "$wt" "$wt_issue" title)" = "filed from a linked worktree" ] \
+        && pass "an issue created inside a linked worktree reads back from the main checkout" \
+        || fail "an issue created inside a linked worktree (id '$wt_issue') is not visible from the main checkout"
+    wt_main_db=$(where_db "$wt")
+    wt_linked_db=$(where_db "$wt_path")
+    [ -n "$wt_main_db" ] && [ "$wt_main_db" = "$wt_linked_db" ] \
+        && pass "bd where resolves to the same database from the main checkout and a linked worktree" \
+        || fail "bd where differs between checkouts: main '$wt_main_db', worktree '$wt_linked_db'"
+else
+    fail "could not add a linked worktree to the seeded store; the worktree checks cannot run"
 fi
 
 if [ "$contract_only" -eq 1 ]; then
@@ -513,12 +785,16 @@ between those markers."
     # variable form silently passes "--allowedTools Bash(bd:*)" as ONE argument
     # under some shells and the CLI rejects it. `store_dir` and `mode` are
     # already saved above, so reusing the positional parameters here is safe.
+    # Codex has no `-p` prompt flag (`-p` is `--profile` there); it takes the
+    # prompt as the argument of `exec`.
     if [ "$host_cli" = "claude" ]; then
-        set -- --allowedTools 'Bash(bd:*)'
+        set -- claude -p "$prompt" --allowedTools 'Bash(bd:*)'
     else
-        set --
+        set -- codex exec "$prompt"
     fi
-    raw=$("$deadline" 600 "$host_cli" -p "$prompt" "$@" 2>&1); status=$?
+    # `raw=$(...); status=$?` would end the whole suite here under `set -e`
+    # the first time the CLI fails, before the runner-failed report below.
+    raw=$("$deadline" 600 "$@" 2>&1) && status=0 || status=$?
     # The census is executed by a model, so a case can fail because the
     # procedure is wrong OR because that run skipped a pass it should have run.
     # Those two look identical in the pass/fail line, and re-running the suite
@@ -660,14 +936,14 @@ c2_target=$(bd -C "$c2" create "step behind a native gate" --silent)
 c2_gate=$(bd -C "$c2" gate create --type=human --blocks "$c2_target" 2>/dev/null | gate_id)
 [ -n "$c2_gate" ] || fail "could not read a gate id out of 'bd gate create' for this case"
 bd -C "$c2" create "unrelated ready work" --silent >/dev/null
-bd -C "$c2" export > "$work/c2.before" 2>/dev/null
+export_of "$c2" "$work/c2.before"
 
 out=$(run_census "$c2" loop)
 census_usable "$out" || out=""
 expect_category "$out" "$c2_gate"   human-gate  "a native gate classifies as a human gate"
 expect_category "$out" "$c2_target" dep-blocked "the step behind it stays dependency-blocked"
 
-bd -C "$c2" export > "$work/c2.after" 2>/dev/null
+export_of "$c2" "$work/c2.after"
 if [ "$write_proven" -eq 1 ]; then
     cmp -s "$work/c2.before" "$work/c2.after" \
         && pass "a loop-mode census removed no native gate edge" \
@@ -681,14 +957,14 @@ c3=$(fresh_store)
 c3_gate=$(bd -C "$c3" create "[HUMAN] approve the production rollout" -l human-gate --silent)
 c3_dep=$(bd -C "$c3" create "wire the rollout flag" --silent)
 bd -C "$c3" dep "$c3_gate" --blocks "$c3_dep" >/dev/null
-bd -C "$c3" export > "$work/c3.before" 2>/dev/null
+export_of "$c3" "$work/c3.before"
 
 out=$(run_census "$c3" loop)
 census_usable "$out" || out=""
 expect_category "$out" "$c3_gate" human-gate  "the labeled gate is recognized"
 expect_category "$out" "$c3_dep"  dep-blocked "its dependent stays blocked while the convention is unadopted"
 
-bd -C "$c3" export > "$work/c3.after" 2>/dev/null
+export_of "$c3" "$work/c3.after"
 if [ "$write_proven" -eq 1 ]; then
     cmp -s "$work/c3.before" "$work/c3.after" \
         && pass "no hard-blocker label anywhere means no edge is removed" \
@@ -703,14 +979,14 @@ c4_gate=$(bd -C "$c4" create "[HUMAN] grant registry access" -l human-gate --sil
 c4_dep=$(bd -C "$c4" create "publish the image" --silent)
 c4_other=$(bd -C "$c4" create "[HUMAN] declared hard blocker" -l human-gate,hard-blocker --silent)
 bd -C "$c4" dep "$c4_gate" --blocks "$c4_dep" >/dev/null
-bd -C "$c4" export > "$work/c4.before" 2>/dev/null
+export_of "$c4" "$work/c4.before"
 
 out=$(run_census "$c4" diagnostic)
 census_usable "$out" || out=""
 expect_category "$out" "$c4_gate"  human-gate "the undeclared gate is recognized in diagnostic mode"
 expect_category "$out" "$c4_other" human-gate "the declared gate is recognized too"
 
-bd -C "$c4" export > "$work/c4.after" 2>/dev/null
+export_of "$c4" "$work/c4.after"
 if [ "$write_proven" -eq 1 ]; then
     cmp -s "$work/c4.before" "$work/c4.after" \
         && pass "a diagnostic run left the tracker's issue records unchanged" \
@@ -782,12 +1058,12 @@ if [ "$write_proven" -eq 1 ]; then
     # branch that already proved the first census actually stripped the
     # residue -- a second run over a still-unrepaired issue would not be
     # idempotence, only a repeat of the first, unproven run.
-    bd -C "$c6" export > "$work/c6.before" 2>/dev/null
+    export_of "$c6" "$work/c6.before"
     out2=$(run_census "$c6" loop)
     census_usable "$out2" || out2=""
     expect_category "$out2" "$c6_parked" deferred \
         "a second census over a repaired issue still classifies it by its status"
-    bd -C "$c6" export > "$work/c6.after" 2>/dev/null
+    export_of "$c6" "$work/c6.after"
     cmp -s "$work/c6.before" "$work/c6.after" \
         && pass "a second census over a repaired issue finds no marker and writes nothing" \
         || fail "a second census over a repaired issue mutated the tracker again"
@@ -837,7 +1113,7 @@ bd -C "$c8" update "$c8_residue" --status=deferred \
     --set-metadata backlog_loop_run=OLD-RUN-2026 \
     --set-metadata backlog_loop_heartbeat="$(iso_ago 180)" \
     --set-metadata backlog_loop_phase=deferred_watch >/dev/null
-bd -C "$c8" export > "$work/c8.before" 2>/dev/null
+export_of "$c8" "$work/c8.before"
 
 out=$(run_census "$c8" loop)
 census_usable "$out" || out=""
@@ -846,7 +1122,7 @@ expect_category "$out" "$c8_live" claimed-other-run \
 expect_category "$out" "$c8_residue" deferred \
     "the parked issue beside it is still classified by its status"
 
-bd -C "$c8" export > "$work/c8.after" 2>/dev/null
+export_of "$c8" "$work/c8.after"
 if [ "$write_proven" -eq 1 ]; then
     cmp -s "$work/c8.before" "$work/c8.after" \
         && pass "a live foreign heartbeat stopped every write, the residue strip included" \
