@@ -83,6 +83,13 @@
 #       unconditional trunk or counter stop wins before the skill can reach
 #       its recovery mechanics, recreating the deadlock even when both host
 #       copies are correct.
+#       Both goal prompts also defer the CI route and the merge command to the
+#       skill: the loop goal states success as the census proving no legal
+#       agent-executable action remains (a `bd ready` condition is unreachable
+#       beside a label-only human gate, a label defect, or a quarantined
+#       issue) and allows members held by a recorded post-merge watch, the
+#       census goal lists residue strips beside repairs and reopens, and a
+#       `gh pr merge` example without `--match-head-commit` fails.
 #   R19 the merge gate reconciles compound-engineering's `actionable_findings`
 #       only. LFG never applies an `advisory` finding and never lists it under
 #       `## Unapplied review findings`, so a gate that reconciles every
@@ -1033,25 +1040,47 @@ for f in $copies; do
 done
 
 # ---------------------------------------------------------------------------
-# R16. The companion goal cannot reintroduce a stronger unconditional stop.
+# R16. The companion goals cannot reintroduce a stronger unconditional stop,
+# a success condition the skill cannot satisfy, or a merge command of their own.
 #
 # Install-only trees may contain only skills/, so absence of prompts/ skips
-# this repository-level check. When prompts/ exists, the matching goal is a
-# required part of the contract and must carry both halves of the rule.
+# this repository-level check. When prompts/ exists, both goals are a required
+# part of the contract. The loop goal must carry the census success condition
+# and the post-merge watch allowance; the census goal must list residue strips
+# beside repairs and reopens. Neither may restore text that only an older skill
+# could satisfy: a `bd ready` success condition never holds while a label-only
+# human gate, a label defect, or a quarantined issue is still offered as ready
+# work, and a `gh pr merge` example that does not pin the head bypasses the
+# skill's guarded merge, so the skill owns the merge command and the CI route.
 # ---------------------------------------------------------------------------
 if [ -d "$root/prompts" ]; then
     goal="$root/prompts/backlog-loop.goal.md"
+    census_goal="$root/prompts/backlog-census.goal.md"
     [ -f "$goal" ] ||
         fail "prompts/ exists but carries no backlog-loop.goal.md (breaks R16: the launch contract for recovery-aware execution is missing)"
+    [ -f "$census_goal" ] ||
+        fail "prompts/ exists but carries no backlog-census.goal.md (breaks R16: the launch contract for the diagnostic census is missing)"
     grep -qF -- 'Do not stop the goal merely because trunk is red' "$goal" ||
         fail "$goal: the goal no longer permits TRUNK REPAIR on a red trunk (breaks R16: prompt authority can stop before the skill reaches recovery)"
     grep -qF -- 'Stop the goal early only when backlog-loop has run its census and proved that no legal agent-executable action remains.' "$goal" ||
         fail "$goal: the goal is not gated on a census proving legal progress exhausted (breaks R16: a scoped failure can end the goal while independent work remains)"
-    for forbidden in '- trunk health fails;' '- three consecutive batches are blocked or failed;' '- the same issue ID is attempted twice;' '- two consecutive merges fail;'; do
-        if grep -qF -- "$forbidden" "$goal"; then
-            fail "$goal: contains obsolete unconditional stop '$forbidden' (breaks R16: prompt authority overrides the recovery-aware skill)"
+    grep -qF -- '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.' "$goal" ||
+        fail "$goal: the goal no longer states its first success condition as the census proving no legal agent-executable action remains (breaks R16: a label-only human gate, a label defect, or a quarantined issue keeps the condition false forever)"
+    grep -qF -- ', or a merged member held by a recorded post-merge watch and reported with its `backlog_loop_postmerge_ci` queue entry.' "$goal" ||
+        fail "$goal: the goal no longer allows an in-progress member held by a recorded post-merge watch (breaks R16: a merged member waiting on CI makes the second success condition unreachable)"
+    grep -qF -- '3. Every repair, every reopen, and every residue strip a loop run would perform is reported' "$census_goal" ||
+        fail "$census_goal: the census goal no longer lists residue strips beside repairs and reopens (breaks R16: a diagnostic run hides the one mutation it promised to report)"
+    for g in "$goal" "$census_goal"; do
+        for forbidden in '- trunk health fails;' '- three consecutive batches are blocked or failed;' '- the same issue ID is attempted twice;' '- two consecutive merges fail;' '1. `bd ready --json --exclude-type=epic` returns no actionable issue.' 'For every batch, follow the CI state selected by backlog-loop:'; do
+            if grep -qF -- "$forbidden" "$g"; then
+                fail "$g: contains obsolete goal text '$forbidden' (breaks R16: prompt authority overrides the recovery-aware skill)"
+            fi
+        done
+        unpinned_merge=$(grep -F -- 'gh pr merge' "$g" | grep -vF -- '--match-head-commit' || true)
+        if [ -n "$unpinned_merge" ]; then
+            fail "$g: carries a gh pr merge example with no --match-head-commit: $(printf '%s' "$unpinned_merge" | head -n 1) (breaks R16: a merge that does not pin the reviewed head lands a commit nobody gated)"
         fi
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, and the goal prompt preserves the same terminal authority"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, and both goal prompts preserve the same terminal authority, state success as the census and leave the merge command to the skill"

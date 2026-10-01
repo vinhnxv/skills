@@ -63,6 +63,7 @@ fresh_tree() {
     cp -R "$repo_root/skills" "$tree/skills"
     mkdir "$tree/prompts"
     cp "$repo_root/prompts/backlog-loop.goal.md" "$tree/prompts/backlog-loop.goal.md"
+    cp "$repo_root/prompts/backlog-census.goal.md" "$tree/prompts/backlog-census.goal.md"
     echo "$tree"
 }
 
@@ -437,6 +438,76 @@ run_suite() { # checker path
         'Stop the goal early if trunk health fails.'
     expect_fail "the companion goal loses its census reachability gate" \
         "goal is not gated on a census proving legal progress exhausted" "$t"
+
+    # -- Goal prompts: success conditions the skill can satisfy ---------------
+    #
+    # Condition 1 was once `bd ready` returning nothing, which a label-only
+    # human gate, a label defect, or a quarantined issue (all still offered as
+    # ready work) keeps false forever. Every case below is a revert to text
+    # that looked right against an older skill.
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-loop.goal.md" \
+        '2. No non-epic issue remains in progress' \
+        '1. `bd ready --json --exclude-type=epic` returns no actionable issue.
+2. No non-epic issue remains in progress'
+    expect_fail "the companion goal restores the bd ready success condition" \
+        "contains obsolete goal text '1. .bd ready --json --exclude-type=epic. returns no actionable issue.'" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-loop.goal.md" \
+        '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.' \
+        '1. `bd ready --json --exclude-type=epic` returns no actionable issue.'
+    expect_fail "the companion goal swaps its census success condition for the old bd ready one" \
+        "goal no longer states its first success condition as the census proving no legal agent-executable action remains" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-loop.goal.md" \
+        ', or a merged member held by a recorded post-merge watch and reported with its `backlog_loop_postmerge_ci` queue entry.' \
+        '.'
+    expect_fail "the companion goal no longer allows a member held by a post-merge watch" \
+        "goal no longer allows an in-progress member held by a recorded post-merge watch" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-loop.goal.md" \
+        'Every batch follows the backlog-loop procedure'"'"'s CI route, quality gates, and merge procedure exactly. This prompt adds no CI or merge rule of its own.' \
+        'For every batch, follow the CI state selected by backlog-loop:
+- When CI is available, use its documented bounded babysitter and require a mergeable CI decision.
+- When CI is unavailable, use the documented local pre-merge and post-merge quality gates without waiting for nonexistent CI.'
+    expect_fail "the companion goal restores its own CI paragraph" \
+        "contains obsolete goal text 'For every batch, follow the CI state selected by backlog-loop:'" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-loop.goal.md" \
+        'Never ask me for input.' \
+        'Merge with `gh pr merge <url> --squash --delete-branch`.
+Never ask me for input.'
+    expect_fail "the companion goal carries a gh pr merge example with no --match-head-commit" \
+        "carries a gh pr merge example with no --match-head-commit" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-census.goal.md" \
+        'Never ask me for input.' \
+        'Land it with `gh pr merge <url> --squash`.
+Never ask me for input.'
+    expect_fail "the census goal carries a gh pr merge example with no --match-head-commit" \
+        "backlog-census.goal.md: carries a gh pr merge example with no --match-head-commit" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-census.goal.md" \
+        'Never ask me for input.' \
+        'Stop the goal early if:
+- three consecutive batches are blocked or failed;
+Never ask me for input.'
+    expect_fail "the census goal regains a failed-batch counter stop" \
+        "backlog-census.goal.md: contains obsolete goal text '- three consecutive batches are blocked or failed;'" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-census.goal.md" \
+        '3. Every repair, every reopen, and every residue strip a loop run would perform is reported' \
+        '3. Every repair and every reopen a loop run would perform is reported'
+    expect_fail "the census goal stops listing residue strips beside repairs and reopens" \
+        "census goal no longer lists residue strips beside repairs and reopens" "$t"
 
     # -- CE 3.30.1 compatibility: the merge gate and the child contracts -----
     #
