@@ -3,7 +3,7 @@ Clear every actionable non-epic issue from the Beads tracker by following the ba
 The loaded backlog-loop procedure is the sole execution authority for every batch. If this prompt conflicts with that procedure, the procedure wins. Do not improvise around it or substitute another workflow.
 
 Success means all three:
-1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.
+1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval and whose issue is reported as awaiting a person, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.
 2. No non-epic issue remains in progress, except one explicitly identified as externally owned and reported as a blocker under the backlog-loop procedure, or a merged member held by a recorded post-merge watch and reported with its `backlog_loop_postmerge_ci` queue entry.
 3. The census names every remaining non-closed non-epic issue with the reason it stays.
 

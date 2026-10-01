@@ -515,6 +515,7 @@ for f in "$@"; do
     checked=$((checked + 1))
 
     scan_files=$(scan_files_of "$f")
+
     classify=$(classify_rows "$f")
     causes=$(cause_rows "$f")
     phases=$(phase_values "$f")
@@ -1116,8 +1117,8 @@ SCAN_FILES_END
         fail "$f: preflight no longer reads the required approving review count from both branch protection and pull_request rulesets (breaks R27: a ruleset-only approval requirement is never named)"
     grep -qF -- 'Name it before the first claim as `approval required: <n> review(s) (<protection|ruleset>)`, or `approval required: none`.' "$f" ||
         fail "$f: preflight no longer names the approval requirement before the first claim (breaks R27: the operator learns of it from a parked PR)"
-    grep -qF -- 'wait for the required approval and never approve; this loop stays responsible and lists the PR in the report as awaiting a required approval' "$f" ||
-        fail "$f: the \`REVIEW_REQUIRED\` row no longer waits, stays loop-responsible, and lists the PR as awaiting a required approval (breaks R27: the PR is either abandoned or approved by the loop)"
+    grep -qF -- 'wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict' "$f" ||
+        fail "$f: the \`REVIEW_REQUIRED\` row no longer waits and reports the required approval without holding back the clear verdict (breaks R27: the PR is either abandoned or approved by the loop)"
     grep -qF -- 'waiting on a required approval, an interruption park in RECOVERY' "$f" ||
         fail "$f: CHARGING no longer lists waiting on a required approval as never charged (breaks R27: a PR waiting on a person reaches the attempt ceiling)"
     section_of "$f" '## FINAL REPORT' |
@@ -1210,9 +1211,13 @@ SCAN_FILES_END
     # R29, R30, R31. The loop is worktree-safe (U8). The scans run first so a
     # restored command is reported as itself and not as a missing clause, and
     # each clause below is a whole sentence, never a bare keyword.
-    switch_default=$(grep -nE 'git[[:space:]]+(switch|checkout)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*<default>|--ff-only' "$f" || true)
-    [ -z "$switch_default" ] ||
-        fail "$f: the skill restores \`git switch <default>\` or a fast-forward: $(printf '%s' "$switch_default" | head -n 1 | cut -c1-120) (breaks R29: from a linked worktree the switch fails because another worktree holds the default branch, and a fast-forward past that failure moves the branch the operator has checked out)"
+    while IFS= read -r sf; do
+        switch_default=$(grep -nE 'git[[:space:]]+([^`]*[[:space:]])?(switch|checkout)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*<default>|--ff-only' "$sf" || true)
+        [ -z "$switch_default" ] ||
+            fail "$sf: the skill restores \`git switch <default>\` or a fast-forward: $(printf '%s' "$switch_default" | head -n 1 | cut -c1-120) (breaks R29: a default-branch switch or fast-forward moves the operator's checkout)"
+    done <<SCAN_FILES_END
+$scan_files
+SCAN_FILES_END
     while IFS= read -r sf; do
         worktree_prune=$(grep -nE 'worktree[[:space:]]+prune' "$sf" || true)
         [ -z "$worktree_prune" ] ||
@@ -1269,6 +1274,46 @@ SCAN_FILES_END
         fail "$f: REAP no longer deletes the local head branch of a merged batch (breaks R31: the local head branch of every merged batch accumulates)"
     grep -qF -- 'A registration whose directory is already gone is cleared by that same command, so REAP never prunes repository-wide.' "$f" ||
         fail "$f: REAP no longer clears a registration whose directory is already gone with the same removal (breaks R31: a registration whose directory is gone is never cleared)"
+    grep -qF -- 'Exactly five categories are the loop'"'"'s to clear: `ready`, `claimed-this-run`, `abandoned-claim`, `self-blocked-transient`, and a `dep-blocked` issue whose blocker is itself in one of those.' "$f" ||
+        fail "$f: residual contract missing: loop-responsible category set"
+    grep -qF -- 'A completed failure of any required check on the exact head blocks the merge; a completed optional failure blocks unless it is `startup_failure` or a billing or quota error. A missing or pending optional check, including optional `startup_failure` and billing or quota errors counted as missing, does not delay a PR that GitHub reports `MERGEABLE`:' "$f" ||
+        fail "$f: residual contract missing: optional pipeline guard"
+    grep -qF -- 'Required status checks require the babysitter'"'"'s passing CI decision; a missing or pending optional check, including optional `startup_failure` and billing or quota errors counted as missing, does not block a GitHub `MERGEABLE` PR after its exact-head local gates pass, and a completed optional failure of any other kind does.' "$f" ||
+        fail "$f: residual contract missing: optional boundary guard"
+    # Residual findings: preserve each complete contract clause (U1-U4).
+    grep -qF -- '4. **CLAIM.** `bd show <id>` for every member, then atomically claim each with `bd update <id> --claim` and set its run metadata, including `backlog_loop_phase=claimed`, `backlog_loop_base=<batch-base-sha>`, `backlog_loop_trunk_ci=<trunk-ci>`, `backlog_loop_worktrees=<worktree-root>`, and provisional `backlog_loop_ci=<batch-ci>`.' "$f" ||
+        fail "$f: residual contract missing: CLAIM worktree root"
+    grep -qF -- '| `backlog_loop_worktrees` | CLAIM, then idempotently at the first CLEAN-TREE GATE RUN, or the first PR worktree OPEN PR RESUME creates | `<worktree-root>` |' "$f" ||
+        fail "$f: residual contract missing: worktree ledger writer"
+    grep -qF -- 'then one `bd update <id> --if-status in_progress --status=blocked --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open`, uncharged, and adopt it with the write above. Exit 13 means another invocation moved the member first: skip it and write nothing.' "$f" ||
+        fail "$f: residual contract missing: guarded ADOPTION park"
+    grep -qF -- 'this table decides what happens to the PR. The first matching row wins, and the last row is the catch-all for unnamed open states. "Charged" is defined under CHARGING.' "$f" ||
+        fail "$f: residual contract missing: disposition precedence"
+    grep -qF -- '| `OPEN`, no required check, an optional check missing or pending (`startup_failure` and billing or quota errors count as missing) | run the complete applicable local gate set on the exact head, including workflow verification coverage; keep the route `on` and post-merge CI expected, and write `backlog_loop_ci=off` only on proven absence of every producer (pipeline step 6), never because an optional check is slow; then I6'"'"'s guarded merge | no | `in_progress` at `merge-requested` |' "$f" ||
+        fail "$f: residual contract missing: optional disposition exemption"
+    grep -qF -- '| `OPEN`, a required check is red, or an optional check has a completed failure other than `startup_failure` or a billing or quota error | one babysit round through its CI stream; a changed head is recorded and returns to P4-P6, at most two rounds, then the blocked path | yes, per round that ends still red | `blocked`, `transient:pr-open` |' "$f" ||
+        fail "$f: residual contract missing: red-check exemption"
+    grep -qF -- '(or `UNSTABLE` when every non-passing check is optional and still pending or missing, where `startup_failure` and billing or quota errors count as missing), and a `reviewDecision` other than `CHANGES_REQUESTED` or `REVIEW_REQUIRED`. Required checks must pass, and a completed failure of an optional check blocks too unless it is `startup_failure` or a billing or quota error; only a missing or pending optional check, including those errors, is bypassed by green exact-head local gates.' "$f" ||
+        fail "$f: residual contract missing: optional merge guard"
+    grep -qF -- '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' "$f" ||
+        fail "$f: residual contract missing: catch-all disposition"
+    grep -qF -- '| 6 | `self-blocked-needs-person` | (`status=blocked`, `backlog_loop_run` present, and `backlog_loop_cause` is `needs-person` or still absent), or (`status=blocked`, no `backlog_loop_run`, and `backlog_loop_cause` is `needs-person`) |' "$f" ||
+        fail "$f: residual contract missing: released needs-person census"
+    grep -qF -- 'That split is an ownership test and CENSUS extends it into a full accounting of every non-closed issue. A `needs-person` cause alone on a blocked issue marks this loop'"'"'s own release of a person-closed PR, even after its RUN keys are unset.' "$f" ||
+        fail "$f: residual contract missing: released needs-person ownership"
+    grep -qF -- 'every `legacy-blocked` issue and every `self-blocked-needs-person` issue released by a person-close with the first line of its note every reported cycle,' "$f" ||
+        fail "$f: residual contract missing: released needs-person REPORT"
+    grep -qF -- 'An issue whose open linked PR REPORT lists as awaiting a required approval is reported as awaiting a person and does not hold back the clear verdict. Everything else is somebody'"'"'s or something else'"'"'s.' "$f" ||
+        fail "$f: residual contract missing: approval loop set"
+    grep -qF -- '`quarantined`, `legacy-blocked`, and `self-blocked-needs-person` are deliberately NOT in the set, because they wait on a person.' "$f" ||
+        fail "$f: residual contract missing: needs-person outside loop set"
+    grep -qF -- 'No issue in the loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval, and no PR this census'"'"'s RESIDUE PASS stripped is still `OPEN` -> the backlog is clear. Report that approval-waiting issue as awaiting a person; it does not hold back the clear verdict.' "$f" ||
+        fail "$f: residual contract missing: approval termination"
+    grep -qF -- 'wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict' "$f" ||
+        fail "$f: residual contract missing: approval disposition"
+    [ "$(disposition_rows "$f" | tail -n 1)" = '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' ] ||
+        fail "$f: residual contract missing: catch-all must be the last disposition row"
+
 done
 
 # ---------------------------------------------------------------------------
@@ -1296,7 +1341,7 @@ if [ -d "$root/prompts" ]; then
         fail "$goal: the goal no longer permits TRUNK REPAIR on a red trunk (breaks R16: prompt authority can stop before the skill reaches recovery)"
     grep -qF -- 'Stop the goal early only when backlog-loop has run its census and proved that no legal agent-executable action remains.' "$goal" ||
         fail "$goal: the goal is not gated on a census proving legal progress exhausted (breaks R16: a scoped failure can end the goal while independent work remains)"
-    grep -qF -- '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.' "$goal" ||
+    grep -qF -- '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval and whose issue is reported as awaiting a person, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.' "$goal" ||
         fail "$goal: the goal no longer states its first success condition as the census proving no legal agent-executable action remains (breaks R16: a label-only human gate, a label defect, or a quarantined issue keeps the condition false forever)"
     grep -qF -- ', or a merged member held by a recorded post-merge watch and reported with its `backlog_loop_postmerge_ci` queue entry.' "$goal" ||
         fail "$goal: the goal no longer allows an in-progress member held by a recorded post-merge watch (breaks R16: a merged member waiting on CI makes the second success condition unreachable)"

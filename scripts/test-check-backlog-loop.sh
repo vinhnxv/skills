@@ -482,7 +482,7 @@ run_suite() { # checker path
     # PASS still promises the termination decision, but step 2 no longer asks.
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        "set, and no PR this census's RESIDUE PASS stripped is still \`OPEN\` -> the backlog is clear." \
+        "set except an issue whose open linked PR REPORT lists as awaiting a required approval, and no PR this census's RESIDUE PASS stripped is still \`OPEN\` -> the backlog is clear." \
         "set -> the backlog is clear."
     replace_first "$t" "$LOOP_MD_CLAUDE" \
         ' An outstanding stripped PR withholds that verdict, but it does not stop independent ready work: carry and report every URL while batches remain selectable, and stop and report the still-open PR only after no agent-executable work remains.' \
@@ -542,7 +542,7 @@ run_suite() { # checker path
 
     t=$(fresh_tree)
     replace_first "$t" "prompts/backlog-loop.goal.md" \
-        '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.' \
+        '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval and whose issue is reported as awaiting a person, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.' \
         '1. `bd ready --json --exclude-type=epic` returns no actionable issue.'
     expect_fail "the companion goal swaps its census success condition for the old bd ready one" \
         "goal no longer states its first success condition as the census proving no legal agent-executable action remains" "$t"
@@ -686,6 +686,124 @@ Never ask me for input.'
         ''
     expect_fail "preflight no longer says the LFG ce-compound step is skipped deliberately" \
         "no longer says the LFG ce-compound step is skipped deliberately" "$t"
+
+    both_hosts "needs-person enters the loop-responsible categories" \
+        'Exactly five categories are the loop'"'"'s to clear: `ready`, `claimed-this-run`, `abandoned-claim`, `self-blocked-transient`, and a `dep-blocked` issue whose blocker is itself in one of those.' \
+        'Exactly five categories are the loop'"'"'s to clear: `ready`, `claimed-this-run`, `abandoned-claim`, `self-blocked-transient`, `self-blocked-needs-person`, and a `dep-blocked` issue whose blocker is itself in one of those.' \
+        "residual contract missing: loop-responsible category set"
+
+    both_hosts 'optional pipeline guard' \
+        'A completed failure of any required check on the exact head blocks the merge; a completed optional failure blocks unless it is `startup_failure` or a billing or quota error. A missing or pending optional check, including optional `startup_failure` and billing or quota errors counted as missing, does not delay a PR that GitHub reports `MERGEABLE`:' \
+        'A completed failure of any check on the exact head blocks the merge, required or optional. A missing or pending optional check does not delay a PR that GitHub reports `MERGEABLE`:' \
+        'residual contract missing: optional pipeline guard'
+
+    both_hosts 'optional boundary guard' \
+        'Required status checks require the babysitter'"'"'s passing CI decision; a missing or pending optional check, including optional `startup_failure` and billing or quota errors counted as missing, does not block a GitHub `MERGEABLE` PR after its exact-head local gates pass, and a completed optional failure of any other kind does.' \
+        'Required status checks require the babysitter'"'"'s passing CI decision; a missing or pending optional check does not block a GitHub `MERGEABLE` PR after its exact-head local gates pass, and a completed optional failure does.' \
+        'residual contract missing: optional boundary guard'
+
+    # Residual contract break cases (U1-U5), also run against the exit-0 control.
+    both_hosts 'CLAIM worktree root' \
+        '4. **CLAIM.** `bd show <id>` for every member, then atomically claim each with `bd update <id> --claim` and set its run metadata, including `backlog_loop_phase=claimed`, `backlog_loop_base=<batch-base-sha>`, `backlog_loop_trunk_ci=<trunk-ci>`, `backlog_loop_worktrees=<worktree-root>`, and provisional `backlog_loop_ci=<batch-ci>`.' \
+        '4. **CLAIM.** `bd show <id>` for every member, then atomically claim each with `bd update <id> --claim` and set its run metadata, including `backlog_loop_phase=claimed`, `backlog_loop_base=<batch-base-sha>`, `backlog_loop_trunk_ci=<trunk-ci>`, and provisional `backlog_loop_ci=<batch-ci>`.' \
+        'residual contract missing: CLAIM worktree root'
+
+    both_hosts 'worktree ledger writer' \
+        '| `backlog_loop_worktrees` | CLAIM, then idempotently at the first CLEAN-TREE GATE RUN, or the first PR worktree OPEN PR RESUME creates | `<worktree-root>` |' \
+        '| `backlog_loop_worktrees` | first CLEAN-TREE GATE RUN, or the first PR worktree OPEN PR RESUME creates | `<worktree-root>` |' \
+        'residual contract missing: worktree ledger writer'
+
+    both_hosts 'guarded ADOPTION park' \
+        'then one `bd update <id> --if-status in_progress --status=blocked --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open`, uncharged, and adopt it with the write above. Exit 13 means another invocation moved the member first: skip it and write nothing.' \
+        'then one `bd update <id> --status=blocked --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open`, uncharged, and adopt it with the write above.' \
+        'residual contract missing: guarded ADOPTION park'
+
+    both_hosts 'disposition precedence' \
+        'this table decides what happens to the PR. The first matching row wins, and the last row is the catch-all for unnamed open states. "Charged" is defined under CHARGING.' \
+        'this table decides what happens to the PR. "Charged" is defined under CHARGING.' \
+        'residual contract missing: disposition precedence'
+
+    both_hosts 'optional disposition exemption' \
+        '| `OPEN`, no required check, an optional check missing or pending (`startup_failure` and billing or quota errors count as missing) | run the complete applicable local gate set on the exact head, including workflow verification coverage; keep the route `on` and post-merge CI expected, and write `backlog_loop_ci=off` only on proven absence of every producer (pipeline step 6), never because an optional check is slow; then I6'"'"'s guarded merge | no | `in_progress` at `merge-requested` |' \
+        '| `OPEN`, no required check, an optional check missing or pending | run the complete applicable local gate set on the exact head, including workflow verification coverage; keep the route `on` and post-merge CI expected, and write `backlog_loop_ci=off` only on proven absence of every producer (pipeline step 6), never because an optional check is slow; then I6'"'"'s guarded merge | no | `in_progress` at `merge-requested` |' \
+        'residual contract missing: optional disposition exemption'
+
+    both_hosts 'red-check exemption' \
+        '| `OPEN`, a required check is red, or an optional check has a completed failure other than `startup_failure` or a billing or quota error | one babysit round through its CI stream; a changed head is recorded and returns to P4-P6, at most two rounds, then the blocked path | yes, per round that ends still red | `blocked`, `transient:pr-open` |' \
+        '| `OPEN`, a required check is red, or an optional check has a completed failure | one babysit round through its CI stream; a changed head is recorded and returns to P4-P6, at most two rounds, then the blocked path | yes, per round that ends still red | `blocked`, `transient:pr-open` |' \
+        'residual contract missing: red-check exemption'
+
+    both_hosts 'optional merge guard' \
+        '(or `UNSTABLE` when every non-passing check is optional and still pending or missing, where `startup_failure` and billing or quota errors count as missing), and a `reviewDecision` other than `CHANGES_REQUESTED` or `REVIEW_REQUIRED`. Required checks must pass, and a completed failure of an optional check blocks too unless it is `startup_failure` or a billing or quota error; only a missing or pending optional check, including those errors, is bypassed by green exact-head local gates.' \
+        '(or `UNSTABLE` when every non-passing check is optional and still pending or missing), and a `reviewDecision` other than `CHANGES_REQUESTED` or `REVIEW_REQUIRED`. Required checks must pass, and a completed failure of an optional check blocks too; only a missing or pending optional check is bypassed by green exact-head local gates.' \
+        'residual contract missing: optional merge guard'
+
+    both_hosts 'catch-all disposition' \
+        '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' \
+        '' \
+        'residual contract missing: catch-all disposition'
+
+    both_hosts 'released needs-person census' \
+        '| 6 | `self-blocked-needs-person` | (`status=blocked`, `backlog_loop_run` present, and `backlog_loop_cause` is `needs-person` or still absent), or (`status=blocked`, no `backlog_loop_run`, and `backlog_loop_cause` is `needs-person`) |' \
+        '| 6 | `self-blocked-needs-person` | `status=blocked`, `backlog_loop_run` present, and `backlog_loop_cause` is `needs-person` or still absent |' \
+        'residual contract missing: released needs-person census'
+
+    both_hosts 'released needs-person ownership' \
+        'That split is an ownership test and CENSUS extends it into a full accounting of every non-closed issue. A `needs-person` cause alone on a blocked issue marks this loop'"'"'s own release of a person-closed PR, even after its RUN keys are unset.' \
+        'That split is an ownership test and CENSUS extends it into a full accounting of every non-closed issue.' \
+        'residual contract missing: released needs-person ownership'
+
+    both_hosts 'released needs-person REPORT' \
+        'every `legacy-blocked` issue and every `self-blocked-needs-person` issue released by a person-close with the first line of its note every reported cycle,' \
+        'every `legacy-blocked` issue with the first line of its note every reported cycle,' \
+        'residual contract missing: released needs-person REPORT'
+
+    both_hosts 'approval loop set' \
+        'An issue whose open linked PR REPORT lists as awaiting a required approval is reported as awaiting a person and does not hold back the clear verdict. Everything else is somebody'"'"'s or something else'"'"'s.' \
+        'Everything else is somebody'"'"'s or something else'"'"'s.' \
+        'residual contract missing: approval loop set'
+
+    both_hosts 'needs-person outside loop set' \
+        '`quarantined`, `legacy-blocked`, and `self-blocked-needs-person` are deliberately NOT in the set, because they wait on a person.' \
+        '`quarantined` and `legacy-blocked` are deliberately NOT in the set, both because they wait on a person.' \
+        'residual contract missing: needs-person outside loop set'
+
+    both_hosts 'approval termination' \
+        'No issue in the loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval, and no PR this census'"'"'s RESIDUE PASS stripped is still `OPEN` -> the backlog is clear. Report that approval-waiting issue as awaiting a person; it does not hold back the clear verdict.' \
+        'No issue in the loop-responsible set, and no PR this census'"'"'s RESIDUE PASS stripped is still `OPEN` -> the backlog is clear.' \
+        'residual contract missing: approval termination'
+
+    both_hosts 'approval disposition' \
+        'wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict' \
+        'wait for the required approval and never approve; this loop stays responsible and lists the PR in the report as awaiting a required approval' \
+        'the .REVIEW_REQUIRED. row no longer waits and reports the required approval without holding back the clear verdict'
+
+    both_hosts 'catch-all merges' \
+        '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' \
+        '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, then I6'"'"'s guarded merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' \
+        'residual contract missing: catch-all disposition'
+
+    both_hosts 'catch-all charged' \
+        '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' \
+        '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | yes | `blocked`, `transient:pr-open` |' \
+        'residual contract missing: catch-all disposition'
+
+    both_append "option-bearing switch targets default" \
+        '`git -C <invoking-worktree> switch <default>`' \
+        "the skill restores .git switch <default>. or a fast-forward"
+
+    for host in claude codex; do
+        t=$(fresh_tree)
+        plant_reference "$t" "$host" '`git -c advice.detachedHead=false checkout <default>`'
+        expect_fail "option-bearing checkout in reference ($host)" \
+            "skills/$host/backlog-loop/references/rationale.md: the skill restores" "$t"
+    done
+
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-loop.goal.md" \
+        '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval and whose issue is reported as awaiting a person, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.' \
+        '1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.'
+    expect_fail "goal loses required-approval exception" "goal no longer states its first success condition" "$t"
 
     # -- Linked PR disposition, charging, key classes (CR21-CR24) -------------
     #
@@ -908,8 +1026,8 @@ Never ask me for input.'
         "a literal --status=blocked write does not unset .backlog_loop_heartbeat. in the same command .breaks R26"
 
     both_hosts "the adoption park-first write keeps the heartbeat" \
-        '`bd update <id> --status=blocked --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open`' \
-        '`bd update <id> --status=blocked --set-metadata backlog_loop_cause=transient:pr-open`' \
+        '`bd update <id> --if-status in_progress --status=blocked --unset-metadata backlog_loop_heartbeat --set-metadata backlog_loop_cause=transient:pr-open`' \
+        '`bd update <id> --if-status in_progress --status=blocked --set-metadata backlog_loop_cause=transient:pr-open`' \
         "a literal --status=blocked write does not unset .backlog_loop_heartbeat. in the same command .breaks R26"
 
     both_hosts "the rule that every blocked write unsets the heartbeat is deleted" \
@@ -1030,9 +1148,9 @@ Never ask me for input.'
         "preflight no longer names the approval requirement before the first claim"
 
     both_hosts "the awaiting-approval row stops staying loop-responsible and listed" \
-        'wait for the required approval and never approve; this loop stays responsible and lists the PR in the report as awaiting a required approval' \
+        'wait for the required approval and never approve; list the PR in REPORT as awaiting a required approval and its issue as awaiting a person, without holding back the clear verdict' \
         'park the PR as needs-person' \
-        "the .REVIEW_REQUIRED. row no longer waits, stays loop-responsible, and lists the PR as awaiting a required approval"
+        "the .REVIEW_REQUIRED. row no longer waits and reports the required approval without holding back the clear verdict"
 
     both_hosts "waiting on a required approval starts being charged" \
         'waiting on a required approval, an interruption park in RECOVERY' \
