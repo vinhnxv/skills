@@ -160,6 +160,27 @@
 #       `gtimeout` and follows the repository docs, the final REAP deletes the
 #       run-owned worktree root, and FINAL REPORT lists closed issues whose PR
 #       is still open.
+#   R29 the loop never changes the invoking worktree. Preflight records the
+#       invoking worktree and whether it is linked and treats the default
+#       branch held by another worktree as normal; trunk is a detached checkout
+#       of `<remote>/<default>` in a run-owned trunk worktree, never a switch
+#       or fast-forward (a linked worktree cannot check out a default branch
+#       another worktree holds, and a fast-forward past that failure moves the
+#       branch the operator has checked out), with local commits ahead of the
+#       remote found by comparing refs; every child runs in that run-owned tree,
+#       each run-owned worktree is bootstrapped before a gate runs, tracked
+#       `.beads/` export files are excluded paths, a PR branch held elsewhere
+#       is resumed detached with an explicit push refspec, and the merge never
+#       passes `--delete-branch` (its local cleanup fails from a worktree and
+#       can leave the remote branch behind), so the remote branch is deleted
+#       through the API.
+#   R30 no text runs `git worktree prune`. A repository-wide prune also drops
+#       the registration of a worktree of the operator whose directory is
+#       temporarily missing. Removal is `git worktree remove --force <path>`,
+#       which also clears a registration whose directory is already gone.
+#   R31 `<worktree-root>` lies outside every worktree of the repository and
+#       REAP removes only registered paths under it, never a worktree it did not
+#       create, then deletes the local head branch of each merged batch.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -1037,6 +1058,65 @@ for f in $copies; do
         fail "$f: FINAL REPORT no longer lists closed issues whose PR is still \`OPEN\` (breaks R28: a person-closed issue orphans an open PR nobody reports)"
     grep -qF -- 'Whether `bd list --json` carries a `metadata` object or a `dependencies` array depends on the `bd` version' "$f" ||
         fail "$f: CENSUS no longer states the \`bd list --json\` shape as version-dependent (breaks R28: the claim is false on the bd version that returns metadata)"
+
+    # R29, R30, R31. The loop is worktree-safe (U8). The scans run first so a
+    # restored command is reported as itself and not as a missing clause, and
+    # each clause below is a whole sentence, never a bare keyword.
+    switch_default=$(grep -nE 'git[[:space:]]+(switch|checkout)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*<default>|--ff-only' "$f" || true)
+    [ -z "$switch_default" ] ||
+        fail "$f: the skill restores \`git switch <default>\` or a fast-forward: $(printf '%s' "$switch_default" | head -n 1 | cut -c1-120) (breaks R29: from a linked worktree the switch fails because another worktree holds the default branch, and a fast-forward past that failure moves the branch the operator has checked out)"
+    worktree_prune=$(grep -nE 'worktree[[:space:]]+prune' "$f" || true)
+    [ -z "$worktree_prune" ] ||
+        fail "$f: instructs \`git worktree prune\`: $(printf '%s' "$worktree_prune" | head -n 1 | cut -c1-120) (breaks R30: a repository-wide prune also drops the registration of a worktree of the operator whose directory is temporarily missing)"
+    merge_delete_branch=$(grep -nE 'gh pr merge[^`]*--delete-branch' "$f" || true)
+    [ -z "$merge_delete_branch" ] ||
+        fail "$f: step 6 passes \`--delete-branch\` to \`gh pr merge\`: $(printf '%s' "$merge_delete_branch" | head -n 1 | cut -c1-120) (breaks R29: its local cleanup switches the checkout and deletes the local head branch, which a worktree that holds either one refuses, and the refusal can leave the remote branch undeleted)"
+    grep -qF -- 'record `<invoking-worktree>`, the output of `git rev-parse --show-toplevel`, and whether it is linked: `git rev-parse --git-dir` differs from `git rev-parse --git-common-dir`.' "$f" ||
+        fail "$f: preflight no longer records \`<invoking-worktree>\` and whether it is linked (breaks R29: the loop cannot tell whether it runs from a linked worktree, so every later rule about the invoking worktree has no subject)"
+    grep -qF -- 'The default branch checked out in another worktree is the normal state of a linked worktree and is never a stop.' "$f" ||
+        fail "$f: preflight no longer says a default branch checked out in another worktree is never a stop (breaks R29: every run from a linked worktree stops at preflight although the operator workflow creates them routinely)"
+    grep -qF -- 'Never switch, fast-forward, reset, commit to, stash, or clean `<invoking-worktree>`: every branch operation of this loop runs in a run-owned worktree under `<worktree-root>`, which starts clean at an exact commit, so no uncommitted work enters a batch and no checked-out branch moves.' "$f" ||
+        fail "$f: preflight no longer forbids switching, fast-forwarding, resetting, committing to, stashing, or cleaning \`<invoking-worktree>\` (breaks R29: a batch is built on, or a fast-forward moves, the branch the operator has checked out)"
+    grep -qF -- 'Save every tracked path under `.beads/` (`git ls-files .beads`) as `<excluded-paths>`:' "$f" ||
+        fail "$f: preflight no longer saves every tracked \`.beads/\` path as \`<excluded-paths>\` (breaks R29: tracker export churn is staged into a batch PR)"
+    grep -qF -- 'and that tracker churn is never staged, committed, or cleaned by this loop.' "$f" ||
+        fail "$f: preflight no longer says tracker churn is never staged, committed, or cleaned (breaks R29: tracker export churn rides along in a batch PR)"
+    grep -qF -- 'Update trunk without touching `<invoking-worktree>`: `git fetch <remote> --prune`, then create or move `<trunk-tree>` as CLEAN-TREE GATE RUN defines, requiring exit 0 from each command.' "$f" ||
+        fail "$f: step 1 no longer updates trunk in \`<trunk-tree>\` without touching \`<invoking-worktree>\` (breaks R29: trunk is updated by switching the invoking worktree, which fails when another worktree holds the default branch)"
+    grep -qF -- 'Never switch the invoking worktree to `<default>`, fast-forward it, reset it, or use a tree-wide checkout: a linked worktree cannot check out a default branch that another worktree holds, and a fast-forward there would move the branch the operator has checked out.' "$f" ||
+        fail "$f: step 1 no longer forbids switching, fast-forwarding, or resetting the invoking worktree (breaks R29: the one rule that stops an executor from continuing past a failed switch has nowhere to live)"
+    grep -qF -- 'Compare refs for local commits the remote lacks: `git rev-list --count <remote>/<default>..refs/heads/<default>`, skipped when no local `<default>` ref exists.' "$f" ||
+        fail "$f: step 1 no longer compares refs for local commits the remote lacks (breaks R29: local commits the remote lacks are either missed or only found by moving a checkout)"
+    grep -qF -- 'creates it with `git worktree add --detach <trunk-tree> <remote>/<default>` when it is absent and otherwise moves it with `git -C <trunk-tree> switch --detach <remote>/<default>`.' "$f" ||
+        fail "$f: CLEAN-TREE GATE RUN no longer creates and moves \`<trunk-tree>\` detached at \`<remote>/<default>\` (breaks R29: a trunk worktree that holds the default branch collides with the operator checkout of it)"
+    grep -qF -- 'ITERATION steps 3 through 7 run every child skill with `<trunk-tree>` as the working directory, never `<invoking-worktree>`.' "$f" ||
+        fail "$f: CLEAN-TREE GATE RUN no longer runs every child skill of ITERATION steps 3 through 7 in \`<trunk-tree>\` (breaks R29: ce-work builds on the branch the operator has checked out)"
+    grep -qF -- 'so add the tree detached instead: `git worktree add --detach <worktree-root>/pr-<number> <remote>/<branch>`.' "$f" ||
+        fail "$f: OPEN PR RESUME no longer adds a branch checked out elsewhere as a detached tree (breaks R29: a PR whose branch another worktree holds can never be resumed)"
+    grep -qF -- 'tell the child to push with `git push <remote> HEAD:refs/heads/<branch>` and never with a bare `git push`.' "$f" ||
+        fail "$f: OPEN PR RESUME no longer pushes a detached tree with an explicit refspec (breaks R29: a detached tree has no upstream, so the push fails and the round is wasted)"
+    grep -qF -- 'the issue goes to `needs-person` naming the holder and the refusal.' "$f" ||
+        fail "$f: OPEN PR RESUME no longer sends an impossible push to \`needs-person\` (breaks R29: a PR whose push can never happen is retried forever)"
+    grep -qF -- 'inside every run-owned worktree a child skill or gate runs in -- `<trunk-tree>`, `pr-<number>`, and `<clean-tree>` -- before the first one runs there, preferring its frozen/locked form.' "$f" ||
+        fail "$f: CLEAN-TREE GATE RUN no longer bootstraps every run-owned worktree before a child or gate runs there (breaks R29: a fresh worktree has no installed dependencies, so verification fails and is charged as a batch block)"
+    grep -qF -- 'never `--delete-branch`: its local cleanup switches the checkout to `<default>` and deletes the local head branch, which a worktree that holds either one refuses, and the refusal can leave the remote branch undeleted.' "$f" ||
+        fail "$f: step 6 no longer says never \`--delete-branch\` (breaks R29: the flag returns and its local cleanup fails from a worktree)"
+    grep -qF -- 'Then delete the remote head branch with `gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/<branch>`: a missing reference means GitHub already deleted it, any other failure is reported, and the proven merge stands either way.' "$f" ||
+        fail "$f: step 6 no longer deletes the remote head branch through the API (breaks R29: the merged head branch is never deleted from the forge)"
+    grep -qF -- 'Only a path under it is ever removed, with `git worktree remove --force <path>`, which also clears a registration whose directory is already gone; nothing here prunes repository-wide, because a prune also drops the registration of any worktree of the operator whose directory is temporarily missing.' "$f" ||
+        fail "$f: CLEAN-TREE GATE RUN no longer says only a path under \`<worktree-root>\` is removed and nothing prunes repository-wide (breaks R30: a repository-wide prune drops the registration of a worktree of the operator whose directory is temporarily missing)"
+    grep -qF -- 'and run `git worktree remove --force <clean-tree>`, which also clears the registration of a tree whose directory is already gone.' "$f" ||
+        fail "$f: the clean-tree teardown no longer relies on \`git worktree remove --force\` to clear a registration whose directory is gone (breaks R30: a registration whose directory is gone has nothing to clear it once prune is gone)"
+    grep -qF -- 'remove every worktree registered under `backlog_loop_worktrees` with `git worktree remove --force <path>`, which also clears a registration whose directory is already gone, then delete the emptied directory with `rmdir`; never prune repository-wide,' "$f" ||
+        fail "$f: RECOVERY no longer removes the dead run's worktrees one by one under \`backlog_loop_worktrees\` (breaks R30: an interrupted run leaves its worktrees registered and installed on disk)"
+    grep -qF -- 'lies outside every worktree of this repository: its path is neither inside nor above any path `git worktree list --porcelain` names, and not inside `git rev-parse --git-common-dir`.' "$f" ||
+        fail "$f: CLEAN-TREE GATE RUN no longer requires \`<worktree-root>\` outside every worktree of the repository (breaks R31: from a linked worktree the root can sit inside a checkout and be swept or committed with it)"
+    grep -qF -- 'with `git worktree remove --force <path>`, and only for a path under `<worktree-root>` that `git worktree list --porcelain` registers; a worktree outside `<worktree-root>` is never removed, whoever created it,' "$f" ||
+        fail "$f: REAP no longer removes only registered paths under \`<worktree-root>\` (breaks R31: REAP removes a worktree the operator owns)"
+    grep -qF -- 'delete its local head branch with `git branch -D <backlog_loop_branch>`' "$f" ||
+        fail "$f: REAP no longer deletes the local head branch of a merged batch (breaks R31: the local head branch of every merged batch accumulates)"
+    grep -qF -- 'A registration whose directory is already gone is cleared by that same command, so REAP never prunes repository-wide.' "$f" ||
+        fail "$f: REAP no longer clears a registration whose directory is already gone with the same removal (breaks R31: a registration whose directory is gone is never cleared)"
 done
 
 # ---------------------------------------------------------------------------
@@ -1083,4 +1163,4 @@ if [ -d "$root/prompts" ]; then
     done
 fi
 
-echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, and both goal prompts preserve the same terminal authority, state success as the census and leave the merge command to the skill"
+echo "OK: $SKILL_NAME across $checked host cop(y/ies): every declared phase reaches a RECOVERY arm in its own opening clause, the default arm names its evidence chain in order and tells FINAL REPORT what happened, the closed enum holds against a negation, the parked statuses outrank abandoned-claim, dep-blocked and legacy-blocked and abandoned-claim states the negation excluding them, CLASSIFY and <cause> agree in both directions, only { $ALLOWED_STATUS_WRITES } are written including quoted, CONSTRAINTS names the three refusals, RESIDUE PASS sits under the WRITE GATE, ITERATION step 2 still gates on a stripped-but-open PR, code-caused red trunk enters a complete tracked TRUNK REPAIR batch that budget checks cannot split, STOP EARLY requires exhausted legal progress instead of failure counters, the merge gate counts actionable_findings only while settled-decision conflicts still gate it, the off-route resolver runs in pipeline mode and preflight resolves ce-debug, and a PR closed without a merge becomes needs-person and releases its link instead of being reclaimed, the attempt ceiling exempts no cause, no transition unsets a DURABLE key, every cause written is declared and has a REOPEN PASS proof, a parked PR is adopted by one status-guarded write that is the only literal in_progress status flag, every blocked or verified write unsets the heartbeat and FINAL REPORT releases members still held, post-merge CI pending past 30 minutes runs the exact-merge local gate once and never rewrites the batch CI route to off, preflight stops on a required check with no producer and names the approval requirement, every bd ready call carries --limit 0, the browser test runs in the clean tree on a port REAP stops, the branch is recorded before step 4 and nothing is pushed before step 7, the run token and hygiene rules reach every child, OPEN PR RESUME runs in a run-owned worktree, the invoking worktree is never switched, fast-forwarded, or built on, no text prunes worktrees repository-wide, and REAP removes only run-owned paths under <worktree-root>, and both goal prompts preserve the same terminal authority, state success as the census and leave the merge command to the skill"

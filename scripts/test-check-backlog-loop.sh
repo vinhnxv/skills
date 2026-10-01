@@ -1091,6 +1091,139 @@ Never ask me for input.'
         '`bd list --json` returns neither a `metadata` object nor a `dependencies` array; it carries' \
         "CENSUS no longer states the .bd list --json. shape as version-dependent"
 
+    # -- R29, R30, R31: a worktree-safe loop (U8) -----------------------------
+
+    both_hosts "BASE restores a switch to the default branch and a fast-forward" \
+        "Repeat step 1's trunk update." \
+        'Repeat the update: `git switch <default>` and `git merge --ff-only <remote>/<default>`.' \
+        "the skill restores .git switch <default>. or a fast-forward"
+
+    both_hosts "preflight stops recording the invoking worktree" \
+        'record `<invoking-worktree>`, the output of `git rev-parse --show-toplevel`, and whether it is linked: `git rev-parse --git-dir` differs from `git rev-parse --git-common-dir`.' \
+        'note the working directory.' \
+        "preflight no longer records .<invoking-worktree>. and whether it is linked"
+
+    both_hosts "a default branch checked out elsewhere becomes a stop" \
+        'The default branch checked out in another worktree is the normal state of a linked worktree and is never a stop.' \
+        'is a stop.' \
+        "preflight no longer says a default branch checked out in another worktree is never a stop"
+
+    both_hosts "the invoking worktree may be switched again" \
+        'Never switch, fast-forward, reset, commit to, stash, or clean `<invoking-worktree>`: every branch operation of this loop runs in a run-owned worktree under `<worktree-root>`, which starts clean at an exact commit, so no uncommitted work enters a batch and no checked-out branch moves.' \
+        'Tidy `<invoking-worktree>` as needed.' \
+        "preflight no longer forbids switching, fast-forwarding, resetting, committing to, stashing, or cleaning .<invoking-worktree>."
+
+    both_hosts "tracked .beads files stop being excluded paths" \
+        'Save every tracked path under `.beads/` (`git ls-files .beads`) as `<excluded-paths>`:' \
+        'Save nothing as `<excluded-paths>`:' \
+        "preflight no longer saves every tracked .\.beads/. path as .<excluded-paths>."
+
+    both_hosts "tracker churn may be committed" \
+        'and that tracker churn is never staged, committed, or cleaned by this loop.' \
+        'and that tracker churn rides along with the batch.' \
+        "preflight no longer says tracker churn is never staged, committed, or cleaned"
+
+    both_hosts "step 1 stops leaving the invoking worktree alone" \
+        'Update trunk without touching `<invoking-worktree>`: `git fetch <remote> --prune`, then create or move `<trunk-tree>` as CLEAN-TREE GATE RUN defines, requiring exit 0 from each command.' \
+        'Update trunk in place.' \
+        "step 1 no longer updates trunk in .<trunk-tree>. without touching .<invoking-worktree>."
+
+    both_hosts "step 1 stops forbidding a switch or fast-forward of the invoking worktree" \
+        'Never switch the invoking worktree to `<default>`, fast-forward it, reset it, or use a tree-wide checkout: a linked worktree cannot check out a default branch that another worktree holds, and a fast-forward there would move the branch the operator has checked out.' \
+        'Keep trunk current.' \
+        "step 1 no longer forbids switching, fast-forwarding, or resetting the invoking worktree"
+
+    both_hosts "step 1 stops comparing refs for local commits ahead of the remote" \
+        'Compare refs for local commits the remote lacks: `git rev-list --count <remote>/<default>..refs/heads/<default>`, skipped when no local `<default>` ref exists.' \
+        'Compare the working tree with the remote.' \
+        "step 1 no longer compares refs for local commits the remote lacks"
+
+    both_hosts "the trunk worktree stops being detached" \
+        'creates it with `git worktree add --detach <trunk-tree> <remote>/<default>` when it is absent and otherwise moves it with `git -C <trunk-tree> switch --detach <remote>/<default>`.' \
+        'creates it with `git worktree add <trunk-tree> <default>`.' \
+        "CLEAN-TREE GATE RUN no longer creates and moves .<trunk-tree>. detached at .<remote>/<default>."
+
+    both_hosts "children run in the invoking worktree again" \
+        'ITERATION steps 3 through 7 run every child skill with `<trunk-tree>` as the working directory, never `<invoking-worktree>`.' \
+        'ITERATION steps 3 through 7 run every child skill in the current directory.' \
+        "CLEAN-TREE GATE RUN no longer runs every child skill of ITERATION steps 3 through 7 in .<trunk-tree>."
+
+    both_hosts "a PR branch held elsewhere is reported instead of added detached" \
+        'so add the tree detached instead: `git worktree add --detach <worktree-root>/pr-<number> <remote>/<branch>`.' \
+        'so report the holder.' \
+        "OPEN PR RESUME no longer adds a branch checked out elsewhere as a detached tree"
+
+    both_hosts "a detached PR tree is pushed with a bare git push" \
+        'tell the child to push with `git push <remote> HEAD:refs/heads/<branch>` and never with a bare `git push`.' \
+        'tell the child to push.' \
+        "OPEN PR RESUME no longer pushes a detached tree with an explicit refspec"
+
+    both_hosts "an impossible push stops going to needs-person" \
+        'the issue goes to `needs-person` naming the holder and the refusal.' \
+        'the issue is retried.' \
+        "OPEN PR RESUME no longer sends an impossible push to .needs-person."
+
+    both_hosts "only the clean tree is bootstrapped" \
+        'inside every run-owned worktree a child skill or gate runs in -- `<trunk-tree>`, `pr-<number>`, and `<clean-tree>` -- before the first one runs there, preferring its frozen/locked form.' \
+        'inside `<clean-tree>` first, preferring its frozen/locked form.' \
+        "CLEAN-TREE GATE RUN no longer bootstraps every run-owned worktree before a child or gate runs there"
+
+    both_hosts "the merge command passes --delete-branch again" \
+        'Then run `gh pr merge <url> --squash --match-head-commit <batch-head-sha>`, exactly one merge per batch.' \
+        'Then run `gh pr merge <url> --squash --delete-branch --match-head-commit <batch-head-sha>`, exactly one merge per batch.' \
+        "step 6 passes .--delete-branch. to .gh pr merge."
+
+    both_hosts "step 6 stops warning against --delete-branch" \
+        'never `--delete-branch`: its local cleanup switches the checkout to `<default>` and deletes the local head branch, which a worktree that holds either one refuses, and the refusal can leave the remote branch undeleted.' \
+        'pass nothing else.' \
+        "step 6 no longer says never .--delete-branch."
+
+    both_hosts "step 6 stops deleting the remote head branch" \
+        'Then delete the remote head branch with `gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/<branch>`: a missing reference means GitHub already deleted it, any other failure is reported, and the proven merge stands either way.' \
+        'The branch stays on the forge.' \
+        "step 6 no longer deletes the remote head branch through the API"
+
+    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
+        t=$(fresh_tree)
+        append_line "$t" "$md" 'When a worktree is stale, run `git worktree prune`.'
+        expect_fail "a repository-wide worktree prune is added ($md)" "$md: instructs .git worktree prune." "$t"
+    done
+
+    both_hosts "the worktree-root rule stops forbidding a repository-wide prune" \
+        'Only a path under it is ever removed, with `git worktree remove --force <path>`, which also clears a registration whose directory is already gone; nothing here prunes repository-wide, because a prune also drops the registration of any worktree of the operator whose directory is temporarily missing.' \
+        'Stale registrations are cleaned up afterwards.' \
+        "CLEAN-TREE GATE RUN no longer says only a path under .<worktree-root>. is removed and nothing prunes repository-wide"
+
+    both_hosts "the clean-tree teardown stops clearing a missing registration" \
+        'and run `git worktree remove --force <clean-tree>`, which also clears the registration of a tree whose directory is already gone.' \
+        'and run `git worktree remove --force <clean-tree>`.' \
+        "the clean-tree teardown no longer relies on .git worktree remove --force. to clear a registration whose directory is gone"
+
+    both_hosts "dead-run recovery stops removing instead of pruning" \
+        'remove every worktree registered under `backlog_loop_worktrees` with `git worktree remove --force <path>`, which also clears a registration whose directory is already gone, then delete the emptied directory with `rmdir`; never prune repository-wide,' \
+        'remove `backlog_loop_worktrees` outright,' \
+        "RECOVERY no longer removes the dead run's worktrees one by one under .backlog_loop_worktrees."
+
+    both_hosts "the worktree root stops being outside every worktree" \
+        'lies outside every worktree of this repository: its path is neither inside nor above any path `git worktree list --porcelain` names, and not inside `git rev-parse --git-common-dir`.' \
+        'lies outside this repository.' \
+        "CLEAN-TREE GATE RUN no longer requires .<worktree-root>. outside every worktree of the repository"
+
+    both_hosts "REAP removes registered worktrees without the root scope" \
+        'with `git worktree remove --force <path>`, and only for a path under `<worktree-root>` that `git worktree list --porcelain` registers; a worktree outside `<worktree-root>` is never removed, whoever created it,' \
+        'for every worktree that `git worktree list` shows,' \
+        "REAP no longer removes only registered paths under .<worktree-root>."
+
+    both_hosts "REAP stops deleting the local head branch of a merged batch" \
+        'delete its local head branch with `git branch -D <backlog_loop_branch>`' \
+        'leave its local head branch in place' \
+        "REAP no longer deletes the local head branch of a merged batch"
+
+    both_hosts "REAP stops clearing a registration whose directory is gone" \
+        'A registration whose directory is already gone is cleared by that same command, so REAP never prunes repository-wide.' \
+        'REAP leaves such a registration for the operator.' \
+        "REAP no longer clears a registration whose directory is already gone with the same removal"
+
     # -- The Codex copy is read too -----------------------------------------
     #
     # Same break as the first case, applied to the other host only. A checker
@@ -1134,7 +1267,10 @@ Never ask me for input.'
     expect_fail "THE RUN LEDGER's key table header changes shape and no row parses" \
         'backlog_loop_phase. row declares no phase value' "$t"
 
-    return "$case_failures"
+    # Not `return "$case_failures"`: a shell return status wraps at 256, so a
+    # suite with 256 or more cases misreported its miss count. The callers read
+    # `case_failures` itself.
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1152,8 +1288,8 @@ else
     exit 1
 fi
 
-suite_failures=0
-run_suite "$checker" || suite_failures=$?
+run_suite "$checker"
+suite_failures="$case_failures"
 real_breaks="$break_cases"
 
 if [ "$suite_failures" -ne 0 ]; then
@@ -1167,8 +1303,8 @@ fi
 weak="$work/weakened-check-backlog-loop.sh"
 printf '#!/bin/sh\nexit 0\n' > "$weak"
 echo "Running suite against a deliberately weakened checker (every break must go undetected)"
-weak_failures=0
-run_suite "$weak" || weak_failures=$?
+run_suite "$weak"
+weak_failures="$case_failures"
 
 if [ "$weak_failures" -ne "$real_breaks" ]; then
     echo "FAIL: the weakened checker went undetected in only $weak_failures of $real_breaks break cases;" >&2
