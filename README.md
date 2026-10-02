@@ -272,6 +272,9 @@ explicit-only invocation differently: Claude Code uses
 rejects, and Codex uses `policy.allow_implicit_invocation: false` in
 `agents/openai.yaml`. Apart from that one marker the two copies of a skill are
 identical, and `scripts/check-parity.sh` fails CI if they ever stop being.
+The one exception is `backlog-loop`: its Claude copy omits the marker so the
+goal prompt can load it through the Skill tool, while its Codex copy stays
+explicit-only.
 
 ## License
 

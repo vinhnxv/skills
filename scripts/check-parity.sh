@@ -32,6 +32,11 @@ REQUIRED_KEYS="name description"
 # Code's explicit-invocation marker, which Codex's validator would reject.
 CLAUDE_ONLY_KEY="disable-model-invocation"
 
+# Skills whose Claude copy must NOT carry the marker. The Claude Code goal
+# prompt cannot load a skill that blocks the Skill tool, so these stay callable
+# by the model while Codex keeps its explicit-only policy.
+CLAUDE_MODEL_INVOCABLE="backlog-loop"
+
 # Every path each host's copy of a skill is allowed to carry, relative to the
 # skill directory. Checked per host against these sets, not only copy against
 # copy: a third file added identically to BOTH copies passes a copy-to-copy
@@ -305,11 +310,20 @@ while IFS= read -r skill; do
         esac
     done
 
-    # 8. The Claude copy declares explicit-only invocation.
-    frontmatter_keys "$claude_md" | grep -q "^$CLAUDE_ONLY_KEY\$" ||
-        fail "$skill: skills/claude/$skill/SKILL.md is missing '$CLAUDE_ONLY_KEY'"
-    [ "$(frontmatter_value "$claude_md" "$CLAUDE_ONLY_KEY")" = "true" ] ||
-        fail "$skill: skills/claude/$skill/SKILL.md must set '$CLAUDE_ONLY_KEY: true'"
+    # 8. The Claude copy declares explicit-only invocation, except for the
+    #    skills listed in CLAUDE_MODEL_INVOCABLE, which must not carry it.
+    case " $CLAUDE_MODEL_INVOCABLE " in
+        *" $skill "*)
+            ! frontmatter_keys "$claude_md" | grep -q "^$CLAUDE_ONLY_KEY\$" ||
+                fail "$skill: skills/claude/$skill/SKILL.md must not carry '$CLAUDE_ONLY_KEY' (the goal prompt invokes it through the Skill tool)"
+            ;;
+        *)
+            frontmatter_keys "$claude_md" | grep -q "^$CLAUDE_ONLY_KEY\$" ||
+                fail "$skill: skills/claude/$skill/SKILL.md is missing '$CLAUDE_ONLY_KEY'"
+            [ "$(frontmatter_value "$claude_md" "$CLAUDE_ONLY_KEY")" = "true" ] ||
+                fail "$skill: skills/claude/$skill/SKILL.md must set '$CLAUDE_ONLY_KEY: true'"
+            ;;
+    esac
 
     # 9. The Codex copy carries no key Codex would reject.
     for key in $(frontmatter_keys "$codex_md"); do
