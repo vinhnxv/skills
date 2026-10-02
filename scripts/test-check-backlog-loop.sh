@@ -556,7 +556,7 @@ run_suite() { # checker path
 
     t=$(fresh_tree)
     replace_first "$t" "prompts/backlog-loop.goal.md" \
-        'Every batch follows the backlog-loop procedure'"'"'s CI route, quality gates, and merge procedure exactly. This prompt adds no CI or merge rule of its own.' \
+        'including CI route, quality gates, and merge. This prompt adds no rule of its own.' \
         'For every batch, follow the CI state selected by backlog-loop:
 - When CI is available, use its documented bounded babysitter and require a mergeable CI decision.
 - When CI is unavailable, use the documented local pre-merge and post-merge quality gates without waiting for nonexistent CI.'
