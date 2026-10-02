@@ -1,6 +1,6 @@
 Clear every actionable non-epic issue from the Beads tracker by following the backlog-loop procedure explicitly loaded immediately before this goal.
 
-The loaded backlog-loop procedure is the sole execution authority for every batch. If this prompt conflicts with that procedure, the procedure wins. Do not improvise around it or substitute another workflow.
+The loaded backlog-loop procedure is the sole execution authority for every batch, including CI route, quality gates, and merge. This prompt adds no rule of its own. If this prompt conflicts with that procedure, the procedure wins. Do not improvise around it or substitute another workflow.
 
 Success means all three:
 1. The backlog-loop census proves that no legal agent-executable action remains: no issue sits in its loop-responsible set except an issue whose open linked PR REPORT lists as awaiting a required approval and whose issue is reported as awaiting a person, and no PR its RESIDUE PASS stripped is still `OPEN`. A human gate, a label defect, and a quarantined issue each wait on a person, sit outside that set, and do not block success.
@@ -22,8 +22,6 @@ In the final goal turn:
 
 Never ask me for input. Take the recommended option and record every decision.
 
-Every batch follows the backlog-loop procedure's CI route, quality gates, and merge procedure exactly. This prompt adds no CI or merge rule of its own.
-
 Do not stop the goal merely because trunk is red, one issue or batch failed, a merge failed, or a prior issue ID is encountered again. Follow backlog-loop's TRUNK REPAIR path for code-caused red gates, park only the scoped work that cannot complete, skip repeated IDs, and continue every independent agent-executable issue.
 
-Stop the goal early only when backlog-loop has run its census and proved that no legal agent-executable action remains. The final report must name the human action, external owner, unavailable capability, or external-state change required, and explain why it prevents every remaining issue from reaching the merge gates. Event counters are never sufficient proof of that terminal condition.
+Stop the goal early only when backlog-loop has run its census and proved that no legal agent-executable action remains. The final report must name the human action, external owner, unavailable capability, or external-state change required, and explain why it prevents every remaining issue from reaching the merge gates.
