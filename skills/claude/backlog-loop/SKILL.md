@@ -1,6 +1,5 @@
 ---
 name: backlog-loop
-disable-model-invocation: true
 description: Clear a repository's Beads backlog autonomously in budget-sized batches by driving the current compound-engineering:lfg stages through their supported child-skill seams, with CI-aware merge gates. Explicit invocation only; run before the matching long-running goal.
 ---
 

@@ -85,6 +85,13 @@ plant_synthetic_skill() {
               "$(skill_dir "$tree" "$host" "$SYNTHETIC_SKILL")"
         sed_inplace "s/^name: .*/name: $SYNTHETIC_SKILL/" \
             "$(skill_dir "$tree" "$host" "$SYNTHETIC_SKILL")/SKILL.md"
+        # The clone is an ordinary explicit-only skill even when its source is
+        # one of the model-invocable exceptions.
+        if [ "$host" = claude ] &&
+           ! grep -q '^disable-model-invocation: true$' "$(skill_dir "$tree" claude "$SYNTHETIC_SKILL")/SKILL.md"; then
+            sed_inplace '2a\
+disable-model-invocation: true' "$(skill_dir "$tree" claude "$SYNTHETIC_SKILL")/SKILL.md"
+        fi
         # A no-op today -- the policy file names no skill -- but the clone has
         # to stay a clone if one is ever added there.
         yaml="$(skill_dir "$tree" "$host" "$SYNTHETIC_SKILL")/agents/openai.yaml"
@@ -212,9 +219,16 @@ run_skill_cases() {
 disable-model-invocation: true' "$(skill_dir "$t" codex "$skill")/SKILL.md"
     expect_fail "disable-model-invocation added to the Codex copy" "$t" "which Codex rejects"
 
-    t=$(fresh_tree)
-    sed_inplace '/^disable-model-invocation: true$/d' "$(skill_dir "$t" claude "$skill")/SKILL.md"
-    expect_fail "disable-model-invocation removed from the Claude copy" "$t" "is missing 'disable-model-invocation'"
+    if grep -q '^disable-model-invocation: true$' "$(skill_dir "$base" claude "$skill")/SKILL.md"; then
+        t=$(fresh_tree)
+        sed_inplace '/^disable-model-invocation: true$/d' "$(skill_dir "$t" claude "$skill")/SKILL.md"
+        expect_fail "disable-model-invocation removed from the Claude copy" "$t" "is missing 'disable-model-invocation'"
+    else
+        t=$(fresh_tree)
+        sed_inplace '2a\
+disable-model-invocation: true' "$(skill_dir "$t" claude "$skill")/SKILL.md"
+        expect_fail "disable-model-invocation added to a model-invocable Claude copy" "$t" "must not carry 'disable-model-invocation'"
+    fi
 
     t=$(fresh_tree)
     sed_inplace 's/^description: .*/description: Edited in one copy only./' \
