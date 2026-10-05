@@ -963,14 +963,14 @@ Never ask me for input.'
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), or `needs-person`' \
         '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
     expect_fail "step 7 writes a cause the ledger's cause row does not declare" \
         "cause .transient:review-wait. is not declared in THE RUN LEDGER" "$t"
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CODEX" \
-        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), or `needs-person`' \
         '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
     expect_fail "step 7 writes an undeclared cause, in the Codex copy alone" \
         "skills/codex/backlog-loop/SKILL.md: cause .transient:review-wait. is not declared" "$t"
