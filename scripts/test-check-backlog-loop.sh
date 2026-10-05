@@ -963,14 +963,14 @@ Never ask me for input.'
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), `transient:review-residual` (the reason begins `review residual:`; the review left only findings that change no behavior, contract, or permission and need no design decision, such as a documentation note or a stale comment, and none is a `settled_conflict`, a `needs-human` residual, or a repeat of an earlier one; charged, and the note lists every finding with `file:line`, title, and `suggested_fix`), or `needs-person`' \
         '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
     expect_fail "step 7 writes a cause the ledger's cause row does not declare" \
         "cause .transient:review-wait. is not declared in THE RUN LEDGER" "$t"
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CODEX" \
-        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), `transient:review-residual` (the reason begins `review residual:`; the review left only findings that change no behavior, contract, or permission and need no design decision, such as a documentation note or a stale comment, and none is a `settled_conflict`, a `needs-human` residual, or a repeat of an earlier one; charged, and the note lists every finding with `file:line`, title, and `suggested_fix`), or `needs-person`' \
         '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
     expect_fail "step 7 writes an undeclared cause, in the Codex copy alone" \
         "skills/codex/backlog-loop/SKILL.md: cause .transient:review-wait. is not declared" "$t"
