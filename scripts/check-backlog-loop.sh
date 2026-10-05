@@ -198,6 +198,10 @@
 #   R31 `<worktree-root>` lies outside every worktree of the repository and
 #       REAP removes only registered paths under it, never a worktree it did not
 #       create, then deletes the local head branch of each merged batch.
+#   R32 recovery cannot orphan a PR or leak a teardown (RELEASE GUARD), cannot
+#       grant probation twice for one change (the ceiling record is consumed),
+#       keeps the lifetime counter in every charged recipe, and re-classifies
+#       after its passes so a stale count never declares the backlog clear.
 #   Both directions of the CLASSIFY-to-`<cause>` census: a category with no
 #       `<cause>` row emits a blank third field, and a `<cause>` row for a
 #       category CLASSIFY does not carry is a row nothing can ever reach.
@@ -998,6 +1002,23 @@ SCAN_FILES_END
     grep '^CHARGING\.' "$f" |
         grep -qF -- 'bounds one issue across its whole life for every cause, `transient:pr-open` included, and REOPEN PASS enforces it.' ||
         fail "$f: CHARGING no longer applies the attempt ceiling to every cause, \`transient:pr-open\` included (breaks R22: no charged round ends an open PR)"
+
+    # -----------------------------------------------------------------------
+    # R32. Recovery cannot orphan a PR, leak a teardown, loop unbounded, or miscount.
+    # -----------------------------------------------------------------------
+    grep -qF -- 'RELEASE GUARD, before REOPEN PASS or PROBATION PASS reopens anything:' "$f" ||
+        fail "$f: RELEASE GUARD is missing (breaks R32: a reopen can orphan an open PR or leave an unproved teardown behind)"
+    grep -qF -- 'is not reopened here; OPEN PR RESUME and LINKED PR DISPOSITION own it' "$f" ||
+        fail "$f: RELEASE GUARD no longer leaves an issue with a recorded PR to OPEN PR RESUME (breaks R32: a second build and PR)"
+    grep -qF -- 'A delay alone is never proof.' "$f" ||
+        fail "$f: RELEASE GUARD no longer requires proved teardown before a reopen (breaks R32: old Compose resources attach to a new run)"
+    grep -qF -- '--set-metadata backlog_loop_ceiling="consumed | <iso>"' "$f" ||
+        fail "$f: PROBATION PASS no longer consumes the ceiling record (breaks R32: the same change grants probation again and again)"
+    attempts_total_writes=$(grep -c -F -- '--set-metadata backlog_loop_attempts_total=<t+1>' "$f" || true)
+    [ "$attempts_total_writes" -ge 2 ] ||
+        fail "$f: a charged recipe no longer writes backlog_loop_attempts_total (breaks R32: the lifetime cap is never reached)"
+    grep -qF -- 'ORDER AND REFRESH.' "$f" ||
+        fail "$f: CENSUS no longer re-classifies after REOPEN, PROBATION, and TRIAGE (breaks R32: a stale count declares the backlog clear)"
 
     # -----------------------------------------------------------------------
     # R23. No transition unsets a DURABLE key.
