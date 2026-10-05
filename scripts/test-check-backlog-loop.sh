@@ -898,6 +898,48 @@ Never ask me for input.'
     expect_fail "CHARGING exempts transient:pr-open from the attempt ceiling" \
         "CHARGING no longer applies the attempt ceiling to every cause" "$t"
 
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'RELEASE GUARD, before REOPEN PASS or PROBATION PASS reopens anything:' \
+        'RELEASE NOTE, before REOPEN PASS or PROBATION PASS reopens anything:'
+    expect_fail "R32 recovery guard 1 is removed" \
+        "RELEASE GUARD is missing" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'is not reopened here; OPEN PR RESUME and LINKED PR DISPOSITION own it' \
+        'is reopened here; OPEN PR RESUME and LINKED PR DISPOSITION own it'
+    expect_fail "R32 recovery guard 2 is removed" \
+        "RELEASE GUARD no longer leaves an issue with a recorded PR" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'A delay alone is never proof.' \
+        'A delay is proof.'
+    expect_fail "R32 recovery guard 3 is removed" \
+        "RELEASE GUARD no longer requires proved teardown" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        '--set-metadata backlog_loop_ceiling="consumed | <iso>"' \
+        '--set-metadata backlog_loop_ceiling="<iso>"'
+    expect_fail "R32 recovery guard 4 is removed" \
+        "PROBATION PASS no longer consumes the ceiling record" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'and `--set-metadata backlog_loop_attempts_total=<t+1>` (CHARGING;' \
+        '(CHARGING;'
+    expect_fail "R32 recovery guard 5 is removed" \
+        "a charged recipe no longer writes backlog_loop_attempts_total" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'ORDER AND REFRESH.' \
+        'ORDER NOTE.'
+    expect_fail "R32 recovery guard 6 is removed" \
+        "CENSUS no longer re-classifies after REOPEN" "$t"
+
     # Reclaim keeps the DURABLE class. Losing `backlog_loop_quarantine` frees an
     # issue a gate repair held back, and losing the attempt count unbounds the
     # rebuild cycle.
