@@ -1178,6 +1178,10 @@ SCAN_FILES_END
     # Browser test: working directory and port.
     grep -qF -- 'run the browser test with its working directory in `<clean-tree>` at that commit, bootstrapped as CLEAN-TREE GATE RUN requires, and on an explicit port:' "$f" ||
         fail "$f: pipeline step 5 no longer runs the browser test with its working directory in \`<clean-tree>\` (breaks R28: ce-test-browser starts its server from its working directory, so the invoking tree's dirty paths are served)"
+    grep -qF -- 'the browser gate is `N/A: no browser-affected paths`' "$f" ||
+        fail "$f: pipeline step 5 no longer passes a batch with no browser-affected paths as N/A (breaks R28: a backend-only repository cannot start the dev server, so every batch stops on a gate with nothing to test)"
+    grep -qF -- 'a server that cannot start is a required gate that cannot execute, which is a stop under the terminal blockers, never an N/A' "$f" ||
+        fail "$f: pipeline step 5 no longer stops a browser-affected batch whose server cannot start (breaks R28: a UI change merges untested)"
     grep -qF -- 'invoke `compound-engineering:ce-test-browser mode:pipeline --port <browser-port>` from that directory' "$f" ||
         fail "$f: pipeline step 5 no longer invokes ce-test-browser on the explicit \`<browser-port>\` (breaks R28: the server it leaves behind has no handle REAP can use)"
     grep -qF -- 'For every port in `<owned-ports>`, list its listeners with `lsof -i :<port> -sTCP:LISTEN -t`, take each listener'"'"'s process group, and treat that group exactly like a `<pgid>` above:' "$f" ||
