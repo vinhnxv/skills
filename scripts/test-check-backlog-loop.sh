@@ -1672,6 +1672,46 @@ Never ask me for input.'
     expect_fail "the OWNER-DECISION ISSUES heading is renamed so its extraction finds nothing" \
         "the OWNER-DECISION ISSUES section extracted nothing" "$t"
 
+
+    both_hosts "the follow-up depth rule is removed" \
+        'When any batch member carries `backlog_loop_followup_of`, capture only the `settled_decision_conflicts` candidates, so a follow-up never breeds another generation of follow-ups.' \
+        'Capture every candidate.' \
+        'residual contract missing: follow-up capture'
+
+    both_hosts "follow-up filing moves ahead of the merge-proven condition" \
+        'This is the first thing step 7 does once I6 has proven the merge, before it records `backlog_loop_postmerge_ci`, because a crash after that point resumes at `merged` and finds the same note.' \
+        'File follow-ups while the PR is still open.' \
+        'residual contract missing: follow-up order'
+
+    both_hosts "the follow-up dedupe query is removed" \
+        'query `bd list --limit 0 --has-metadata-key backlog_loop_followup_key --json` once, and drop every candidate whose fingerprint is already the `backlog_loop_followup_key` of a non-closed issue, recording that issue'"'"'s id.' \
+        'file every candidate.' \
+        'residual contract missing: follow-up dedupe'
+
+    both_hosts "the follow-up caps are removed" \
+        'file at most `<followup-per-batch>=8` of them per batch and at most `<followup-per-run>=25` in the whole invocation, counted in a running total the invocation keeps.' \
+        'file all of them.' \
+        'residual contract missing: follow-up caps'
+
+    both_hosts "the follow-up priority ceiling is removed" \
+        'it is never above P2, because a finding that serious would have been actionable and gated the merge.' \
+        'it may be P0.' \
+        'residual contract missing: follow-up priority'
+
+    both_hosts "the discovered-from link rule is removed" \
+        'Then run `bd dep add <follow-up-id> <anchor-id> --type discovered-from`, and read every created issue back.' \
+        'Then read every created issue back.' \
+        'residual contract missing: follow-up link'
+
+    both_hosts "a follow-up may carry the human-gate label" \
+        'A follow-up is an ordinary open issue: never write the `human-gate` label or the other author-only label that `## HUMAN GATES` names, a status, or a dependency that blocks anything.' \
+        'A follow-up carries the `human-gate` label.' \
+        'residual contract missing: follow-up ordinary issue'
+
+    both_hosts "the follow-up filed marker rule is removed" \
+        'Only after every read-back succeeded, append `followup-filed v1 | created <n> | duplicate <m> | overflow <k>` to the anchor.' \
+        'Append a note.' \
+        'residual contract missing: follow-up filed marker'
     # Not `return "$case_failures"`: a shell return status wraps at 256, so a
     # suite with 256 or more cases misreported its miss count. The callers read
     # `case_failures` itself.

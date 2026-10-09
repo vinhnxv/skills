@@ -708,6 +708,28 @@ case " $dec_ready " in
     *) fail "bd ready no longer offers a plain decision issue; the by-type owner-decision scan would never see it" ;;
 esac
 
+# FOLLOW-UP FILING creates an ordinary issue with a deterministic id, its
+# fingerprint as metadata, and a non-blocking `discovered-from` edge to the
+# member. The tracker has to refuse a second create of the same id, keep the
+# metadata, and still offer the follow-up as ready work: an edge that blocked it
+# would turn every filed finding into a stalled issue.
+fu_store=$(fresh_store)
+fu_member=$(bd -C "$fu_store" create "batch anchor" --silent)
+fu_prefix=$(bd -C "$fu_store" config get issue_prefix)
+fu_id="$fu_prefix-f$(printf '%s' 'src/a.go:12|tidy a' | shasum -a 256 | cut -c1-8)"
+fu_made=$(bd -C "$fu_store" create "Tidy a" --id "$fu_id" --type task --priority P4 --labels tech-debt \
+    --metadata "{\"backlog_loop_followup_key\":\"src/a.go:12|tidy a\",\"backlog_loop_followup_of\":\"$fu_member\"}" --silent)
+fu_dup_rc=$(status_of bd -C "$fu_store" create "Tidy a again" --id "$fu_id" --silent)
+bd -C "$fu_store" dep add "$fu_id" "$fu_member" --type discovered-from >/dev/null
+fu_ready=$(bd -C "$fu_store" ready --json --limit 0 --exclude-type=epic | sorted_ids_json)
+case " $fu_ready " in *" $fu_id "*) fu_is_ready=1 ;; *) fu_is_ready=0 ;; esac
+[ "$fu_made" = "$fu_id" ] && [ "$fu_dup_rc" -ne 0 ] && [ "$fu_is_ready" -eq 1 ] \
+    && [ "$(meta_of "$fu_store" "$fu_id" backlog_loop_followup_key)" = 'src/a.go:12|tidy a' ] \
+    && [ "$(meta_of "$fu_store" "$fu_id" backlog_loop_followup_of)" = "$fu_member" ] \
+    && [ "$(labels_of "$fu_store" "$fu_id")" = tech-debt ] \
+    && pass "a follow-up created by deterministic id keeps its metadata, refuses a duplicate id, and stays ready behind a discovered-from edge" \
+    || fail "follow-up creation: id '$fu_made', duplicate exit $fu_dup_rc, ready $fu_is_ready, or its metadata/labels did not read back"
+
 # A person-closed PR releases RUN and FORGE-LINK keys but leaves the durable
 # needs-person cause and the first note line. These are the stored fields row 6
 # and REPORT consume; classification itself remains owned by the skill.

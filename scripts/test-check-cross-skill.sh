@@ -229,10 +229,11 @@ run_suite() {
     both_replace "consumer loses the author-only adoption signal" "backlog-loop: .*missing author-only adoption signal" backlog-loop 'hard-blocker' 'hard blocker'
     # The one case that spans both hosts: a key survives in either copy, so the
     # guard fires only when every skill in every host stops naming one. Models a
-    # bd flag rename applied tree-wide, with the prose keys no longer in code spans.
+    # bd flag rename applied tree-wide, with the prose keys no longer in code spans
+    # and the JSON-object metadata form no longer quoting them.
     t=$(fresh_tree)
     find "$t/skills" -name '*.md' | while IFS= read -r f; do
-        sed -E -e 's/--set-metadata/--set-meta/g' -e 's/--metadata/--meta/g' -e 's/^\| key \|/| name |/' -e 's/`((backlog_loop|source_to_beads)_[a-z0-9_]+)`/\1/g' "$f" > "$f.new"
+        sed -E -e 's/--set-metadata/--set-meta/g' -e 's/--metadata/--meta/g' -e 's/^\| key \|/| name |/' -e 's/`((backlog_loop|source_to_beads)_[a-z0-9_]+)`/\1/g' -e 's/"((backlog_loop|source_to_beads)_[a-z0-9_]+)"/\1/g' "$f" > "$f.new"
         mv "$f.new" "$f"
     done
     expect_fail "no skill names a metadata key" "no metadata key was harvested from any skill" "$t"

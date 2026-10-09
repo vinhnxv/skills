@@ -1378,6 +1378,22 @@ SCAN_FILES_END
     if printf '%s\n' "$owner_section" | grep -qF -- 'does not say the loop may choose'; then
         fail "$f: OWNER-DECISION ISSUES reinstates the body-keyed denial (breaks the by-type rule: a non-gate decision issue is parked as needs-person for a sentence its producer forgot)"
     fi
+    grep -qF -- 'When any batch member carries `backlog_loop_followup_of`, capture only the `settled_decision_conflicts` candidates, so a follow-up never breeds another generation of follow-ups.' "$f" ||
+        fail "$f: residual contract missing: follow-up capture"
+    grep -qF -- 'This is the first thing step 7 does once I6 has proven the merge, before it records `backlog_loop_postmerge_ci`, because a crash after that point resumes at `merged` and finds the same note.' "$f" ||
+        fail "$f: residual contract missing: follow-up order"
+    grep -qF -- 'query `bd list --limit 0 --has-metadata-key backlog_loop_followup_key --json` once, and drop every candidate whose fingerprint is already the `backlog_loop_followup_key` of a non-closed issue, recording that issue'"'"'s id.' "$f" ||
+        fail "$f: residual contract missing: follow-up dedupe"
+    grep -qF -- 'file at most `<followup-per-batch>=8` of them per batch and at most `<followup-per-run>=25` in the whole invocation, counted in a running total the invocation keeps.' "$f" ||
+        fail "$f: residual contract missing: follow-up caps"
+    grep -qF -- 'it is never above P2, because a finding that serious would have been actionable and gated the merge.' "$f" ||
+        fail "$f: residual contract missing: follow-up priority"
+    grep -qF -- 'Then run `bd dep add <follow-up-id> <anchor-id> --type discovered-from`, and read every created issue back.' "$f" ||
+        fail "$f: residual contract missing: follow-up link"
+    grep -qF -- 'A follow-up is an ordinary open issue: never write the `human-gate` label or the other author-only label that `## HUMAN GATES` names, a status, or a dependency that blocks anything.' "$f" ||
+        fail "$f: residual contract missing: follow-up ordinary issue"
+    grep -qF -- 'Only after every read-back succeeded, append `followup-filed v1 | created <n> | duplicate <m> | overflow <k>` to the anchor.' "$f" ||
+        fail "$f: residual contract missing: follow-up filed marker"
 
 done
 
