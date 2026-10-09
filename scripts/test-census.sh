@@ -716,7 +716,7 @@ esac
 fu_store=$(fresh_store)
 fu_member=$(bd -C "$fu_store" create "batch anchor" --silent)
 fu_prefix=$(bd -C "$fu_store" config get issue_prefix)
-fu_id="$fu_prefix-f$(printf '%s' 'src/a.go:12|tidy a' | shasum -a 256 | cut -c1-8)"
+fu_id="$fu_prefix-f$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8])' 'src/a.go:12|tidy a')"
 fu_made=$(bd -C "$fu_store" create "Tidy a" --id "$fu_id" --type task --priority P4 --labels tech-debt \
     --metadata "{\"backlog_loop_followup_key\":\"src/a.go:12|tidy a\",\"backlog_loop_followup_of\":\"$fu_member\"}" --silent)
 fu_dup_rc=$(status_of bd -C "$fu_store" create "Tidy a again" --id "$fu_id" --silent)
@@ -744,7 +744,7 @@ d=json.load(sys.stdin)
 gate=sys.argv[1]
 held=[r["id"] for r in (d.get("blocked") or []) if gate in [b if isinstance(b, str) else b.get("id", "") for b in (r.get("blocked_by") or [])]]
 print(" ".join(sorted(held)))' "$ub_gate")
-[ "$ub_held" = "$(printf '%s\n' "$ub_a" "$ub_b" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" ] \
+[ "$ub_held" = "$(printf '%s\n' "$ub_a" "$ub_b" | LC_ALL=C sort | paste -sd' ' -)" ] \
     && pass "bd ready --explain reports both issues a human gate holds under that gate's id, which is what the UNBLOCK REPORT counts" \
     || fail "bd ready --explain: the issues held by one gate read '$ub_held', expected both"
 

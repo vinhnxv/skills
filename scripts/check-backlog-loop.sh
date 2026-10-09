@@ -1342,7 +1342,7 @@ SCAN_FILES_END
         fail "$f: residual contract missing: catch-all must be the last disposition row"
     grep -qF -- 'A DEADLINE is a wrapper exit status of 124 or 137 whose elapsed time is at or above `<gate-timeout>` minus 5 seconds; any other non-zero status is the command'"'"'s own failure.' "$f" ||
         fail "$f: residual contract missing: gate deadline definition"
-    grep -qF -- 'A second DEADLINE, or a first one when `<gate-timeout>` already equals `<gate-timeout-cap>`, ends the gate as `transient:tool-failure` with the reason `tool failure: gate deadline`, and the note carries the command, both deadlines, and the observed elapsed time. A DEADLINE is never `transient:gate-failed`.' "$f" ||
+    grep -qF -- 'A second DEADLINE, or a first one when `<gate-timeout>` is already at or above `<gate-timeout-cap>`, ends the gate as `transient:tool-failure` with the reason `tool failure: gate deadline`, and the note carries the command, both deadlines, and the observed elapsed time. A DEADLINE is never `transient:gate-failed`.' "$f" ||
         fail "$f: residual contract missing: gate deadline rerun"
     grep -qF -- 'A gate that ended in a DEADLINE is never `transient:gate-failed`: CLEAN-TREE GATE RUN reruns it once and, on a second DEADLINE, writes `transient:tool-failure` with the reason `tool failure: gate deadline`.' "$f" ||
         fail "$f: residual contract missing: gate deadline class"
@@ -1372,7 +1372,7 @@ SCAN_FILES_END
     # The owner-decision section decides by type. The denial that parked a
     # decision issue because its body did not grant the choice is retired and
     # only TRIAGE PASS may name it, so the section itself must not carry it.
-    owner_section=$(awk '/^## OWNER-DECISION ISSUES/{f=1; next} /^## /{f=0} f' "$f")
+    owner_section=$(section_of "$f" '## OWNER-DECISION ISSUES')
     [ -n "$owner_section" ] ||
         fail "$f: the OWNER-DECISION ISSUES section extracted nothing, so the denial check below would pass vacuously"
     if printf '%s\n' "$owner_section" | grep -qF -- 'does not say the loop may choose'; then
@@ -1392,6 +1392,14 @@ SCAN_FILES_END
         fail "$f: residual contract missing: follow-up link"
     grep -qF -- 'A follow-up is an ordinary open issue: never write the `human-gate` label or the other author-only label that `## HUMAN GATES` names, a status, or a dependency that blocks anything.' "$f" ||
         fail "$f: residual contract missing: follow-up ordinary issue"
+    grep -qF -- 'Read the candidates in the newest `followup-candidates v1` note only, because an earlier note comes from a review round that a retry superseded,' "$f" ||
+        fail "$f: residual contract missing: follow-up newest candidates note"
+    grep -qF -- 'write the body to a file and the metadata JSON to a second file with a JSON encoder, never by interpolating review text into a shell string' "$f" ||
+        fail "$f: residual contract missing: follow-up create passes text through files"
+    grep -qF -- '--body-file <body-file> --metadata @<metadata-file> --silent' "$f" ||
+        fail "$f: residual contract missing: follow-up create body and metadata files"
+    grep -qF -- 'Walk the table top-down and stop at the first row that matches, as CLASSIFY does, so no issue matches two rows.' "$f" ||
+        fail "$f: residual contract missing: unblock table first-match rule"
     grep -qF -- 'Only after every read-back succeeded, append `followup-filed v1 | created <n> | duplicate <m> | overflow <k>` to the anchor.' "$f" ||
         fail "$f: residual contract missing: follow-up filed marker"
     grep -qF -- '`<class>` is exactly one of `agent-done` (a repair or reopen this run performed), `agent-queued` (the loop reopens or decides it itself on a later pass), `person` (a human act is required), or `external` (an owner, service, or state change outside the repository).' "$f" ||

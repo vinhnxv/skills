@@ -1587,7 +1587,7 @@ Never ask me for input.'
         'residual contract missing: gate deadline definition'
 
     both_hosts "the DEADLINE second-hit rule drifts to gate-failed" \
-        'A second DEADLINE, or a first one when `<gate-timeout>` already equals `<gate-timeout-cap>`, ends the gate as `transient:tool-failure` with the reason `tool failure: gate deadline`, and the note carries the command, both deadlines, and the observed elapsed time. A DEADLINE is never `transient:gate-failed`.' \
+        'A second DEADLINE, or a first one when `<gate-timeout>` is already at or above `<gate-timeout-cap>`, ends the gate as `transient:tool-failure` with the reason `tool failure: gate deadline`, and the note carries the command, both deadlines, and the observed elapsed time. A DEADLINE is never `transient:gate-failed`.' \
         'A second DEADLINE ends the gate as `transient:gate-failed`.' \
         'residual contract missing: gate deadline rerun'
 
@@ -1626,7 +1626,6 @@ Never ask me for input.'
         'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads.' \
         'residual contract missing: machine guard bounded wait'
 
-
     both_hosts "the decision-recorded class loses its design-field write" \
         'the loop chose its recommended option, appended `<decision> | rejected: <alt> | reason: <why>` to the design field the way OWNER-DECISION ISSUES does, read the field back, and wrote the note as `decision recorded: <question> | design entry: <decision> | rejected: <alt> | reason: <why>`; charged, and no work failed)' \
         'the loop wrote the note; charged)' \
@@ -1658,20 +1657,15 @@ Never ask me for input.'
         'residual contract missing: decision retry brief'
     # The by-type owner-decision rule: the retired denial must not return to the
     # section that decides.
-    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
-        t=$(fresh_tree)
-        replace_first "$t" "$md" \
-            'Never overwrite an existing design record.' \
-            'Never overwrite an existing design record. A body that does not say the loop may choose is `needs-person`.'
-        expect_fail "OWNER-DECISION ISSUES reinstates the body-keyed denial ($md)" \
-            "$md: OWNER-DECISION ISSUES reinstates the body-keyed denial" "$t"
-    done
+    both_hosts "OWNER-DECISION ISSUES reinstates the body-keyed denial" \
+        'Never overwrite an existing design record.' \
+        'Never overwrite an existing design record. A body that does not say the loop may choose is `needs-person`.' \
+        'OWNER-DECISION ISSUES reinstates the body-keyed denial'
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" '## OWNER-DECISION ISSUES' '## OWNER DECISIONS'
     expect_fail "the OWNER-DECISION ISSUES heading is renamed so its extraction finds nothing" \
         "the OWNER-DECISION ISSUES section extracted nothing" "$t"
-
 
     both_hosts "the follow-up depth rule is removed" \
         'When any batch member carries `backlog_loop_followup_of`, capture only the `settled_decision_conflicts` candidates, so a follow-up never breeds another generation of follow-ups.' \
@@ -1712,6 +1706,26 @@ Never ask me for input.'
         'Only after every read-back succeeded, append `followup-filed v1 | created <n> | duplicate <m> | overflow <k>` to the anchor.' \
         'Append a note.' \
         'residual contract missing: follow-up filed marker'
+
+    both_hosts "the follow-up newest-candidates-note rule is removed" \
+        'Read the candidates in the newest `followup-candidates v1` note only, because an earlier note comes from a review round that a retry superseded,' \
+        'Read the candidates,' \
+        'residual contract missing: follow-up newest candidates note'
+
+    both_hosts "the follow-up create goes back to interpolated shell strings" \
+        'write the body to a file and the metadata JSON to a second file with a JSON encoder, never by interpolating review text into a shell string' \
+        'write the body inline' \
+        'residual contract missing: follow-up create passes text through files'
+
+    both_hosts "the follow-up create drops the body and metadata files" \
+        '--body-file <body-file> --metadata @<metadata-file> --silent' \
+        '--description "<body>" --silent' \
+        'residual contract missing: follow-up create body and metadata files'
+
+    both_hosts "the UNBLOCK table first-match rule is removed" \
+        'Walk the table top-down and stop at the first row that matches, as CLASSIFY does, so no issue matches two rows.' \
+        'Walk the table.' \
+        'residual contract missing: unblock table first-match rule'
 
     both_hosts "the UNBLOCK REPORT class list is removed" \
         '`<class>` is exactly one of `agent-done` (a repair or reopen this run performed), `agent-queued` (the loop reopens or decides it itself on a later pass), `person` (a human act is required), or `external` (an owner, service, or state change outside the repository).' \
