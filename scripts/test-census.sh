@@ -730,6 +730,24 @@ case " $fu_ready " in *" $fu_id "*) fu_is_ready=1 ;; *) fu_is_ready=0 ;; esac
     && pass "a follow-up created by deterministic id keeps its metadata, refuses a duplicate id, and stays ready behind a discovered-from edge" \
     || fail "follow-up creation: id '$fu_made', duplicate exit $fu_dup_rc, ready $fu_is_ready, or its metadata/labels did not read back"
 
+# The UNBLOCK REPORT ranks a person's act by the issues it makes reachable,
+# counted over the `blocked_by` lists `bd ready --explain --json` reports. One
+# human gate that holds two issues has to show both under that gate's id.
+ub_store=$(fresh_store)
+ub_gate=$(bd -C "$ub_store" create "[HUMAN] provision the staging account" -l human-gate --silent)
+ub_a=$(bd -C "$ub_store" create "deploy step one" --silent)
+ub_b=$(bd -C "$ub_store" create "deploy step two" --silent)
+bd -C "$ub_store" dep "$ub_gate" --blocks "$ub_a" >/dev/null
+bd -C "$ub_store" dep "$ub_gate" --blocks "$ub_b" >/dev/null
+ub_held=$(bd -C "$ub_store" ready --explain --json --limit 0 | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+gate=sys.argv[1]
+held=[r["id"] for r in (d.get("blocked") or []) if gate in [b if isinstance(b, str) else b.get("id", "") for b in (r.get("blocked_by") or [])]]
+print(" ".join(sorted(held)))' "$ub_gate")
+[ "$ub_held" = "$(printf '%s\n' "$ub_a" "$ub_b" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" ] \
+    && pass "bd ready --explain reports both issues a human gate holds under that gate's id, which is what the UNBLOCK REPORT counts" \
+    || fail "bd ready --explain: the issues held by one gate read '$ub_held', expected both"
+
 # A person-closed PR releases RUN and FORGE-LINK keys but leaves the durable
 # needs-person cause and the first note line. These are the stored fields row 6
 # and REPORT consume; classification itself remains owned by the skill.

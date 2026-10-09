@@ -1394,6 +1394,16 @@ SCAN_FILES_END
         fail "$f: residual contract missing: follow-up ordinary issue"
     grep -qF -- 'Only after every read-back succeeded, append `followup-filed v1 | created <n> | duplicate <m> | overflow <k>` to the anchor.' "$f" ||
         fail "$f: residual contract missing: follow-up filed marker"
+    grep -qF -- '`<class>` is exactly one of `agent-done` (a repair or reopen this run performed), `agent-queued` (the loop reopens or decides it itself on a later pass), `person` (a human act is required), or `external` (an owner, service, or state change outside the repository).' "$f" ||
+        fail "$f: residual contract missing: unblock line shape"
+    grep -qF -- 'Begin `<action>` with `unlocks <n>: ` and sort the block by `<n>` descending, then by id ascending, so the one act that frees the most work comes first.' "$f" ||
+        fail "$f: residual contract missing: unblock ranking"
+    grep -qF -- 'The UNBLOCK REPORT writes nothing of its own, in either mode:' "$f" ||
+        fail "$f: residual contract missing: unblock writes nothing"
+    grep -qF -- '| `legacy-blocked` | `person` | the reason its newest note states, because the status is a person'"'"'s parking decision | `bd update <id> --status=open`, printed for the person and never run by the loop |' "$f" ||
+        fail "$f: residual contract missing: unblock legacy row"
+    grep -qF -- 'End with the UNBLOCK REPORT of the last CENSUS, verbatim, so an unattended run leaves the answer behind.' "$f" ||
+        fail "$f: residual contract missing: unblock final report"
 
 done
 
@@ -1428,6 +1438,8 @@ if [ -d "$root/prompts" ]; then
         fail "$goal: the goal no longer allows an in-progress member held by a recorded post-merge watch (breaks R16: a merged member waiting on CI makes the second success condition unreachable)"
     grep -qF -- '3. Every repair, every reopen, and every residue strip a loop run would perform is reported' "$census_goal" ||
         fail "$census_goal: the census goal no longer lists residue strips beside repairs and reopens (breaks R16: a diagnostic run hides the one mutation it promised to report)"
+    grep -qF -- '- Paste the UNBLOCK REPORT as the last block: one `unblock` line for every issue the loop is not clearing unaided, ranked by what its resolution unlocks.' "$census_goal" ||
+        fail "$census_goal: the census goal no longer asks for the UNBLOCK REPORT as its last block (breaks R16: the diagnostic run an operator reaches for stops answering how to unblock the backlog)"
     for g in "$goal" "$census_goal"; do
         for forbidden in '- trunk health fails;' '- three consecutive batches are blocked or failed;' '- the same issue ID is attempted twice;' '- two consecutive merges fail;' '1. `bd ready --json --exclude-type=epic` returns no actionable issue.' 'For every batch, follow the CI state selected by backlog-loop:'; do
             if grep -qF -- "$forbidden" "$g"; then

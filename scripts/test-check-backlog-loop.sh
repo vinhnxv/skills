@@ -1712,6 +1712,38 @@ Never ask me for input.'
         'Only after every read-back succeeded, append `followup-filed v1 | created <n> | duplicate <m> | overflow <k>` to the anchor.' \
         'Append a note.' \
         'residual contract missing: follow-up filed marker'
+
+    both_hosts "the UNBLOCK REPORT class list is removed" \
+        '`<class>` is exactly one of `agent-done` (a repair or reopen this run performed), `agent-queued` (the loop reopens or decides it itself on a later pass), `person` (a human act is required), or `external` (an owner, service, or state change outside the repository).' \
+        '`<class>` is free text.' \
+        'residual contract missing: unblock line shape'
+
+    both_hosts "the UNBLOCK REPORT ranking rule is removed" \
+        'Begin `<action>` with `unlocks <n>: ` and sort the block by `<n>` descending, then by id ascending, so the one act that frees the most work comes first.' \
+        'Sort the block by id.' \
+        'residual contract missing: unblock ranking'
+
+    both_hosts "the UNBLOCK REPORT no longer promises to write nothing" \
+        'The UNBLOCK REPORT writes nothing of its own, in either mode:' \
+        'The UNBLOCK REPORT repairs what it names, in either mode:' \
+        'residual contract missing: unblock writes nothing'
+
+    both_hosts "the UNBLOCK REPORT tells the loop to reopen a legacy-blocked issue" \
+        '| `legacy-blocked` | `person` | the reason its newest note states, because the status is a person'"'"'s parking decision | `bd update <id> --status=open`, printed for the person and never run by the loop |' \
+        '| `legacy-blocked` | `agent-queued` | reopen it | `bd update <id> --status=open` |' \
+        'residual contract missing: unblock legacy row'
+
+    both_hosts "the FINAL REPORT drops the UNBLOCK REPORT" \
+        'End with the UNBLOCK REPORT of the last CENSUS, verbatim, so an unattended run leaves the answer behind.' \
+        'End with the census.' \
+        'residual contract missing: unblock final report'
+    t=$(fresh_tree)
+    replace_first "$t" "prompts/backlog-census.goal.md" \
+        '- Paste the UNBLOCK REPORT as the last block: one `unblock` line for every issue the loop is not clearing unaided, ranked by what its resolution unlocks.' \
+        '- Paste the census header line again.'
+    expect_fail "the census goal stops asking for the UNBLOCK REPORT" \
+        "prompts/backlog-census.goal.md: the census goal no longer asks for the UNBLOCK REPORT" "$t"
+
     # Not `return "$case_failures"`: a shell return status wraps at 256, so a
     # suite with 256 or more cases misreported its miss count. The callers read
     # `case_failures` itself.

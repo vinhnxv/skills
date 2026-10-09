@@ -17,6 +17,7 @@ In the final goal turn:
 - Paste every reported dependency cycle.
 - Paste every repair, reopen, and residue strip the run would have performed, and say that none was.
 - Paste the `bd export` comparison result.
+- Paste the UNBLOCK REPORT as the last block: one `unblock` line for every issue the loop is not clearing unaided, ranked by what its resolution unlocks.
 
 Never ask me for input. Report what you found; do not act on it.
 
