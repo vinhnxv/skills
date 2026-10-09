@@ -1340,6 +1340,12 @@ SCAN_FILES_END
         fail "$f: residual contract missing: approval exception in recoverable-PR rule"
     [ "$(disposition_rows "$f" | tail -n 1)" = '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' ] ||
         fail "$f: residual contract missing: catch-all must be the last disposition row"
+    grep -qF -- 'A DEADLINE is a wrapper exit status of 124 or 137 whose elapsed time is at or above `<gate-timeout>` minus 5 seconds; any other non-zero status is the command'"'"'s own failure.' "$f" ||
+        fail "$f: residual contract missing: gate deadline definition"
+    grep -qF -- 'A second DEADLINE, or a first one when `<gate-timeout>` already equals `<gate-timeout-cap>`, ends the gate as `transient:tool-failure` with the reason `tool failure: gate deadline`, and the note carries the command, both deadlines, and the observed elapsed time. A DEADLINE is never `transient:gate-failed`.' "$f" ||
+        fail "$f: residual contract missing: gate deadline rerun"
+    grep -qF -- 'A gate that ended in a DEADLINE is never `transient:gate-failed`: CLEAN-TREE GATE RUN reruns it once and, on a second DEADLINE, writes `transient:tool-failure` with the reason `tool failure: gate deadline`.' "$f" ||
+        fail "$f: residual contract missing: gate deadline class"
 
 done
 

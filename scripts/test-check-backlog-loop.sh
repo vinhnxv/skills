@@ -1585,6 +1585,21 @@ Never ask me for input.'
     # suite with 256 or more cases misreported its miss count. The callers read
     # `case_failures` itself.
     return 0
+
+    both_hosts "the DEADLINE definition is deleted" \
+        'A DEADLINE is a wrapper exit status of 124 or 137 whose elapsed time is at or above `<gate-timeout>` minus 5 seconds; any other non-zero status is the command'"'"'s own failure.' \
+        'A DEADLINE is a timeout.' \
+        'residual contract missing: gate deadline definition'
+
+    both_hosts "the DEADLINE second-hit rule drifts to gate-failed" \
+        'A second DEADLINE, or a first one when `<gate-timeout>` already equals `<gate-timeout-cap>`, ends the gate as `transient:tool-failure` with the reason `tool failure: gate deadline`, and the note carries the command, both deadlines, and the observed elapsed time. A DEADLINE is never `transient:gate-failed`.' \
+        'A second DEADLINE ends the gate as `transient:gate-failed`.' \
+        'residual contract missing: gate deadline rerun'
+
+    both_hosts "the I7 DEADLINE class sentence is deleted" \
+        'A gate that ended in a DEADLINE is never `transient:gate-failed`: CLEAN-TREE GATE RUN reruns it once and, on a second DEADLINE, writes `transient:tool-failure` with the reason `tool failure: gate deadline`.' \
+        'A gate may time out.' \
+        'residual contract missing: gate deadline class'
 }
 
 # ---------------------------------------------------------------------------
