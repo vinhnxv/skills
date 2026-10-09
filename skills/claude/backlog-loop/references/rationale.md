@@ -22,6 +22,7 @@ This is the rationale of this skill, not of LFG: the `references/` files LFG own
 - **Gate coverage.** A catalog read once at preflight goes stale when the loop edits the files that define it.
 - **Process hygiene: run token.** A child cannot be wrapped in the process-group launcher, so the token is the only ownership it gets.
 - **Process hygiene: restated sentence.** Never leave a watcher, dev server, or REPL alive past the command that needed it; a command that returns while its group still exists is a reap target, not a success.
+- **Owner-decision by type.** The first rule made a `decision` issue the loop's own only when its body said so, so a producer that forgot the sentence parked a recommendable choice as `needs-person` and the backlog waited on a person for an answer the agent could give. The loop now treats every non-gate `decision` as its own and reserves only what is structurally a person's: a gate, a credential-class question, and a contract, permission, or security change. `transient:decision-recorded` closes the same gap for a blocked plan: the loop records its recommendation, reopens without a cooldown, and lets the attempt ceiling bound an answer it keeps getting wrong, instead of waiting on a person.
 - **Owner-decision issues.** The owner-decision scan cannot run in preflight because no census has classified anything yet, and a content scan that runs first is exactly how a gate asking for a production approval gets read as a product call and shipped.
 
 ## CLEAN-TREE GATE RUN

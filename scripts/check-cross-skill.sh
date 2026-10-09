@@ -127,6 +127,8 @@ for f in $writer_copies; do
     grep -qi 'read.back' "$f" || fail "source-to-beads: $f missing tracker read-back contract"
     grep -qF 'File every user-reserved question and every hard-blocker as a native gate with `bd create --type gate`: `backlog-loop` declares a native gate'"'"'s edges by construction, so no `hard-blocker` label is needed.' "$f" || fail "source-to-beads: $f missing native gate form for hard-blockers"
     grep -qF 'Keep an agent-decidable technical choice a `decision` issue whose body says the loop may choose.' "$f" || fail "source-to-beads: $f missing agent-decidable decision form"
+    grep -qF 'a choice only a person can make is a native gate, never a `decision`' "$f" || fail "source-to-beads: $f missing the rule that a person-only choice is a native gate"
+    grep -qF 'with the options, a recommended option, and the decision criterion; otherwise create a `spike`' "$f" || fail "source-to-beads: $f missing recommended-option decision form"
 done
 
 # Worktree handoff: both skills carry one procedure, print the remove command
@@ -227,8 +229,9 @@ for f in $consumer_copies; do
     grep -q 'issue_type` is `gate`' "$f" || fail "backlog-loop: $f no longer recognizes native gate issues"
     grep -qF 'carries the `human-gate` label, or' "$f" || fail "backlog-loop: $f no longer recognizes the human-gate label"
     grep -qF 'A native gate (`issue_type=gate`) is NEVER repaired or quarantined: its blocking edge is declared by construction, so every edge a producer such as `source-to-beads` writes on one stands.' "$f" || fail "backlog-loop: $f no longer exempts native gate edges from gate repair"
-    grep -qF 'an issue is one only when its `issue_type` is `decision` and its body says the loop may choose' "$f" || fail "backlog-loop: $f no longer limits owner-decision issues to a decision that grants the choice"
-    grep -qF 'Any other `decision` issue is a person'"'"'s question, however it reads: never pick an option for it, never batch it, and open no PR for it.' "$f" || fail "backlog-loop: $f no longer reports a decision it may not choose as needs-person"
+    grep -qF 'an issue is one when its `issue_type` is `decision` and CENSUS classified it as neither `human-gate` nor `label-defect`' "$f" || fail "backlog-loop: $f no longer treats every non-gate decision issue as owner-decision"
+    grep -qF 'Three classes stay with a person, and they are told apart by structure and never by reading the body:' "$f" || fail "backlog-loop: $f no longer reserves exactly the structural classes of decision for a person"
+    grep -qF 'a decision that changes a contract, permission, or security stance or contradicts a `user-approved` decision' "$f" || fail "backlog-loop: $f no longer reserves a contract, permission, or security decision for a person"
     grep -qF 'backlog_loop_run' "$f" || fail "backlog-loop: $f missing claim marker"
     grep -qF 'hard-blocker' "$f" || fail "backlog-loop: $f missing author-only adoption signal"
 done

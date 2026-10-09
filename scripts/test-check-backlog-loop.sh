@@ -1005,14 +1005,14 @@ Never ask me for input.'
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
-        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), `transient:review-residual` (the reason begins `review residual:`; the review left only findings that change no behavior, contract, or permission and need no design decision, such as a documentation note or a stale comment, and none is a `settled_conflict`, a `needs-human` residual, or a repeat of an earlier one; charged, and the note lists every finding with `file:line`, title, and `suggested_fix`), `transient:tool-failure` (the reason begins `tool failure:`; a child skill or tool failed for a reason outside the code under change: a review return with `failed`, `degraded`, or `skipped` status or a malformed return, a child that crashed or timed out, a pipeline interrupted mid-run, or a teardown that could not be proved; charged, and the note names the tool and its exact error), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), `transient:review-residual` (the reason begins `review residual:`; the review left only findings that change no behavior, contract, or permission and need no design decision, such as a documentation note or a stale comment, and none is a `settled_conflict`, a `needs-human` residual, or a repeat of an earlier one; charged, and the note lists every finding with `file:line`, title, and `suggested_fix`), `transient:tool-failure` (the reason begins `tool failure:`; a child skill or tool failed for a reason outside the code under change: a review return with `failed`, `degraded`, or `skipped` status or a malformed return, a child that crashed or timed out, a pipeline interrupted mid-run, or a teardown that could not be proved; charged, and the note names the tool and its exact error), `transient:decision-recorded` (the reason begins `decision recorded:`; `ce-plan` returned `blocked` on an open question, or the review left only a residual that needs a design decision, and the question is not one `## HUMAN GATES` reserves for a person and the residual is not a `settled_conflict`, a change to a contract, permission, or security stance, or a contradiction of a `user-approved` decision; the loop chose its recommended option, appended `<decision> | rejected: <alt> | reason: <why>` to the design field the way OWNER-DECISION ISSUES does, read the field back, and wrote the note as `decision recorded: <question> | design entry: <decision> | rejected: <alt> | reason: <why>`; charged, and no work failed), or `needs-person`' \
         '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
     expect_fail "step 7 writes a cause the ledger's cause row does not declare" \
         "cause .transient:review-wait. is not declared in THE RUN LEDGER" "$t"
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CODEX" \
-        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), `transient:review-residual` (the reason begins `review residual:`; the review left only findings that change no behavior, contract, or permission and need no design decision, such as a documentation note or a stale comment, and none is a `settled_conflict`, a `needs-human` residual, or a repeat of an earlier one; charged, and the note lists every finding with `file:line`, title, and `suggested_fix`), `transient:tool-failure` (the reason begins `tool failure:`; a child skill or tool failed for a reason outside the code under change: a review return with `failed`, `degraded`, or `skipped` status or a malformed return, a child that crashed or timed out, a pipeline interrupted mid-run, or a teardown that could not be proved; charged, and the note names the tool and its exact error), or `needs-person`' \
+        '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:gate-failed` (a required quality gate or test failed on code this loop authored, so the defect is agent-fixable; charged, and the note carries the failing command and its error), `transient:review-residual` (the reason begins `review residual:`; the review left only findings that change no behavior, contract, or permission and need no design decision, such as a documentation note or a stale comment, and none is a `settled_conflict`, a `needs-human` residual, or a repeat of an earlier one; charged, and the note lists every finding with `file:line`, title, and `suggested_fix`), `transient:tool-failure` (the reason begins `tool failure:`; a child skill or tool failed for a reason outside the code under change: a review return with `failed`, `degraded`, or `skipped` status or a malformed return, a child that crashed or timed out, a pipeline interrupted mid-run, or a teardown that could not be proved; charged, and the note names the tool and its exact error), `transient:decision-recorded` (the reason begins `decision recorded:`; `ce-plan` returned `blocked` on an open question, or the review left only a residual that needs a design decision, and the question is not one `## HUMAN GATES` reserves for a person and the residual is not a `settled_conflict`, a change to a contract, permission, or security stance, or a contradiction of a `user-approved` decision; the loop chose its recommended option, appended `<decision> | rejected: <alt> | reason: <why>` to the design field the way OWNER-DECISION ISSUES does, read the field back, and wrote the note as `decision recorded: <question> | design entry: <decision> | rejected: <alt> | reason: <why>`; charged, and no work failed), or `needs-person`' \
         '`transient:pr-open` (an open linked PR that LINKED PR DISPOSITION parks), `transient:review-wait`, or `needs-person`'
     expect_fail "step 7 writes an undeclared cause, in the Codex copy alone" \
         "skills/codex/backlog-loop/SKILL.md: cause .transient:review-wait. is not declared" "$t"
@@ -1625,6 +1625,52 @@ Never ask me for input.'
         'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads and reaping between reads, and STOP with a report if the last re-read is still above that line.' \
         'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads.' \
         'residual contract missing: machine guard bounded wait'
+
+
+    both_hosts "the decision-recorded class loses its design-field write" \
+        'the loop chose its recommended option, appended `<decision> | rejected: <alt> | reason: <why>` to the design field the way OWNER-DECISION ISSUES does, read the field back, and wrote the note as `decision recorded: <question> | design entry: <decision> | rejected: <alt> | reason: <why>`; charged, and no work failed)' \
+        'the loop wrote the note; charged)' \
+        'residual contract missing: decision-recorded class'
+
+    both_hosts "the decision-recorded REOPEN proof is removed" \
+        '`transient:decision-recorded` is gone when `backlog_loop_attempts` is below the ceiling and the issue'"'"'s design field holds, as an exact substring read from `bd show <id> --json`, the entry its block note quotes after `design entry:`; it waits for no cooldown, because nothing outside the issue changed.' \
+        '`transient:decision-recorded` is gone after a cooldown.' \
+        'residual contract missing: decision-recorded proof'
+
+    both_hosts "the decision-recorded same-invocation exception is removed" \
+        'The one exception is `transient:decision-recorded`, because no work failed: CENSUS may reopen it in this invocation and the issue is attempted once more, and a second `transient:decision-recorded` for the same issue in this invocation is skipped like any other failure.' \
+        'There is no exception.' \
+        'residual contract missing: decision-recorded reattempt'
+
+    both_hosts "the by-type owner-decision rule is removed" \
+        'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' \
+        'Applies to a decision whose body says the loop may choose.' \
+        'residual contract missing: owner-decision by type'
+
+    both_hosts "the legacy owner-decision denial is no longer retired" \
+        'whose newest note begins `needs-person: the body does not say the loop may choose`, is reopened with the reopen shape REOPEN PASS uses' \
+        'whose newest note begins a denial, stays parked' \
+        'residual contract missing: legacy denial retired'
+
+    both_hosts "the decision retry brief is removed" \
+        'A member recorded `transient:decision-recorded` is a retry too: its brief maps the newest decision entry in its design field into LFG'"'"'s settled-decisions brief exactly as for an owner-decision member, so the new planning request cannot reopen the question.' \
+        'A decision member is a normal member.' \
+        'residual contract missing: decision retry brief'
+    # The by-type owner-decision rule: the retired denial must not return to the
+    # section that decides.
+    for md in "$LOOP_MD_CLAUDE" "$LOOP_MD_CODEX"; do
+        t=$(fresh_tree)
+        replace_first "$t" "$md" \
+            'Never overwrite an existing design record.' \
+            'Never overwrite an existing design record. A body that does not say the loop may choose is `needs-person`.'
+        expect_fail "OWNER-DECISION ISSUES reinstates the body-keyed denial ($md)" \
+            "$md: OWNER-DECISION ISSUES reinstates the body-keyed denial" "$t"
+    done
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" '## OWNER-DECISION ISSUES' '## OWNER DECISIONS'
+    expect_fail "the OWNER-DECISION ISSUES heading is renamed so its extraction finds nothing" \
+        "the OWNER-DECISION ISSUES section extracted nothing" "$t"
 
     # Not `return "$case_failures"`: a shell return status wraps at 256, so a
     # suite with 256 or more cases misreported its miss count. The callers read

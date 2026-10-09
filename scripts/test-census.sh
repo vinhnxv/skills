@@ -695,6 +695,19 @@ export_of "$lease_store" "$work/export.lease.after"
     && pass "bd reclaim --id leaves an unleased and a live-leased in_progress issue untouched" \
     || fail "bd reclaim --id: exit $rc, or it changed an issue with no expired lease"
 
+# OWNER-DECISION ISSUES decides every non-gate `decision` issue by type, so the
+# scan has to be offered one whose body says nothing about the loop choosing.
+# The tracker must list it as ready work and report its type as `decision`.
+dec_store=$(fresh_store)
+dec_issue=$(bd -C "$dec_store" create "choose a retry strategy for the sync job" --type decision --silent)
+dec_ready=$(bd -C "$dec_store" ready --json --limit 0 --exclude-type=epic | sorted_ids_json)
+case " $dec_ready " in
+    *" $dec_issue "*) [ "$(field_of "$dec_store" "$dec_issue" issue_type)" = decision ] \
+        && pass "bd ready offers a plain decision issue and reports its type, so the by-type scan can find it" \
+        || fail "a decision issue reads back with a type other than decision" ;;
+    *) fail "bd ready no longer offers a plain decision issue; the by-type owner-decision scan would never see it" ;;
+esac
+
 # A person-closed PR releases RUN and FORGE-LINK keys but leaves the durable
 # needs-person cause and the first note line. These are the stored fields row 6
 # and REPORT consume; classification itself remains owned by the skill.

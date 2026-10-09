@@ -1356,6 +1356,28 @@ SCAN_FILES_END
         fail "$f: residual contract missing: external lease diagnostic"
     grep -qF -- 'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads and reaping between reads, and STOP with a report if the last re-read is still above that line.' "$f" ||
         fail "$f: residual contract missing: machine guard bounded wait"
+    grep -qF -- 'the loop chose its recommended option, appended `<decision> | rejected: <alt> | reason: <why>` to the design field the way OWNER-DECISION ISSUES does, read the field back, and wrote the note as `decision recorded: <question> | design entry: <decision> | rejected: <alt> | reason: <why>`; charged, and no work failed)' "$f" ||
+        fail "$f: residual contract missing: decision-recorded class"
+    grep -qF -- '`transient:decision-recorded` is gone when `backlog_loop_attempts` is below the ceiling and the issue'"'"'s design field holds, as an exact substring read from `bd show <id> --json`, the entry its block note quotes after `design entry:`; it waits for no cooldown, because nothing outside the issue changed.' "$f" ||
+        fail "$f: residual contract missing: decision-recorded proof"
+    grep -qF -- 'The one exception is `transient:decision-recorded`, because no work failed: CENSUS may reopen it in this invocation and the issue is attempted once more, and a second `transient:decision-recorded` for the same issue in this invocation is skipped like any other failure.' "$f" ||
+        fail "$f: residual contract missing: decision-recorded reattempt"
+    grep -qF -- 'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' "$f" ||
+        fail "$f: residual contract missing: owner-decision by type"
+    grep -qF -- 'whose newest note begins `needs-person: the body does not say the loop may choose`, is reopened with the reopen shape REOPEN PASS uses' "$f" ||
+        fail "$f: residual contract missing: legacy denial retired"
+    grep -qF -- 'A member recorded `transient:decision-recorded` is a retry too: its brief maps the newest decision entry in its design field into LFG'"'"'s settled-decisions brief exactly as for an owner-decision member, so the new planning request cannot reopen the question.' "$f" ||
+        fail "$f: residual contract missing: decision retry brief"
+
+    # The owner-decision section decides by type. The denial that parked a
+    # decision issue because its body did not grant the choice is retired and
+    # only TRIAGE PASS may name it, so the section itself must not carry it.
+    owner_section=$(awk '/^## OWNER-DECISION ISSUES/{f=1; next} /^## /{f=0} f' "$f")
+    [ -n "$owner_section" ] ||
+        fail "$f: the OWNER-DECISION ISSUES section extracted nothing, so the denial check below would pass vacuously"
+    if printf '%s\n' "$owner_section" | grep -qF -- 'does not say the loop may choose'; then
+        fail "$f: OWNER-DECISION ISSUES reinstates the body-keyed denial (breaks the by-type rule: a non-gate decision issue is parked as needs-person for a sentence its producer forgot)"
+    fi
 
 done
 
