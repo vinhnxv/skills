@@ -1581,11 +1581,6 @@ Never ask me for input.'
             "skills/$host/backlog-loop/SKILL.md: open-PR preservation rule is missing" "$t"
     done
 
-    # Not `return "$case_failures"`: a shell return status wraps at 256, so a
-    # suite with 256 or more cases misreported its miss count. The callers read
-    # `case_failures` itself.
-    return 0
-
     both_hosts "the DEADLINE definition is deleted" \
         'A DEADLINE is a wrapper exit status of 124 or 137 whose elapsed time is at or above `<gate-timeout>` minus 5 seconds; any other non-zero status is the command'"'"'s own failure.' \
         'A DEADLINE is a timeout.' \
@@ -1600,6 +1595,41 @@ Never ask me for input.'
         'A gate that ended in a DEADLINE is never `transient:gate-failed`: CLEAN-TREE GATE RUN reruns it once and, on a second DEADLINE, writes `transient:tool-failure` with the reason `tool failure: gate deadline`.' \
         'A gate may time out.' \
         'residual contract missing: gate deadline class'
+
+    both_hosts "the reclaim force clause is removed" \
+        'Never pass `--force`, `--any-replica`, or `--older-than`, and never write `bd update --assignee` on this path: a lease granted by another replica is skipped by the tracker, and a claim with no lease is not reclaimed.' \
+        'Pass `--force` when needed.' \
+        'residual contract missing: external lease pass'
+
+    both_hosts "the open PR guard of EXTERNAL LEASE PASS is removed" \
+        'skip it and report it as `held` when an open PR names the issue in its title, body, or head branch; otherwise run `bd reclaim --id <id>` with the tracker'"'"'s default grace window' \
+        'run `bd reclaim --id <id>`' \
+        'residual contract missing: external lease open PR guard'
+
+    both_hosts "the EXTERNAL LEASE PASS read-back requirement is removed" \
+        'report it as `reclaimed` only when the read-back shows `status=open` and no assignee.' \
+        'report it as `reclaimed`.' \
+        'residual contract missing: external lease read-back'
+
+    both_hosts "the EXTERNAL LEASE PASS diagnostic sentence is removed" \
+        'A diagnostic run prints `would evaluate: bd reclaim --id <id>` for each such issue and writes nothing.' \
+        'A diagnostic run reclaims too.' \
+        'residual contract missing: external lease diagnostic'
+
+    both_hosts "the machine guard reverts to a single 60-second re-read" \
+        'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads and reaping between reads, and STOP with a report if the last re-read is still above that line.' \
+        'Above `2 x <cores>` -> reap again, re-read after 60s, and STOP with a report if it is still above that line.' \
+        'residual contract missing: machine guard bounded wait'
+
+    both_hosts "the machine guard final STOP is deleted" \
+        'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads and reaping between reads, and STOP with a report if the last re-read is still above that line.' \
+        'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads.' \
+        'residual contract missing: machine guard bounded wait'
+
+    # Not `return "$case_failures"`: a shell return status wraps at 256, so a
+    # suite with 256 or more cases misreported its miss count. The callers read
+    # `case_failures` itself.
+    return 0
 }
 
 # ---------------------------------------------------------------------------

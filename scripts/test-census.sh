@@ -677,6 +677,24 @@ export_of "$park_store" "$work/export.park.after"
     && pass "ADOPTION's park exits 13 with export unchanged after the member moves to deferred" \
     || fail "ADOPTION's stale park: exit $rc, export changed, or deferred status/heartbeat was overwritten"
 
+# EXTERNAL LEASE PASS reaps through `bd reclaim --id` and nothing else. An
+# `external-wip` issue that never took a lease (a plain status write), and one
+# whose lease is still live, are both left exactly as they are: the pass may
+# only release a claim the tracker itself records as expired.
+lease_store=$(fresh_store)
+lease_none=$(bd -C "$lease_store" create "in progress with no lease" --silent)
+lease_live=$(bd -C "$lease_store" create "in progress under a live lease" --silent)
+bd -C "$lease_store" update "$lease_none" --status=in_progress >/dev/null
+bd -C "$lease_store" update "$lease_live" --claim >/dev/null
+export_of "$lease_store" "$work/export.lease.before"
+rc=$(status_of bd -C "$lease_store" reclaim --id "$lease_none" --id "$lease_live")
+export_of "$lease_store" "$work/export.lease.after"
+[ "$rc" -eq 0 ] && cmp -s "$work/export.lease.before" "$work/export.lease.after" \
+    && [ "$(field_of "$lease_store" "$lease_none" status)" = in_progress ] \
+    && [ "$(field_of "$lease_store" "$lease_live" status)" = in_progress ] \
+    && pass "bd reclaim --id leaves an unleased and a live-leased in_progress issue untouched" \
+    || fail "bd reclaim --id: exit $rc, or it changed an issue with no expired lease"
+
 # A person-closed PR releases RUN and FORGE-LINK keys but leaves the durable
 # needs-person cause and the first note line. These are the stored fields row 6
 # and REPORT consume; classification itself remains owned by the skill.

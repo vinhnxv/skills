@@ -1346,6 +1346,16 @@ SCAN_FILES_END
         fail "$f: residual contract missing: gate deadline rerun"
     grep -qF -- 'A gate that ended in a DEADLINE is never `transient:gate-failed`: CLEAN-TREE GATE RUN reruns it once and, on a second DEADLINE, writes `transient:tool-failure` with the reason `tool failure: gate deadline`.' "$f" ||
         fail "$f: residual contract missing: gate deadline class"
+    grep -qF -- 'Never pass `--force`, `--any-replica`, or `--older-than`, and never write `bd update --assignee` on this path: a lease granted by another replica is skipped by the tracker, and a claim with no lease is not reclaimed.' "$f" ||
+        fail "$f: residual contract missing: external lease pass"
+    grep -qF -- 'skip it and report it as `held` when an open PR names the issue in its title, body, or head branch; otherwise run `bd reclaim --id <id>` with the tracker'"'"'s default grace window' "$f" ||
+        fail "$f: residual contract missing: external lease open PR guard"
+    grep -qF -- 'report it as `reclaimed` only when the read-back shows `status=open` and no assignee.' "$f" ||
+        fail "$f: residual contract missing: external lease read-back"
+    grep -qF -- 'A diagnostic run prints `would evaluate: bd reclaim --id <id>` for each such issue and writes nothing.' "$f" ||
+        fail "$f: residual contract missing: external lease diagnostic"
+    grep -qF -- 'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads and reaping between reads, and STOP with a report if the last re-read is still above that line.' "$f" ||
+        fail "$f: residual contract missing: machine guard bounded wait"
 
 done
 

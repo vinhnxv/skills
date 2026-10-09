@@ -109,6 +109,8 @@ This is the rationale of this skill, not of LFG: the `references/` files LFG own
 
 ## ITERATION
 
+- **CENSUS EXTERNAL LEASE PASS.** An `external-wip` issue has no run marker, so the loop could never release it, and a claim whose owner died stayed `in_progress` forever. The tracker already keeps a lease per claim and ships `bd reclaim` as its reaper, so the loop asks the tracker rather than judging liveness itself, and never forces, widens to other replicas, or reassigns.
+- **I1 machine guard: bounded wait.** A single 60-second re-read ended an unattended run on a load spike that cleared a minute later. Five re-reads at 2-minute intervals ride out a transient spike and still stop a machine that stays saturated, so the guard keeps its purpose without costing a run.
 - **I1 machine guard: saturated machine.** Opening a batch on a saturated machine stacks another full test run on top of whatever is already pinning the CPU, and every gate below then times out on contention instead of on code.
 - **I1 machine guard: heartbeat renewal.** A stale heartbeat is what lets the next invocation tell an abandoned run from a live one, so it is renewed on a schedule and at every boundary, never written once at CLAIM.
 - **I1: POST-MERGE VERIFY term.** "POST-MERGE VERIFY" is not a section or a state of this skill. Earlier text used it for the exact-merge verification of I7 (VERIFY, THEN CLOSE); the I1 skip of the pending local trunk gate applies only when that verification was green at the exact commit trunk still resolves to.
