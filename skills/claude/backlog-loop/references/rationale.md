@@ -119,6 +119,7 @@ This is the rationale of this skill, not of LFG: the `references/` files LFG own
 - **P4: review that returns no findings.** A review whose reviewers all failed returns no findings, which is not the same as finding nothing.
 - **P4: apply stage pushes.** LFG's apply stage pushes the branch when a remote exists, which would publish it at phase `claimed`, and a crash then leaves a remote branch RECOVERY cannot find.
 - **P5: browser test working directory.** The skill starts its own server from its working directory, so an invocation from the invoking tree serves that tree with its dirty `<excluded-paths>`, and the background server it leaves behind is findable only by its port.
+- **P5: browser-affected decision.** `ce-test-browser` starts its server from a fixed launcher list before it maps changed files to routes, so a repository with no web surface cannot start one and every backend-only batch would stop on a gate that has nothing to test. Deciding from the batch's path set first makes an empty route list a pass, while a UI batch whose server cannot start still stops rather than being waved through.
 - **P5: working-tree runtime config.** Run against the working tree and an excluded uncommitted runtime config - a mock auth path, a stub endpoint - is loaded by the browser, passes, and is absent from the PR.
 - **P6: stale base.** Blocking without merging when trunk moved means no stale-base result can ship.
 - **P6: commit before gate.** Committing every remaining batch change first means the gate runs against exactly what will ship.

@@ -1258,6 +1258,16 @@ Never ask me for input.'
         'run the browser test from the working tree:' \
         "pipeline step 5 no longer runs the browser test with its working directory in .<clean-tree>."
 
+    both_hosts "a batch with no browser-affected paths stops passing as N/A" \
+        'the browser gate is `N/A: no browser-affected paths`' \
+        'the browser gate is always required' \
+        "pipeline step 5 no longer passes a batch with no browser-affected paths as N/A"
+
+    both_hosts "a browser-affected batch whose server cannot start is waved through" \
+        'a server that cannot start is a required gate that cannot execute, which is a stop under the terminal blockers, never an N/A' \
+        'a server that cannot start is an N/A' \
+        "pipeline step 5 no longer stops a browser-affected batch whose server cannot start"
+
     both_hosts "the browser test loses its explicit port" \
         'invoke `compound-engineering:ce-test-browser mode:pipeline --port <browser-port>` from that directory' \
         'invoke `compound-engineering:ce-test-browser mode:pipeline` from that directory' \
