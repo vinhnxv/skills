@@ -677,6 +677,77 @@ export_of "$park_store" "$work/export.park.after"
     && pass "ADOPTION's park exits 13 with export unchanged after the member moves to deferred" \
     || fail "ADOPTION's stale park: exit $rc, export changed, or deferred status/heartbeat was overwritten"
 
+# EXTERNAL LEASE PASS reaps through `bd reclaim --id` and nothing else. An
+# `external-wip` issue that never took a lease (a plain status write), and one
+# whose lease is still live, are both left exactly as they are: the pass may
+# only release a claim the tracker itself records as expired.
+lease_store=$(fresh_store)
+lease_none=$(bd -C "$lease_store" create "in progress with no lease" --silent)
+lease_live=$(bd -C "$lease_store" create "in progress under a live lease" --silent)
+bd -C "$lease_store" update "$lease_none" --status=in_progress >/dev/null
+bd -C "$lease_store" update "$lease_live" --claim >/dev/null
+export_of "$lease_store" "$work/export.lease.before"
+rc=$(status_of bd -C "$lease_store" reclaim --id "$lease_none" --id "$lease_live")
+export_of "$lease_store" "$work/export.lease.after"
+[ "$rc" -eq 0 ] && cmp -s "$work/export.lease.before" "$work/export.lease.after" \
+    && [ "$(field_of "$lease_store" "$lease_none" status)" = in_progress ] \
+    && [ "$(field_of "$lease_store" "$lease_live" status)" = in_progress ] \
+    && pass "bd reclaim --id leaves an unleased and a live-leased in_progress issue untouched" \
+    || fail "bd reclaim --id: exit $rc, or it changed an issue with no expired lease"
+
+# OWNER-DECISION ISSUES decides every non-gate `decision` issue by type, so the
+# scan has to be offered one whose body says nothing about the loop choosing.
+# The tracker must list it as ready work and report its type as `decision`.
+dec_store=$(fresh_store)
+dec_issue=$(bd -C "$dec_store" create "choose a retry strategy for the sync job" --type decision --silent)
+dec_ready=$(bd -C "$dec_store" ready --json --limit 0 --exclude-type=epic | sorted_ids_json)
+case " $dec_ready " in
+    *" $dec_issue "*) [ "$(field_of "$dec_store" "$dec_issue" issue_type)" = decision ] \
+        && pass "bd ready offers a plain decision issue and reports its type, so the by-type scan can find it" \
+        || fail "a decision issue reads back with a type other than decision" ;;
+    *) fail "bd ready no longer offers a plain decision issue; the by-type owner-decision scan would never see it" ;;
+esac
+
+# FOLLOW-UP FILING creates an ordinary issue with a deterministic id, its
+# fingerprint as metadata, and a non-blocking `discovered-from` edge to the
+# member. The tracker has to refuse a second create of the same id, keep the
+# metadata, and still offer the follow-up as ready work: an edge that blocked it
+# would turn every filed finding into a stalled issue.
+fu_store=$(fresh_store)
+fu_member=$(bd -C "$fu_store" create "batch anchor" --silent)
+fu_prefix=$(bd -C "$fu_store" config get issue_prefix)
+fu_id="$fu_prefix-f$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8])' 'src/a.go:12|tidy a')"
+fu_made=$(bd -C "$fu_store" create "Tidy a" --id "$fu_id" --type task --priority P4 --labels tech-debt \
+    --metadata "{\"backlog_loop_followup_key\":\"src/a.go:12|tidy a\",\"backlog_loop_followup_of\":\"$fu_member\"}" --silent)
+fu_dup_rc=$(status_of bd -C "$fu_store" create "Tidy a again" --id "$fu_id" --silent)
+bd -C "$fu_store" dep add "$fu_id" "$fu_member" --type discovered-from >/dev/null
+fu_ready=$(bd -C "$fu_store" ready --json --limit 0 --exclude-type=epic | sorted_ids_json)
+case " $fu_ready " in *" $fu_id "*) fu_is_ready=1 ;; *) fu_is_ready=0 ;; esac
+[ "$fu_made" = "$fu_id" ] && [ "$fu_dup_rc" -ne 0 ] && [ "$fu_is_ready" -eq 1 ] \
+    && [ "$(meta_of "$fu_store" "$fu_id" backlog_loop_followup_key)" = 'src/a.go:12|tidy a' ] \
+    && [ "$(meta_of "$fu_store" "$fu_id" backlog_loop_followup_of)" = "$fu_member" ] \
+    && [ "$(labels_of "$fu_store" "$fu_id")" = tech-debt ] \
+    && pass "a follow-up created by deterministic id keeps its metadata, refuses a duplicate id, and stays ready behind a discovered-from edge" \
+    || fail "follow-up creation: id '$fu_made', duplicate exit $fu_dup_rc, ready $fu_is_ready, or its metadata/labels did not read back"
+
+# The UNBLOCK REPORT ranks a person's act by the issues it makes reachable,
+# counted over the `blocked_by` lists `bd ready --explain --json` reports. One
+# human gate that holds two issues has to show both under that gate's id.
+ub_store=$(fresh_store)
+ub_gate=$(bd -C "$ub_store" create "[HUMAN] provision the staging account" -l human-gate --silent)
+ub_a=$(bd -C "$ub_store" create "deploy step one" --silent)
+ub_b=$(bd -C "$ub_store" create "deploy step two" --silent)
+bd -C "$ub_store" dep "$ub_gate" --blocks "$ub_a" >/dev/null
+bd -C "$ub_store" dep "$ub_gate" --blocks "$ub_b" >/dev/null
+ub_held=$(bd -C "$ub_store" ready --explain --json --limit 0 | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+gate=sys.argv[1]
+held=[r["id"] for r in (d.get("blocked") or []) if gate in [b if isinstance(b, str) else b.get("id", "") for b in (r.get("blocked_by") or [])]]
+print(" ".join(sorted(held)))' "$ub_gate")
+[ "$ub_held" = "$(printf '%s\n' "$ub_a" "$ub_b" | LC_ALL=C sort | paste -sd' ' -)" ] \
+    && pass "bd ready --explain reports both issues a human gate holds under that gate's id, which is what the UNBLOCK REPORT counts" \
+    || fail "bd ready --explain: the issues held by one gate read '$ub_held', expected both"
+
 # A person-closed PR releases RUN and FORGE-LINK keys but leaves the durable
 # needs-person cause and the first note line. These are the stored fields row 6
 # and REPORT consume; classification itself remains owned by the skill.

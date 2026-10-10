@@ -1340,6 +1340,78 @@ SCAN_FILES_END
         fail "$f: residual contract missing: approval exception in recoverable-PR rule"
     [ "$(disposition_rows "$f" | tail -n 1)" = '| `OPEN`, any state no earlier row names (`BLOCKED`, `UNKNOWN`, or `UNSTABLE`) | re-read once after 30 seconds and take the matching row if the state changed; otherwise write `transient:pr-open`, never merge, and list the PR and its state in REPORT | no | `blocked`, `transient:pr-open` |' ] ||
         fail "$f: residual contract missing: catch-all must be the last disposition row"
+    grep -qF -- 'A DEADLINE is a wrapper exit status of 124 or 137 whose elapsed time is at or above `<gate-timeout>` minus 5 seconds; any other non-zero status is the command'"'"'s own failure.' "$f" ||
+        fail "$f: residual contract missing: gate deadline definition"
+    grep -qF -- 'A second DEADLINE, or a first one when `<gate-timeout>` is already at or above `<gate-timeout-cap>`, ends the gate as `transient:tool-failure` with the reason `tool failure: gate deadline`, and the note carries the command, both deadlines, and the observed elapsed time. A DEADLINE is never `transient:gate-failed`.' "$f" ||
+        fail "$f: residual contract missing: gate deadline rerun"
+    grep -qF -- 'A gate that ended in a DEADLINE is never `transient:gate-failed`: CLEAN-TREE GATE RUN reruns it once and, on a second DEADLINE, writes `transient:tool-failure` with the reason `tool failure: gate deadline`.' "$f" ||
+        fail "$f: residual contract missing: gate deadline class"
+    grep -qF -- 'Never pass `--force`, `--any-replica`, or `--older-than`, and never write `bd update --assignee` on this path: a lease granted by another replica is skipped by the tracker, and a claim with no lease is not reclaimed.' "$f" ||
+        fail "$f: residual contract missing: external lease pass"
+    grep -qF -- 'skip it and report it as `held` when an open PR names the issue in its title, body, or head branch; otherwise run `bd reclaim --id <id>` with the tracker'"'"'s default grace window' "$f" ||
+        fail "$f: residual contract missing: external lease open PR guard"
+    grep -qF -- 'report it as `reclaimed` only when the read-back shows `status=open` and no assignee.' "$f" ||
+        fail "$f: residual contract missing: external lease read-back"
+    grep -qF -- 'A diagnostic run prints `would evaluate: bd reclaim --id <id>` for each such issue and writes nothing.' "$f" ||
+        fail "$f: residual contract missing: external lease diagnostic"
+    grep -qF -- 'Above `2 x <cores>` -> reap again and re-read at 2-minute intervals, up to five re-reads and reaping between reads, and STOP with a report if the last re-read is still above that line.' "$f" ||
+        fail "$f: residual contract missing: machine guard bounded wait"
+    grep -qF -- 'the loop chose its recommended option, appended `<decision> | rejected: <alt> | reason: <why>` to the design field the way OWNER-DECISION ISSUES does, read the field back, and wrote the note as `decision recorded: <question> | design entry: <decision> | rejected: <alt> | reason: <why>`; charged, and no work failed)' "$f" ||
+        fail "$f: residual contract missing: decision-recorded class"
+    grep -qF -- '`transient:decision-recorded` is gone when `backlog_loop_attempts` is below the ceiling and the issue'"'"'s design field holds, as an exact substring read from `bd show <id> --json`, the entry its block note quotes after `design entry:`; it waits for no cooldown, because nothing outside the issue changed.' "$f" ||
+        fail "$f: residual contract missing: decision-recorded proof"
+    grep -qF -- 'The one exception is `transient:decision-recorded`, because no work failed: CENSUS may reopen it in this invocation and the issue is attempted once more, and a second `transient:decision-recorded` for the same issue in this invocation is skipped like any other failure.' "$f" ||
+        fail "$f: residual contract missing: decision-recorded reattempt"
+    grep -qF -- 'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' "$f" ||
+        fail "$f: residual contract missing: owner-decision by type"
+    grep -qF -- 'whose newest note begins `needs-person: the body does not say the loop may choose`, is reopened with the reopen shape REOPEN PASS uses' "$f" ||
+        fail "$f: residual contract missing: legacy denial retired"
+    grep -qF -- 'A member recorded `transient:decision-recorded` is a retry too: its brief maps the newest decision entry in its design field into LFG'"'"'s settled-decisions brief exactly as for an owner-decision member, so the new planning request cannot reopen the question.' "$f" ||
+        fail "$f: residual contract missing: decision retry brief"
+
+    # The owner-decision section decides by type. The denial that parked a
+    # decision issue because its body did not grant the choice is retired and
+    # only TRIAGE PASS may name it, so the section itself must not carry it.
+    owner_section=$(section_of "$f" '## OWNER-DECISION ISSUES')
+    [ -n "$owner_section" ] ||
+        fail "$f: the OWNER-DECISION ISSUES section extracted nothing, so the denial check below would pass vacuously"
+    if printf '%s\n' "$owner_section" | grep -qF -- 'does not say the loop may choose'; then
+        fail "$f: OWNER-DECISION ISSUES reinstates the body-keyed denial (breaks the by-type rule: a non-gate decision issue is parked as needs-person for a sentence its producer forgot)"
+    fi
+    grep -qF -- 'When any batch member carries `backlog_loop_followup_of`, capture only the `settled_decision_conflicts` candidates, so a follow-up never breeds another generation of follow-ups.' "$f" ||
+        fail "$f: residual contract missing: follow-up capture"
+    grep -qF -- 'This is the first thing step 7 does once I6 has proven the merge, before it records `backlog_loop_postmerge_ci`, because a crash after that point resumes at `merged` and finds the same note.' "$f" ||
+        fail "$f: residual contract missing: follow-up order"
+    grep -qF -- 'query `bd list --limit 0 --has-metadata-key backlog_loop_followup_key --json` once, and drop every candidate whose fingerprint is already the `backlog_loop_followup_key` of a non-closed issue, recording that issue'"'"'s id.' "$f" ||
+        fail "$f: residual contract missing: follow-up dedupe"
+    grep -qF -- 'file at most `<followup-per-batch>=8` of them per batch and at most `<followup-per-run>=25` in the whole invocation, counted in a running total the invocation keeps.' "$f" ||
+        fail "$f: residual contract missing: follow-up caps"
+    grep -qF -- 'it is never above P2, because a finding that serious would have been actionable and gated the merge.' "$f" ||
+        fail "$f: residual contract missing: follow-up priority"
+    grep -qF -- 'Then run `bd dep add <follow-up-id> <anchor-id> --type discovered-from`, and read every created issue back.' "$f" ||
+        fail "$f: residual contract missing: follow-up link"
+    grep -qF -- 'A follow-up is an ordinary open issue: never write the `human-gate` label or the other author-only label that `## HUMAN GATES` names, a status, or a dependency that blocks anything.' "$f" ||
+        fail "$f: residual contract missing: follow-up ordinary issue"
+    grep -qF -- 'Read the candidates in the newest `followup-candidates v1` note only, because an earlier note comes from a review round that a retry superseded,' "$f" ||
+        fail "$f: residual contract missing: follow-up newest candidates note"
+    grep -qF -- 'write the body to a file and the metadata JSON to a second file with a JSON encoder, never by interpolating review text into a shell string' "$f" ||
+        fail "$f: residual contract missing: follow-up create passes text through files"
+    grep -qF -- '--body-file <body-file> --metadata @<metadata-file> --silent' "$f" ||
+        fail "$f: residual contract missing: follow-up create body and metadata files"
+    grep -qF -- 'Walk the table top-down and stop at the first row that matches, as CLASSIFY does, so no issue matches two rows.' "$f" ||
+        fail "$f: residual contract missing: unblock table first-match rule"
+    grep -qF -- 'Only after every read-back succeeded, append `followup-filed v1 | created <n> | duplicate <m> | overflow <k>` to the anchor.' "$f" ||
+        fail "$f: residual contract missing: follow-up filed marker"
+    grep -qF -- '`<class>` is exactly one of `agent-done` (a repair or reopen this run performed), `agent-queued` (the loop reopens or decides it itself on a later pass), `person` (a human act is required), or `external` (an owner, service, or state change outside the repository).' "$f" ||
+        fail "$f: residual contract missing: unblock line shape"
+    grep -qF -- 'Begin `<action>` with `unlocks <n>: ` and sort the block by `<n>` descending, then by id ascending, so the one act that frees the most work comes first.' "$f" ||
+        fail "$f: residual contract missing: unblock ranking"
+    grep -qF -- 'The UNBLOCK REPORT writes nothing of its own, in either mode:' "$f" ||
+        fail "$f: residual contract missing: unblock writes nothing"
+    grep -qF -- '| `legacy-blocked` | `person` | the reason its newest note states, because the status is a person'"'"'s parking decision | `bd update <id> --status=open`, printed for the person and never run by the loop |' "$f" ||
+        fail "$f: residual contract missing: unblock legacy row"
+    grep -qF -- 'End with the UNBLOCK REPORT of the last CENSUS, verbatim, so an unattended run leaves the answer behind.' "$f" ||
+        fail "$f: residual contract missing: unblock final report"
 
 done
 
@@ -1374,6 +1446,8 @@ if [ -d "$root/prompts" ]; then
         fail "$goal: the goal no longer allows an in-progress member held by a recorded post-merge watch (breaks R16: a merged member waiting on CI makes the second success condition unreachable)"
     grep -qF -- '3. Every repair, every reopen, and every residue strip a loop run would perform is reported' "$census_goal" ||
         fail "$census_goal: the census goal no longer lists residue strips beside repairs and reopens (breaks R16: a diagnostic run hides the one mutation it promised to report)"
+    grep -qF -- '- Paste the UNBLOCK REPORT as the last block: one `unblock` line for every issue the loop is not clearing unaided, ranked by what its resolution unlocks.' "$census_goal" ||
+        fail "$census_goal: the census goal no longer asks for the UNBLOCK REPORT as its last block (breaks R16: the diagnostic run an operator reaches for stops answering how to unblock the backlog)"
     for g in "$goal" "$census_goal"; do
         for forbidden in '- trunk health fails;' '- three consecutive batches are blocked or failed;' '- the same issue ID is attempted twice;' '- two consecutive merges fail;' '1. `bd ready --json --exclude-type=epic` returns no actionable issue.' 'For every batch, follow the CI state selected by backlog-loop:'; do
             if grep -qF -- "$forbidden" "$g"; then

@@ -163,6 +163,23 @@ second step differs by host:
 - **Claude Code** — there is no `/goal` command. Paste the prompt file's
   contents as an ordinary message, immediately after loading the skill.
 
+**What it decides, files, and reports.** The loop decides on its own every
+non-gate `decision` issue by its recommended option, recording the choice in
+the issue's design field and the PR body, and a plan that blocks on an open
+question gets a recorded decision and one more attempt. It reaps an
+`external-wip` claim only through the tracker's own lease (`bd reclaim`), and a
+gate killed by its deadline is retried once with a longer deadline before it is
+charged as a tool failure. What stays with a person is exactly the human gates
+(a credential, access, a paid subscription, a production approval), a change to
+a contract, permission, or security stance, and a `needs-human` residual from
+PR review. Findings that review leaves unfixed are filed into Beads after the
+merge as `tech-debt` issues (never above P2, deduplicated, capped per batch and
+per run), so they are done later instead of forgotten. Every census and every
+final report ends with an UNBLOCK REPORT: one `unblock <id> | <class> | <action>
+| <command>` line per issue the loop is not clearing, ranked by what each act
+unlocks, so you read which blocked issues the agent can decide and how to
+unblock the rest instead of asking.
+
 **Tracker support.** Beads only. The procedure issues literal `bd` commands
 for claims, estimates, metadata, notes, and closure, and preflight stops when
 `bd` does not work rather than improvising a mapping onto another tracker. If
