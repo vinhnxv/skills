@@ -87,9 +87,17 @@ append_line() { # tree, relative-path, text
 replace_first() { # tree, relative-path, old, new
     OLD="$3" NEW="$4" python3 - "$1/$2" <<'PY'
 import os, sys
+import glob
 p = sys.argv[1]
 s = open(p).read()
 old, new = os.environ["OLD"], os.environ["NEW"]
+if old not in s:
+    # A required-read reference (R32) holds text that used to sit in SKILL.md.
+    for r in sorted(glob.glob(os.path.join(os.path.dirname(p), "references", "*.md"))):
+        rs = open(r).read()
+        if old in rs:
+            open(r, "w").write(rs.replace(old, new, 1))
+            sys.exit(0)
 if old not in s:
     sys.stderr.write("test bug: literal not present in %s: %r\n" % (p, old))
     sys.exit(2)

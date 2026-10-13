@@ -494,6 +494,38 @@ check_status_writes() { # SKILL.md of the copy, scanned file
         fail "$sf: line $close_line runs \`bd close\` outside step 7 VERIFY, THEN CLOSE and the RECOVERY \`verified\` arm (breaks R8: a close anywhere else closes work whose merge and post-merge CI nothing has proven)"
 }
 
+# Required-read references (R32). A SKILL.md line that begins `READ-REQUIRED
+# references/<name>.md.` names a reference the loop must read in full before the
+# text it stands for runs. For the anchor checks below that line IS the file's
+# body, so it is replaced in place by the file's content (minus its heading
+# block): the combined text is what the loop reads, and every anchor, section
+# slice and ordering check sees it where the original sat. A named file that is
+# missing fails loudly. A reference with no such line stays out of anchor
+# checks, exactly as R31 has it. The combined copy gets a symlink back to the
+# real `references/`, so scan checks still read every reference.
+splice_required_reads() { # SKILL.md of one copy, scratch directory
+    mkdir -p -- "$2"
+    if [ -d "$(dirname -- "$1")/references" ]; then
+        ln -sfn "$(cd -- "$(dirname -- "$1")" && pwd)/references" "$2/references"
+    fi
+    awk -v dir="$(dirname -- "$1")" -v src="$1" '
+        /^READ-REQUIRED references\/[A-Za-z0-9._-]+\.md\./ {
+            name = $2; sub(/\.$/, "", name)
+            path = dir "/" name
+            if ((getline line < path) < 0) {
+                print "FAIL-MISSING-REF " name > "/dev/stderr"; bad = 1; next
+            }
+            body = 0
+            do { if (body) print line; else if (line == "<!-- body -->") body = 1 } while ((getline line < path) > 0)
+            close(path); next
+        }
+        { print }
+        END { exit bad }
+    ' "$1" > "$2/SKILL.md" ||
+        fail "$1: a READ-REQUIRED line names a references/ file that does not exist (breaks R32: the loop is told to read a file that is not there)"
+    printf '%s\n' "$2/SKILL.md"
+}
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/check-backlog-loop.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT HUP TERM
@@ -517,6 +549,9 @@ checked=0
 
 for f in "$@"; do
     checked=$((checked + 1))
+    orig_f=$f
+    f=$(splice_required_reads "$orig_f" "$work/copy$checked/$(dirname -- "${orig_f#"$root"/}")") || exit 1
+    [ -n "$f" ] || fail "$orig_f: could not build the required-read view of this copy"
 
     scan_files=$(scan_files_of "$f")
 
