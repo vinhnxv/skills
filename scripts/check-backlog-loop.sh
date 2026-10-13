@@ -494,6 +494,42 @@ check_status_writes() { # SKILL.md of the copy, scanned file
         fail "$sf: line $close_line runs \`bd close\` outside step 7 VERIFY, THEN CLOSE and the RECOVERY \`verified\` arm (breaks R8: a close anywhere else closes work whose merge and post-merge CI nothing has proven)"
 }
 
+# Required-read references (R32). A SKILL.md line that begins `READ-REQUIRED
+# references/<name>.md.` names a reference the loop must read in full before the
+# text it stands for runs. For the anchor checks below that line IS the file's
+# body, so it is replaced in place by the file's content (minus its heading
+# block): the combined text is what the loop reads, and every anchor, section
+# slice and ordering check sees it where the original sat. A named file that is
+# missing fails loudly. A reference with no such line stays out of anchor
+# checks, exactly as R31 has it. The combined copy gets a symlink back to the
+# real `references/`, so scan checks still read every reference.
+splice_required_reads() { # SKILL.md of one copy, scratch directory
+    mkdir -p -- "$2"
+    if [ -d "$(dirname -- "$1")/references" ]; then
+        rm -f -- "$2/references"
+        ln -s "$(cd -- "$(dirname -- "$1")" && pwd)/references" "$2/references"
+    fi
+    awk -v dir="$(dirname -- "$1")" -v src="$1" '
+        /^READ-REQUIRED references\/[A-Za-z0-9._-]+\.md\./ {
+            if (index($0, "Read that file in full") == 0) { print "FAIL-NO-READ-ORDER " $2 > "/dev/stderr"; bad = 1; next }
+            name = $2; sub(/\.$/, "", name)
+            path = dir "/" name
+            if ((getline line < path) < 0) {
+                print "FAIL-MISSING-REF " name > "/dev/stderr"; bad = 1; next
+            }
+            body = 0; nbody = 0
+            do { if (body) { print line; if (line != "") nbody++ } else if (line == "<!-- body -->") body = 1; else if (line ~ /^<!-- body -->/) bad = 1 } while ((getline line < path) > 0)
+            close(path)
+            if (!body || nbody == 0) { print "FAIL-EMPTY-REF " name > "/dev/stderr"; bad = 1 }
+            next
+        }
+        { print }
+        END { exit bad }
+    ' "$1" > "$2/SKILL.md" ||
+        fail "$1: a READ-REQUIRED line is malformed, loses its 'Read that file in full' order, or names a references/ file that is missing or has no body after its '<!-- body -->' marker (breaks R33: the loop is told to read a file that is not there or that says nothing)"
+    printf '%s\n' "$2/SKILL.md"
+}
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/check-backlog-loop.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT HUP TERM
@@ -517,6 +553,9 @@ checked=0
 
 for f in "$@"; do
     checked=$((checked + 1))
+    orig_f=$f
+    f=$(splice_required_reads "$orig_f" "$work/copy$checked/$(dirname -- "${orig_f#"$root"/}")") || exit 1
+    [ -n "$f" ] || fail "$orig_f: could not build the required-read view of this copy"
 
     scan_files=$(scan_files_of "$f")
 

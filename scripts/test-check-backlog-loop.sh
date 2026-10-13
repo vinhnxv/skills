@@ -87,9 +87,17 @@ append_line() { # tree, relative-path, text
 replace_first() { # tree, relative-path, old, new
     OLD="$3" NEW="$4" python3 - "$1/$2" <<'PY'
 import os, sys
+import glob
 p = sys.argv[1]
 s = open(p).read()
 old, new = os.environ["OLD"], os.environ["NEW"]
+if old not in s:
+    # A required-read reference (R32) holds text that used to sit in SKILL.md.
+    for r in sorted(glob.glob(os.path.join(os.path.dirname(p), "references", "*.md"))):
+        rs = open(r).read()
+        if old in rs:
+            open(r, "w").write(rs.replace(old, new, 1))
+            sys.exit(0)
 if old not in s:
     sys.stderr.write("test bug: literal not present in %s: %r\n" % (p, old))
     sys.exit(2)
@@ -932,6 +940,18 @@ Never ask me for input.'
         '(CHARGING;'
     expect_fail "R32 recovery guard 5 is removed" \
         "a charged recipe no longer writes backlog_loop_attempts_total" "$t"
+
+    t=$(fresh_tree)
+    printf '# x\n\n<!-- body -->\n' > "$t/skills/claude/backlog-loop/references/census-unblock-report.md"
+    expect_fail "R33 a required-read reference has no body" \
+        "READ-REQUIRED line is malformed" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'Read that file in full before running it' \
+        'Do not read this file before running it'
+    expect_fail "R33 a READ-REQUIRED line loses its read-in-full order" \
+        "READ-REQUIRED line is malformed" "$t"
 
     t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
