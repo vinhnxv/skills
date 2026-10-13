@@ -942,6 +942,18 @@ Never ask me for input.'
         "a charged recipe no longer writes backlog_loop_attempts_total" "$t"
 
     t=$(fresh_tree)
+    printf '# x\n\n<!-- body -->\n' > "$t/skills/claude/backlog-loop/references/census-unblock-report.md"
+    expect_fail "R33 a required-read reference has no body" \
+        "READ-REQUIRED line is malformed" "$t"
+
+    t=$(fresh_tree)
+    replace_first "$t" "$LOOP_MD_CLAUDE" \
+        'Read that file in full before running it' \
+        'Do not read this file before running it'
+    expect_fail "R33 a READ-REQUIRED line loses its read-in-full order" \
+        "READ-REQUIRED line is malformed" "$t"
+
+    t=$(fresh_tree)
     replace_first "$t" "$LOOP_MD_CLAUDE" \
         'ORDER AND REFRESH.' \
         'ORDER NOTE.'

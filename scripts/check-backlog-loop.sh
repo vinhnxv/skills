@@ -506,23 +506,27 @@ check_status_writes() { # SKILL.md of the copy, scanned file
 splice_required_reads() { # SKILL.md of one copy, scratch directory
     mkdir -p -- "$2"
     if [ -d "$(dirname -- "$1")/references" ]; then
-        ln -sfn "$(cd -- "$(dirname -- "$1")" && pwd)/references" "$2/references"
+        rm -f -- "$2/references"
+        ln -s "$(cd -- "$(dirname -- "$1")" && pwd)/references" "$2/references"
     fi
     awk -v dir="$(dirname -- "$1")" -v src="$1" '
         /^READ-REQUIRED references\/[A-Za-z0-9._-]+\.md\./ {
+            if (index($0, "Read that file in full") == 0) { print "FAIL-NO-READ-ORDER " $2 > "/dev/stderr"; bad = 1; next }
             name = $2; sub(/\.$/, "", name)
             path = dir "/" name
             if ((getline line < path) < 0) {
                 print "FAIL-MISSING-REF " name > "/dev/stderr"; bad = 1; next
             }
-            body = 0
-            do { if (body) print line; else if (line == "<!-- body -->") body = 1 } while ((getline line < path) > 0)
-            close(path); next
+            body = 0; nbody = 0
+            do { if (body) { print line; if (line != "") nbody++ } else if (line == "<!-- body -->") body = 1; else if (line ~ /^<!-- body -->/) bad = 1 } while ((getline line < path) > 0)
+            close(path)
+            if (!body || nbody == 0) { print "FAIL-EMPTY-REF " name > "/dev/stderr"; bad = 1 }
+            next
         }
         { print }
         END { exit bad }
     ' "$1" > "$2/SKILL.md" ||
-        fail "$1: a READ-REQUIRED line names a references/ file that does not exist (breaks R32: the loop is told to read a file that is not there)"
+        fail "$1: a READ-REQUIRED line is malformed, loses its 'Read that file in full' order, or names a references/ file that is missing or has no body after its '<!-- body -->' marker (breaks R33: the loop is told to read a file that is not there or that says nothing)"
     printf '%s\n' "$2/SKILL.md"
 }
 
