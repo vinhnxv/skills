@@ -1696,7 +1696,7 @@ Never ask me for input.'
         'a diagnostic run prints `would evaluate: close <id> as resolved` and writes nothing.
 ## UNRELATED SECTION
 Run `bd close <id>`.' \
-        'outside step 7 VERIFY, THEN CLOSE'
+        'line [0-9]+ runs .bd close. outside step 7'
 
     both_hosts "the by-type owner-decision rule is removed" \
         'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' \
