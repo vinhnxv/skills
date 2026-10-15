@@ -1401,6 +1401,8 @@ SCAN_FILES_END
         fail "$f: residual contract missing: decision-recorded proof"
     grep -qF -- 'The one exception is `transient:decision-recorded`, because no work failed: CENSUS may reopen it in this invocation and the issue is attempted once more, and a second `transient:decision-recorded` for the same issue in this invocation is skipped like any other failure.' "$f" ||
         fail "$f: residual contract missing: decision-recorded reattempt"
+    grep -qF -- 'A second exception is `transient:scope-incomplete`, because the failure was in the scoping of `<trunk-failures>`, not in the work: it may be reselected once per invocation with the complete repair set, and a second `transient:scope-incomplete` for the same issue in this invocation is skipped like any other failure.' "$f" ||
+        fail "$f: residual contract missing: scope-incomplete reattempt"
     grep -qF -- 'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' "$f" ||
         fail "$f: residual contract missing: owner-decision by type"
     grep -qF -- 'whose newest note begins `needs-person: the body does not say the loop may choose`, is reopened with the reopen shape REOPEN PASS uses' "$f" ||
