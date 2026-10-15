@@ -1681,6 +1681,23 @@ Never ask me for input.'
         'it is resolved whenever its issue has been open for a day.' \
         'residual contract missing: resolved repair proof'
 
+    both_hosts "RESOLVED REPAIR may test any stamped issue" \
+        'test every non-closed issue whose title begins `Restore trunk:` and that is stamped `backlog_loop_trunk_repair=<stamp-sha>`, whose acceptance criteria require nothing beyond the exact failed checks and the full gate set, and that no live run owns (a reused issue with any other criterion, and every `Stabilize flaky:` issue, is never tested here, because green commands do not prove its remaining work),' \
+        'test every non-closed issue stamped, flaky ones included,' \
+        'residual contract missing: resolved repair scope'
+
+    both_hosts "RESOLVED REPAIR drops its resolving-commit evidence" \
+        'at least one commit in that range that changes a file one of the failing commands exercises (a range with no such commit is no proof)' \
+        'any commit in that range' \
+        'residual contract missing: resolved repair commit evidence'
+
+    both_hosts "a bd close hides behind the RESOLVED REPAIR paragraph through a heading" \
+        'a diagnostic run prints `would evaluate: close <id> as resolved` and writes nothing.' \
+        'a diagnostic run prints `would evaluate: close <id> as resolved` and writes nothing.
+## UNRELATED SECTION
+Run `bd close <id>`.' \
+        'outside step 7 VERIFY, THEN CLOSE'
+
     both_hosts "the by-type owner-decision rule is removed" \
         'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' \
         'Applies to a decision whose body says the loop may choose.' \

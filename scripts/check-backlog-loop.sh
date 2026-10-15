@@ -488,7 +488,9 @@ check_status_writes() { # SKILL.md of the copy, scanned file
         /^7\. \*\*VERIFY, THEN CLOSE\.\*\*/ { step7 = 1 }
         step7 && /^[0-9]+\. / && !/^7\. / { step7 = 0 }
         step7 && /^## / { step7 = 0 }
-        /^   RESOLVED REPAIR\. / { rr = 1 }
+        /^## / { iter = ($0 ~ /^## ITERATION/); rr = 0 }
+        /^[0-9]+\. / { rr = 0 }
+        iter && /^   RESOLVED REPAIR\. / { rr = 1 }
         rr && /^$/ { rr = 0 }
         /^RECOVERY,/ { rec = 1; seen = 0 }
         rec && seen && /^$/ { rec = 0; arm = 0 }
@@ -1414,6 +1416,10 @@ SCAN_FILES_END
         fail "$f: residual contract missing: resolved repair"
     grep -qF -- 'it is resolved only when `<remote>/<default>` is a descendant of `<stamp-sha>` and not equal to it, the exact failed commands of its recorded failures each pass 3 runs in a row through CLEAN-TREE GATE RUN at the current trunk SHA, and the complete current gate set is green there.' "$f" ||
         fail "$f: residual contract missing: resolved repair proof"
+    grep -qF -- 'test every non-closed issue whose title begins `Restore trunk:` and that is stamped `backlog_loop_trunk_repair=<stamp-sha>`, whose acceptance criteria require nothing beyond the exact failed checks and the full gate set, and that no live run owns (a reused issue with any other criterion, and every `Stabilize flaky:` issue, is never tested here, because green commands do not prove its remaining work),' "$f" ||
+        fail "$f: residual contract missing: resolved repair scope"
+    grep -qF -- 'at least one commit in that range that changes a file one of the failing commands exercises (a range with no such commit is no proof)' "$f" ||
+        fail "$f: residual contract missing: resolved repair commit evidence"
     grep -qF -- 'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' "$f" ||
         fail "$f: residual contract missing: owner-decision by type"
     grep -qF -- 'whose newest note begins `needs-person: the body does not say the loop may choose`, is reopened with the reopen shape REOPEN PASS uses' "$f" ||
