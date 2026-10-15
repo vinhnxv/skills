@@ -58,7 +58,7 @@
 #       bare char-class pattern captures nothing past an opening quote and
 #       silently drops a write such as `--status="deferred"` from the census --
 #       never runs `bd defer`, and runs `bd close` (a write of `closed`) only
-#       in step 7 VERIFY, THEN CLOSE and the RECOVERY `verified` arm.
+#       in step 7 VERIFY, THEN CLOSE, the RECOVERY `verified` arm and RESOLVED REPAIR.
 #       `in_progress` is a status flag only in the anchored adoption write.
 #       `## CONSTRAINTS` names the three statuses the procedure refuses. A run
 #       that parks an issue is writing under the authority of whoever reads that
@@ -478,17 +478,24 @@ check_status_writes() { # SKILL.md of the copy, scanned file
     [ -z "$defer_line" ] ||
         fail "$sf: line $defer_line runs \`bd defer\` (breaks R8: \`deferred\` is a person's or a sibling skill's parking decision, and a run that wrote it would park work under the authority of whoever reads that status next)"
 
-    # `bd close` writes `closed`: step 7 VERIFY, THEN CLOSE and the RECOVERY
-    # `verified` arm are the only places that may run it, because a close
-    # anywhere else closes work no merge has been proven for.
+    # `bd close` writes `closed`: step 7 VERIFY, THEN CLOSE, the RECOVERY
+    # `verified` arm and the RESOLVED REPAIR paragraph are the only places that
+    # may run it, because a close anywhere else closes work no merge has been
+    # proven for. RESOLVED REPAIR closes only a repair member whose failure a
+    # later trunk commit already fixed, on three green runs of its exact commands
+    # and a green complete gate set, which the pins below require.
     close_line=$(awk -v pat="(^|[^[:alnum:]_])${BD_WORDS}close([^a-z-]|\$)" '
         /^7\. \*\*VERIFY, THEN CLOSE\.\*\*/ { step7 = 1 }
         step7 && /^[0-9]+\. / && !/^7\. / { step7 = 0 }
         step7 && /^## / { step7 = 0 }
+        /^## / { iter = ($0 ~ /^## ITERATION/); rr = 0 }
+        /^[0-9]+\. / { rr = 0 }
+        iter && /^   RESOLVED REPAIR\. / { rr = 1 }
+        rr && /^$/ { rr = 0 }
         /^RECOVERY,/ { rec = 1; seen = 0 }
         rec && seen && /^$/ { rec = 0; arm = 0 }
         rec && /^- / { seen = 1; arm = ($0 ~ /^- [^:]*`verified`[^:]*:/) }
-        $0 ~ pat && !step7 && !(rec && arm) { print NR; exit }
+        $0 ~ pat && !step7 && !rr && !(rec && arm) { print NR; exit }
     ' "$sf")
     [ -z "$close_line" ] ||
         fail "$sf: line $close_line runs \`bd close\` outside step 7 VERIFY, THEN CLOSE and the RECOVERY \`verified\` arm (breaks R8: a close anywhere else closes work whose merge and post-merge CI nothing has proven)"
@@ -1403,6 +1410,16 @@ SCAN_FILES_END
         fail "$f: residual contract missing: decision-recorded reattempt"
     grep -qF -- 'A second exception is `transient:scope-incomplete`, because the failure was in the scoping of `<trunk-failures>`, not in the work: it may be reselected once per invocation with the complete repair set, and a second `transient:scope-incomplete` for the same issue in this invocation is skipped like any other failure.' "$f" ||
         fail "$f: residual contract missing: scope-incomplete reattempt"
+    grep -qF -- 'A third exception is `transient:trunk-moved`, because the trunk changed under the batch and no work failed: it may be reselected once per invocation, from a fresh BASE, after CENSUS proves its cause gone, and a second `transient:trunk-moved` for the same issue in this invocation is skipped like any other failure.' "$f" ||
+        fail "$f: residual contract missing: trunk-moved reattempt"
+    grep -qF -- 'A trunk equal to `<stamp-sha>` whose commands now pass is intermittent and goes through FLAKE CHECK, never this rule;' "$f" ||
+        fail "$f: residual contract missing: resolved repair"
+    grep -qF -- 'it is resolved only when `<remote>/<default>` is a descendant of `<stamp-sha>` and not equal to it, the exact failed commands of its recorded failures each pass 3 runs in a row through CLEAN-TREE GATE RUN at the current trunk SHA, and the complete current gate set is green there.' "$f" ||
+        fail "$f: residual contract missing: resolved repair proof"
+    grep -qF -- 'test every non-closed issue whose title begins `Restore trunk:` and that is stamped `backlog_loop_trunk_repair=<stamp-sha>`, whose acceptance criteria require nothing beyond the exact failed checks and the full gate set, and that no live run owns (a reused issue with any other criterion, and every `Stabilize flaky:` issue, is never tested here, because green commands do not prove its remaining work),' "$f" ||
+        fail "$f: residual contract missing: resolved repair scope"
+    grep -qF -- 'at least one commit in that range that changes a file one of the failing commands exercises (a range with no such commit is no proof)' "$f" ||
+        fail "$f: residual contract missing: resolved repair commit evidence"
     grep -qF -- 'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' "$f" ||
         fail "$f: residual contract missing: owner-decision by type"
     grep -qF -- 'whose newest note begins `needs-person: the body does not say the loop may choose`, is reopened with the reopen shape REOPEN PASS uses' "$f" ||

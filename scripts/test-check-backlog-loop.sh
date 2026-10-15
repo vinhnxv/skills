@@ -1666,6 +1666,38 @@ Never ask me for input.'
         'There is no second exception.' \
         'residual contract missing: scope-incomplete reattempt'
 
+    both_hosts "the trunk-moved same-invocation exception is removed" \
+        'A third exception is `transient:trunk-moved`, because the trunk changed under the batch and no work failed: it may be reselected once per invocation, from a fresh BASE, after CENSUS proves its cause gone, and a second `transient:trunk-moved` for the same issue in this invocation is skipped like any other failure.' \
+        'There is no third exception.' \
+        'residual contract missing: trunk-moved reattempt'
+
+    both_hosts "RESOLVED REPAIR closes an unchanged-trunk flake" \
+        'A trunk equal to `<stamp-sha>` whose commands now pass is intermittent and goes through FLAKE CHECK, never this rule;' \
+        'An unchanged trunk whose commands now pass closes the issue;' \
+        'residual contract missing: resolved repair'
+
+    both_hosts "RESOLVED REPAIR drops its proof of a fixed trunk" \
+        'it is resolved only when `<remote>/<default>` is a descendant of `<stamp-sha>` and not equal to it, the exact failed commands of its recorded failures each pass 3 runs in a row through CLEAN-TREE GATE RUN at the current trunk SHA, and the complete current gate set is green there.' \
+        'it is resolved whenever its issue has been open for a day.' \
+        'residual contract missing: resolved repair proof'
+
+    both_hosts "RESOLVED REPAIR may test any stamped issue" \
+        'test every non-closed issue whose title begins `Restore trunk:` and that is stamped `backlog_loop_trunk_repair=<stamp-sha>`, whose acceptance criteria require nothing beyond the exact failed checks and the full gate set, and that no live run owns (a reused issue with any other criterion, and every `Stabilize flaky:` issue, is never tested here, because green commands do not prove its remaining work),' \
+        'test every non-closed issue stamped, flaky ones included,' \
+        'residual contract missing: resolved repair scope'
+
+    both_hosts "RESOLVED REPAIR drops its resolving-commit evidence" \
+        'at least one commit in that range that changes a file one of the failing commands exercises (a range with no such commit is no proof)' \
+        'any commit in that range' \
+        'residual contract missing: resolved repair commit evidence'
+
+    both_hosts "a bd close hides behind the RESOLVED REPAIR paragraph through a heading" \
+        'a diagnostic run prints `would evaluate: close <id> as resolved` and writes nothing.' \
+        'a diagnostic run prints `would evaluate: close <id> as resolved` and writes nothing.
+## UNRELATED SECTION
+Run `bd close <id>`.' \
+        'line [0-9]+ runs .bd close. outside step 7'
+
     both_hosts "the by-type owner-decision rule is removed" \
         'Applies to every issue whose `issue_type` is `decision`; skip none of those, whatever the body says.' \
         'Applies to a decision whose body says the loop may choose.' \
