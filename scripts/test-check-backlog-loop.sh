@@ -163,6 +163,8 @@ both_append() { # name, text, expected-message-ERE
 # checker for the test's own defect. Called as `x=$(line_of ...) || return 1`.
 line_of() { # tree, relative-path, sed-regex, what-it-is
     found=$(sed -n "/$3/p" "$1/$2")
+    # A required-read reference (R32) holds text that used to sit in SKILL.md.
+    [ -n "$found" ] || found=$(sed -n "/$3/p" "$(dirname -- "$1/$2")"/references/*.md)
     [ -n "$found" ] || { echo "test bug: $4 missing before mutation" >&2; return 1; }
     printf '%s\n' "$found"
 }

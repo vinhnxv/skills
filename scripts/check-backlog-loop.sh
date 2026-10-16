@@ -484,7 +484,8 @@ check_status_writes() { # SKILL.md of the copy, scanned file
     # proven for. RESOLVED REPAIR closes only a repair member whose failure a
     # later trunk commit already fixed, on three green runs of its exact commands
     # and a green complete gate set, which the pins below require.
-    close_line=$(awk -v pat="(^|[^[:alnum:]_])${BD_WORDS}close([^a-z-]|\$)" '
+    close_line=$(awk -v pat="(^|[^[:alnum:]_])${BD_WORDS}close([^a-z-]|\$)" -v isref="$([ "$sf" != "$skill_md" ] && echo 1 || echo 0)" '
+        BEGIN { iter = (isref == 1) }
         /^7\. \*\*VERIFY, THEN CLOSE\.\*\*/ { step7 = 1 }
         step7 && /^[0-9]+\. / && !/^7\. / { step7 = 0 }
         step7 && /^## / { step7 = 0 }
