@@ -1,7 +1,10 @@
 name: check
 
 on:
+  # A branch with an open pull request would otherwise run every job twice,
+  # once for the push and once for the pull request.
   push:
+    branches: [main]
   pull_request:
 
 # Nothing here writes to the repository, so the token gets read access to its
@@ -132,10 +135,15 @@ jobs:
         run: sh scripts/test-check-backlog-loop.sh
 
   census:
-    runs-on: ubuntu-latest
     # The contract suite and the harness suite each spend a few minutes
-    # creating real `bd` stores.
+    # creating real `bd` stores, so each runs in its own job beside the others.
+    name: census (${{ matrix.suite }})
+    runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [contract, harness, clauses]
     env:
       BD_VERSION: 1.3.0
     steps:
@@ -186,20 +194,24 @@ jobs:
       # half drives a model through the host CLI (`--full`), so it stays off
       # the push path.
       - name: Tracker contract holds against pinned bd
+        if: matrix.suite == 'contract'
         run: sh scripts/test-census.sh
 
       # Stub host CLIs and a real TERM prove the properties every script
       # shares; its two census runs use the `bd` installed above.
       - name: Script harness safety properties hold
+        if: matrix.suite == 'harness'
         run: sh scripts/test-harness.sh
 
       # Pure shell checks of the audit skill's clauses and of the sample report
       # in scripts/fixtures/, and of the separate Beads writer's clauses.
       # Host-driven model runs remain outside the push path.
       - name: The repo-audit clauses and sample report hold
+        if: matrix.suite == 'clauses'
         run: sh scripts/test-repo-audit.sh
 
       - name: The source-to-beads clauses hold
+        if: matrix.suite == 'clauses'
         run: sh scripts/test-source-to-beads.sh
 
   install:
