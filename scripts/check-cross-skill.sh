@@ -228,7 +228,8 @@ for f in $consumer_copies; do
     sed -n "${responsible}p" "$f" | grep -q '`deferred`' && fail "backlog-loop: $f includes deferred in LOOP-RESPONSIBLE SET"
     grep -q 'issue_type` is `gate`' "$f" || fail "backlog-loop: $f no longer recognizes native gate issues"
     grep -qF 'carries the `human-gate` label, or' "$f" || fail "backlog-loop: $f no longer recognizes the human-gate label"
-    grep -qF 'A native gate (`issue_type=gate`) is NEVER repaired or quarantined: its blocking edge is declared by construction, so every edge a producer such as `source-to-beads` writes on one stands.' "$f" || fail "backlog-loop: $f no longer exempts native gate edges from gate repair"
+    # The gate-repair text sits in a required-read reference (R32), beside SKILL.md.
+    grep -qF 'A native gate (`issue_type=gate`) is NEVER repaired or quarantined: its blocking edge is declared by construction, so every edge a producer such as `source-to-beads` writes on one stands.' "$f" "$(dirname -- "$f")"/references/*.md || fail "backlog-loop: $f no longer exempts native gate edges from gate repair"
     grep -qF 'an issue is one when its `issue_type` is `decision` and CENSUS classified it as neither `human-gate` nor `label-defect`' "$f" || fail "backlog-loop: $f no longer treats every non-gate decision issue as owner-decision"
     grep -qF 'Three classes stay with a person, and they are told apart by structure and never by reading the body:' "$f" || fail "backlog-loop: $f no longer reserves exactly the structural classes of decision for a person"
     grep -qF 'a decision that changes a contract, permission, or security stance or contradicts a `user-approved` decision' "$f" || fail "backlog-loop: $f no longer reserves a contract, permission, or security decision for a person"
