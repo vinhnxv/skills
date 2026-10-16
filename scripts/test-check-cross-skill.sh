@@ -22,6 +22,13 @@ p = sys.argv[1]
 s = open(p).read()
 old, new = os.environ["OLD"], os.environ["NEW"]
 if old not in s:
+    # A required-read reference holds text that used to sit in SKILL.md.
+    import glob
+    for r in sorted(glob.glob(os.path.join(os.path.dirname(p), "references", "*.md"))):
+        rs = open(r).read()
+        if old in rs:
+            open(r, "w").write(rs.replace(old, new))
+            sys.exit(0)
     sys.stderr.write("test bug: missing literal %r in %s\n" % (old, p))
     sys.exit(2)
 open(p, "w").write(s.replace(old, new))
