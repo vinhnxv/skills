@@ -50,7 +50,10 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 checker="${1:-$repo_root/scripts/check-backlog-loop.sh}"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/test-check-backlog-loop.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+mkdir -p -- "$work/jobs"
+JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+[ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=4
+trap 'wait; rm -rf "$work"' EXIT
 trap 'exit 130' INT HUP TERM
 
 # A fresh copy of the real tree, one per case, so no case can see another's
@@ -118,22 +121,51 @@ expect_fail() { # name, expected-message-ERE, tree
     expected="$2"
     tree="$3"
     break_cases=$((break_cases + 1))
+    idx="$break_cases"
 
-    out=$(sh "$checker_under_test" "$tree" 2>&1) && rc=0 || rc=$?
+    # The checker runs in the background against a snapshot of the tree, so a
+    # case that keeps mutating the same tree after this call cannot change what
+    # this one saw. `finish_cases` reads the results back in case order.
+    snap="$work/jobs/$idx.tree"
+    mkdir -p -- "$snap"
+    cp -R "$tree/." "$snap/"
+    printf '%s\n' "$name" > "$work/jobs/$idx.name"
+    printf '%s\n' "$expected" > "$work/jobs/$idx.expected"
+    (
+        sh "$checker_under_test" "$snap" > "$work/jobs/$idx.out" 2>&1 && rc=0 || rc=$?
+        echo "$rc" > "$work/jobs/$idx.rc"
+    ) &
+    # Bound the fan-out so a small machine is not swamped.
+    [ $((idx % JOBS)) -ne 0 ] || wait
+}
 
-    if [ "$rc" -eq 0 ]; then
-        echo "  MISS: $name -- checker exited 0 on a broken tree" >&2
-        case_failures=$((case_failures + 1))
-        return 0
-    fi
-    if ! printf '%s\n' "$out" | grep -qE -- "$expected"; then
-        echo "  WRONG REASON: $name" >&2
-        echo "    expected message matching: $expected" >&2
-        echo "    got: $(printf '%s\n' "$out" | head -n 1)" >&2
-        case_failures=$((case_failures + 1))
-        return 0
-    fi
-    echo "  ok: $name"
+# Reads back every case `expect_fail` started since the last call: a non-zero
+# exit AND a message matching the case's expectation, in case order.
+# Increments `case_failures` on a miss and never exits, so the suite reaches
+# the end and the weakened-checker comparison compares two runs of the same set.
+finish_cases() {
+    wait
+    i=1
+    while [ "$i" -le "$break_cases" ]; do
+        name=$(cat "$work/jobs/$i.name")
+        expected=$(cat "$work/jobs/$i.expected")
+        rc=$(cat "$work/jobs/$i.rc")
+        out=$(cat "$work/jobs/$i.out")
+        if [ "$rc" -eq 0 ]; then
+            echo "  MISS: $name -- checker exited 0 on a broken tree" >&2
+            case_failures=$((case_failures + 1))
+        elif ! printf '%s\n' "$out" | grep -qE -- "$expected"; then
+            echo "  WRONG REASON: $name" >&2
+            echo "    expected message matching: $expected" >&2
+            echo "    got: $(printf '%s\n' "$out" | head -n 1)" >&2
+            case_failures=$((case_failures + 1))
+        else
+            echo "  ok: $name"
+        fi
+        i=$((i + 1))
+    done
+    rm -rf -- "$work/jobs"
+    mkdir -p -- "$work/jobs"
 }
 
 # One break applied to each host copy in turn, in its own tree. The message
@@ -1816,6 +1848,8 @@ Run `bd close <id>`.' \
         '- Paste the census header line again.'
     expect_fail "the census goal stops asking for the UNBLOCK REPORT" \
         "prompts/backlog-census.goal.md: the census goal no longer asks for the UNBLOCK REPORT" "$t"
+
+    finish_cases
 
     # Not `return "$case_failures"`: a shell return status wraps at 256, so a
     # suite with 256 or more cases misreported its miss count. The callers read
