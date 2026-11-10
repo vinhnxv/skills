@@ -1,7 +1,6 @@
 ---
 name: repo-audit
 description: Audit a repository across nine defect dimensions, verify findings independently, and save a portable report for later review or action. Works without a tracker. Explicit invocation only.
-disable-model-invocation: true
 ---
 
 # Repository audit

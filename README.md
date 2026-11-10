@@ -45,8 +45,10 @@ need a GitHub remote, `gh`, or the `compound-engineering` plugin.
 
 ### `audit-loop` needs `repo-audit` beside it, and no Beads
 
-`audit-loop` reads `repo-audit`'s `SKILL.md` from the sibling directory and
-runs it as each round's audit, so install both. It also needs a GitHub remote
+`audit-loop` loads `repo-audit` as each round's audit, so install both. On
+Claude Code it loads it through the Skill tool, which is why `repo-audit`'s
+Claude copy is model-invocable; on Codex you invoke both together. It also
+needs a GitHub remote
 named `origin` with `gh` authenticated, and the `compound-engineering` plugin
 providing `ce-work`, `ce-code-review`, and `ce-commit-push-pr`. It never calls
 `bd`.
@@ -156,8 +158,9 @@ commands work per project with `<your-repo>/.claude/skills` as the target.
 The Codex copy carries `agents/openai.yaml` alongside `SKILL.md` — take the
 whole directory, not just the Markdown file.
 
-Both copies are explicit-invocation only: neither host will decide to run one
-on its own.
+Every Codex copy is explicit-invocation only. The Claude copies are too, except
+the ones listed at the end of [Repository layout](#repository-layout), which a
+goal prompt has to load through the Skill tool.
 
 ## Skills
 
@@ -278,7 +281,9 @@ branch you are comfortable having written to.
 
 **Launch it in two steps:** load the skill, then give it
 [`prompts/audit-loop.goal.md`](prompts/audit-loop.goal.md) as the goal or as
-an ordinary message. On Codex, paste it after `/goal`.
+an ordinary message. On Codex, invoke `$audit-loop $repo-audit` together, then
+paste the prompt after `/goal`: Codex keeps `repo-audit` explicit-only, so the
+loop can use it only when you invoked it.
 
 ### `source-to-beads`
 
@@ -358,9 +363,10 @@ explicit-only invocation differently: Claude Code uses
 rejects, and Codex uses `policy.allow_implicit_invocation: false` in
 `agents/openai.yaml`. Apart from that one marker the two copies of a skill are
 identical, and `scripts/check-parity.sh` fails CI if they ever stop being.
-The exceptions are `backlog-loop`, `codex-delegate`, and `audit-loop`: their
-Claude copies omit the marker so the goal prompt can load them through the
-Skill tool, while their Codex copies stay explicit-only.
+The exceptions are `backlog-loop`, `codex-delegate`, `audit-loop`, and
+`repo-audit`: their Claude copies omit the marker so a goal prompt, or
+`audit-loop` for `repo-audit`, can load them through the Skill tool, while
+their Codex copies stay explicit-only.
 
 ## License
 
