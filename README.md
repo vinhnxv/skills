@@ -91,6 +91,9 @@ mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archiv
 
 mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/source-to-beads
+
+mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/codex-delegate
 ```
 
 **Codex**
@@ -104,6 +107,9 @@ mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive
 
 mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/source-to-beads
+
+mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/codex-delegate
 ```
 
 The `mkdir -p` is not optional: `tar -C` on a directory that does not exist
@@ -118,8 +124,8 @@ any file the new version dropped.
 the directories that match your host:
 
 ```sh
-mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads ~/.claude/skills/
-mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  ~/.codex/skills/
+mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads skills/claude/codex-delegate ~/.claude/skills/
+mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  skills/codex/codex-delegate  ~/.codex/skills/
 ```
 
 The `mkdir -p` matters here too. With several source directories, as above,
@@ -211,20 +217,29 @@ is recorded in the report, so the cache is not needed to review the result.
 companion is retained as a report-only launch alias. Both produce a report and
 leave code and tracker changes to the user's next choice.
 
-### Claude–Codex delegate loop (prompt only)
+### `codex-delegate`
 
-[`prompts/codex-delegate.goal.md`](prompts/codex-delegate.goal.md) clears a
-Beads backlog with Claude Code as the primary agent and Codex CLI as the
-secondary one. For each ready issue, Claude writes a plan with `ce-plan`,
+Clears a Beads backlog with Claude Code as the primary agent and Codex CLI as
+the secondary one. For each ready issue, Claude writes a plan with `ce-plan`,
 hands it to `codex exec` (default model `gpt-6.1-sol`, effort `high` or
 `xhigh`) to implement through `lfg` up to an open pull request, then reviews
 the PR, fixes every finding, waits for checks, merges, pulls the default
-branch, and closes the issues before starting the next cycle. It needs no
-skill: paste the file as an ordinary message in Claude Code. It needs Beads,
-`gh`, the `codex` CLI, and the `compound-engineering` plugin on both hosts.
-It runs Codex with `-s danger-full-access` so Codex can push and open the
-PR, and it merges without asking, so point it only at a repository whose
-default branch you are comfortable having written to.
+branch, and closes the issues before starting the next cycle. A failed Codex
+run is retried once at `xhigh`; after that Claude implements the plan itself.
+Each claimed issue records its branch and attempt count in Beads metadata, so
+a restarted run resumes interrupted cycles instead of losing them.
+
+It runs on Claude Code only. The Codex copy exists so both host trees stay in
+parity, and it stops at preflight. It needs Beads, `gh`, the `codex` CLI, and
+the `compound-engineering` plugin on both hosts. It runs Codex with
+`-s danger-full-access` so Codex can push and open the PR, and it merges
+without asking, so point it only at a repository whose default branch you are
+comfortable having written to.
+
+**Launch it in two steps:** load the skill, then give it
+[`prompts/codex-delegate.goal.md`](prompts/codex-delegate.goal.md) as the goal
+or as an ordinary message. The prompt holds only the success condition, so it
+fits a goal's 4000-character limit; the procedure lives in the skill.
 
 ### `source-to-beads`
 
@@ -304,9 +319,9 @@ explicit-only invocation differently: Claude Code uses
 rejects, and Codex uses `policy.allow_implicit_invocation: false` in
 `agents/openai.yaml`. Apart from that one marker the two copies of a skill are
 identical, and `scripts/check-parity.sh` fails CI if they ever stop being.
-The one exception is `backlog-loop`: its Claude copy omits the marker so the
-goal prompt can load it through the Skill tool, while its Codex copy stays
-explicit-only.
+The exceptions are `backlog-loop` and `codex-delegate`: their Claude copies
+omit the marker so the goal prompt can load them through the Skill tool, while
+their Codex copies stay explicit-only.
 
 ## License
 

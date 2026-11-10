@@ -35,7 +35,7 @@ CLAUDE_ONLY_KEY="disable-model-invocation"
 # Skills whose Claude copy must NOT carry the marker. The Claude Code goal
 # prompt cannot load a skill that blocks the Skill tool, so these stay callable
 # by the model while Codex keeps its explicit-only policy.
-CLAUDE_MODEL_INVOCABLE="backlog-loop"
+CLAUDE_MODEL_INVOCABLE="backlog-loop codex-delegate"
 
 # Every path each host's copy of a skill is allowed to carry, relative to the
 # skill directory. Checked per host against these sets, not only copy against
