@@ -16,7 +16,7 @@ Parameters, overridable by the goal or the user:
 
 ## Preflight (once)
 
-1. Read `../repo-audit/SKILL.md`, resolved against this skill's own directory. If it is absent, stop and tell the user to install `repo-audit` beside this skill. That file is the audit procedure for every round.
+1. Load the `repo-audit` skill through the host's own skill mechanism; it is the audit procedure for every round. On Claude Code, load it with the Skill tool. On Codex, it is loaded only when the launch message invoked `$repo-audit` beside `$audit-loop`. If it cannot be loaded, stop and tell the user how to launch: on Claude Code, install `repo-audit` at a version whose Claude copy omits `disable-model-invocation`; on Codex, invoke `$audit-loop $repo-audit` together. Never substitute reading its file for loading it.
 2. Run `gh auth status` and `git status --short`, and resolve the default branch with `gh repo view --json defaultBranchRef`. Stop when a probe fails, the local default branch has unpushed commits, or the tree is dirty outside `docs/audits/`. Untracked report files under `docs/audits/` never block a round.
 3. Switch to the default branch and `git pull --ff-only`.
 4. Open the ledger at `<git-common-dir>/audit-loop/ledger.json`, where `<git-common-dir>` is `git rev-parse --path-format=absolute --git-common-dir`. Create it as `{}` when absent. It lives outside the work tree, so it never dirties a round, and it survives restarts. Each key is a stable finding ID; each value records `attempts`, `status` (`fixed`, `deferred`, or `exhausted`), the PR number, and the reason.
