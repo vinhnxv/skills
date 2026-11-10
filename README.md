@@ -43,6 +43,14 @@ spawn subagents audits dimensions in parallel; a host without that capability
 audits serially. Neither route calls `bd` or creates tickets. It also does not
 need a GitHub remote, `gh`, or the `compound-engineering` plugin.
 
+### `audit-loop` needs `repo-audit` beside it, and no Beads
+
+`audit-loop` reads `repo-audit`'s `SKILL.md` from the sibling directory and
+runs it as each round's audit, so install both. It also needs a GitHub remote
+named `origin` with `gh` authenticated, and the `compound-engineering` plugin
+providing `ce-work`, `ce-code-review`, and `ce-commit-push-pr`. It never calls
+`bd`.
+
 ### `source-to-beads` needs Beads
 
 `source-to-beads` creates Beads work for the current repository from an audit
@@ -94,6 +102,9 @@ mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archiv
 
 mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/codex-delegate
+
+mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/audit-loop
 ```
 
 **Codex**
@@ -110,6 +121,9 @@ mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive
 
 mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/codex-delegate
+
+mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/audit-loop
 ```
 
 The `mkdir -p` is not optional: `tar -C` on a directory that does not exist
@@ -124,8 +138,8 @@ any file the new version dropped.
 the directories that match your host:
 
 ```sh
-mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads skills/claude/codex-delegate ~/.claude/skills/
-mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  skills/codex/codex-delegate  ~/.codex/skills/
+mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads skills/claude/codex-delegate skills/claude/audit-loop ~/.claude/skills/
+mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  skills/codex/codex-delegate  skills/codex/audit-loop  ~/.codex/skills/
 ```
 
 The `mkdir -p` matters here too. With several source directories, as above,
@@ -241,6 +255,31 @@ comfortable having written to.
 or as an ordinary message. The prompt holds only the success condition, so it
 fits a goal's 4000-character limit; the procedure lives in the skill.
 
+### `audit-loop`
+
+Repeats audit → fix → merge until the repository converges. Each round runs
+the full `repo-audit` procedure on the freshly pulled default branch, fixes
+every confirmed actionable finding with `ce-work` (up to 20 per round, highest
+severity first), reviews the diff with `ce-code-review`, opens a PR, merges it
+through the same CI gate as `codex-delegate`, and pulls. Launching it is your
+standing choice of `repo-audit`'s "fix all confirmed, actionable findings"
+option for every round; `repo-audit` itself is unchanged and still never
+edits code.
+
+A finding whose fix needs a person -- a secret rotation, a change outside the
+repository, an unpatched advisory, or a change to a public contract,
+permission, or security stance -- is deferred, not fixed. A ledger of finding
+IDs at `<git-common-dir>/audit-loop/ledger.json` caps each finding at two
+attempts and survives restarts. The loop stops when an audit selects nothing
+(converged), when a failed round would only be retried on the same findings
+(stalled), after five rounds, or when trunk is red for a reason no round can
+fix. It merges without asking, so point it only at a repository whose default
+branch you are comfortable having written to.
+
+**Launch it in two steps:** load the skill, then give it
+[`prompts/audit-loop.goal.md`](prompts/audit-loop.goal.md) as the goal or as
+an ordinary message. On Codex, paste it after `/goal`.
+
 ### `source-to-beads`
 
 Extracts actionable work into Beads from any accessible source. An audit report
@@ -319,9 +358,9 @@ explicit-only invocation differently: Claude Code uses
 rejects, and Codex uses `policy.allow_implicit_invocation: false` in
 `agents/openai.yaml`. Apart from that one marker the two copies of a skill are
 identical, and `scripts/check-parity.sh` fails CI if they ever stop being.
-The exceptions are `backlog-loop` and `codex-delegate`: their Claude copies
-omit the marker so the goal prompt can load them through the Skill tool, while
-their Codex copies stay explicit-only.
+The exceptions are `backlog-loop`, `codex-delegate`, and `audit-loop`: their
+Claude copies omit the marker so the goal prompt can load them through the
+Skill tool, while their Codex copies stay explicit-only.
 
 ## License
 
