@@ -211,6 +211,21 @@ is recorded in the report, so the cache is not needed to review the result.
 companion is retained as a report-only launch alias. Both produce a report and
 leave code and tracker changes to the user's next choice.
 
+### Claude–Codex delegate loop (prompt only)
+
+[`prompts/codex-delegate.goal.md`](prompts/codex-delegate.goal.md) clears a
+Beads backlog with Claude Code as the primary agent and Codex CLI as the
+secondary one. For each ready issue, Claude writes a plan with `ce-plan`,
+hands it to `codex exec` (default model `gpt-6.1-sol`, effort `high` or
+`xhigh`) to implement through `lfg` up to an open pull request, then reviews
+the PR, fixes every finding, waits for checks, merges, pulls the default
+branch, and closes the issues before starting the next cycle. It needs no
+skill: paste the file as an ordinary message in Claude Code. It needs Beads,
+`gh`, the `codex` CLI, and the `compound-engineering` plugin on both hosts.
+It runs Codex with `-s danger-full-access` so Codex can push and open the
+PR, and it merges without asking, so point it only at a repository whose
+default branch you are comfortable having written to.
+
 ### `source-to-beads`
 
 Extracts actionable work into Beads from any accessible source. An audit report
