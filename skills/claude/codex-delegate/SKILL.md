@@ -8,8 +8,10 @@ Clear every actionable non-epic issue from this repository's Beads tracker, one 
 This procedure runs on Claude Code. On any other host, stop before any tracker or git write and tell the user to run it from Claude Code. It needs the `compound-engineering` plugin installed for both Claude Code and Codex, `bd` and `gh` working, and `codex` on PATH.
 
 Parameters, overridable by the goal or the user:
-- `CODEX_MODEL`: `gpt-6.2-sol`
-- `CODEX_EFFORT`: `high` by default; use `xhigh` when the plan has three or more implementation units, touches a contract, migration, or security boundary, or a previous Codex attempt on the same cycle failed.
+- `CODEX_MODEL`: empty by default, so `codex exec` uses the `model` from the Codex config (`~/.codex/config.toml`). Set it only when the goal or the user names a model.
+- `CODEX_EFFORT`: empty by default, so `codex exec` uses the `model_reasoning_effort` from the Codex config. Set it to `xhigh` when the plan has three or more implementation units, touches a contract, migration, or security boundary, or a previous Codex attempt on the same cycle failed; otherwise set it only when the goal or the user names an effort.
+
+An empty parameter adds no flag to the `codex exec` command, so upgrading the Codex model is a Codex config change, not a skill change.
 
 ## Preflight (once)
 
@@ -32,7 +34,7 @@ Leave `in_progress` issues without `codex_delegate_branch` alone; another agent 
 3. **Delegate (Codex).** Create the recorded branch yourself (`git switch -c <branch>` from the updated default branch) so Codex starts on it. Write the brief to a file in the scratchpad and run Codex in the background, then wait for its completion notification instead of polling:
 
    ```sh
-   codex exec -C "$REPO" -m "$CODEX_MODEL" -c model_reasoning_effort="$CODEX_EFFORT" \
+   codex exec -C "$REPO" ${CODEX_MODEL:+--model=$CODEX_MODEL} ${CODEX_EFFORT:+--config=model_reasoning_effort=$CODEX_EFFORT} \
      -s danger-full-access -o "$SCRATCH/codex-<cycle>.last.md" - < "$SCRATCH/codex-<cycle>.brief.md" \
      > "$SCRATCH/codex-<cycle>.log" 2>&1
    ```
