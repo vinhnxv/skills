@@ -31,7 +31,7 @@ Past the deadline, stop the run with `TaskStop`. Then treat it as a failed run: 
 ## Merge and cleanup
 
 - **Codex worker:** `gh pr merge <n> --squash --delete-branch --match-head-commit <approved head>`.
-- **Sonnet worker:** the worktree holds the branch, so merge without `--delete-branch`, keeping `--match-head-commit <approved head>`. Once the PR reads `MERGED`:
+- **Sonnet worker:** the worktree holds the branch, so merge without `--delete-branch`, keeping `--match-head-commit <approved head>`. Once the PR reads `MERGED`, check the worktree first: `git status --short` must be empty and `git rev-parse HEAD` must equal the approved head. If either fails, keep the worktree and the branch and report them. Otherwise:
   1. Remove the worktree with `git worktree remove <worktree path>`.
   2. Delete the local branch with `git branch -D <branch>`.
   3. Delete the remote branch with `git push origin --delete <branch>`, only if it still shows the approved head.

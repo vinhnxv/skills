@@ -66,10 +66,10 @@ gh pr merge <n> --squash --match-head-commit <approved head>
 
 ## Cleanup after the merge
 
-Once the PR reads `MERGED`:
+Once the PR reads `MERGED`, first check the recorded worktree: `git status --short` must be empty and `git rev-parse HEAD` must equal the approved head. If either check fails, the worktree holds work the merge did not include: keep the worktree, the branch, and every agent, and report them. Otherwise:
 1. Delete the remote branch with `git push origin --delete <branch>`, but only if `git ls-remote --heads origin <branch>` still shows the approved head.
 2. Release each of the unit's agents with `worker-release --dispatch <id>`. A `retained` or `release_pending` receipt goes in the report and is retried on the next entry.
 3. Remove the worktree with `orca worktree rm --worktree <recorded identity> --delete-branch`.
-4. If the local branch is still there, which a squash merge can leave, delete it with `git branch -D <branch>`. The PR merged at the approved head, so nothing on it is lost.
+4. If the local branch is still there, which a squash merge can leave, delete it with `git branch -D <branch>` only if it still points at the approved head.
 
 A unit that failed or awaits `merge` keeps its worktree and every agent.
