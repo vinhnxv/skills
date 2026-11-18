@@ -318,7 +318,7 @@ Inside an Orca terminal with Orca's Claude Code hooks enabled, the worker and
 reviewer run as Orca agents: the worker in its own worktree and tab, and Orca
 wakes the session when either reports. Elsewhere they run in the background:
 Codex through `codex exec` in your checkout, Sonnet as a Claude Code subagent
-in a worktree under `.git/codex-lfg/worktrees/`. `via=orca` or `via=exec`
+in a worktree under `codex-lfg/worktrees/` in the git common directory. `via=orca` or `via=exec`
 forces one backend.
 
 The branch name follows from the input (`codex-lfg/<plan name>` or
