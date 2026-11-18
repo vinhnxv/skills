@@ -324,7 +324,11 @@ forces one backend.
 The branch name follows from the input (`codex-lfg/<plan name>` or
 `codex-lfg/<first issue id>`), and claimed issues record it as
 `codex_lfg_branch` metadata, so rerunning the same command after an interrupted
-session resumes the same branch and PR. A Codex worker's model and effort come
+session resumes the same branch and PR. Progress within a unit (agents started,
+review rounds, pending hand-offs, the approved head, and pending cleanup) is
+kept in a state file under `.git/codex-lfg/units/`, so a restart neither
+repeats a step nor skips one. A repository that merges through a merge queue
+is not supported: `merge` stops and reports it. A Codex worker's model and effort come
 from `~/.codex/config.toml` unless you pass `WORKER_MODEL=` or `WORKER_EFFORT=`
 (`CODEX_MODEL=` and `CODEX_EFFORT=` still work). An issue can pin its own
 choices with `codex_lfg_worker`, `codex_lfg_worker_model`,
