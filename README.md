@@ -65,6 +65,14 @@ the root checkout's Beads database, not to a copy in the worktree. It does not
 start `backlog-loop`. `repo-audit` itself never needs Beads; only the optional
 step of filing its findings does.
 
+### `codex-lfg` runs on Claude Code only
+
+`codex-lfg` hands one plan file or a few Beads issues to the `codex` CLI and
+reviews the result in Claude Code. It needs `gh` authenticated, `codex` on
+PATH, and the `compound-engineering` plugin on both hosts; it needs Beads only
+when you pass issue ids. Install its Claude copy; the Codex copy exists only to
+keep the host trees in parity and stops at preflight.
+
 **Also know what you are starting.** `backlog-loop` is autonomous. It claims
 issues, opens branches and pull requests, and **merges its own PRs** without
 asking. It refuses `--admin` and GitHub auto-merge, pins each merge to the exact
@@ -107,6 +115,9 @@ mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archiv
 
 mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/audit-loop
+
+mkdir -p ~/.claude/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.claude/skills --strip-components=3 skills-main/skills/claude/codex-lfg
 ```
 
 **Codex**
@@ -126,6 +137,9 @@ mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive
 
 mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
   | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/audit-loop
+
+mkdir -p ~/.codex/skills && curl -fsSL https://github.com/vinhnxv/skills/archive/refs/heads/main.tar.gz \
+  | tar -xz -C ~/.codex/skills --strip-components=3 skills-main/skills/codex/codex-lfg
 ```
 
 The `mkdir -p` is not optional: `tar -C` on a directory that does not exist
@@ -140,8 +154,8 @@ any file the new version dropped.
 the directories that match your host:
 
 ```sh
-mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads skills/claude/codex-delegate skills/claude/audit-loop ~/.claude/skills/
-mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  skills/codex/codex-delegate  skills/codex/audit-loop  ~/.codex/skills/
+mkdir -p ~/.claude/skills && cp -R skills/claude/backlog-loop skills/claude/repo-audit skills/claude/source-to-beads skills/claude/codex-delegate skills/claude/audit-loop skills/claude/codex-lfg ~/.claude/skills/
+mkdir -p ~/.codex/skills  && cp -R skills/codex/backlog-loop  skills/codex/repo-audit  skills/codex/source-to-beads  skills/codex/codex-delegate  skills/codex/audit-loop  skills/codex/codex-lfg  ~/.codex/skills/
 ```
 
 The `mkdir -p` matters here too. With several source directories, as above,
@@ -258,6 +272,27 @@ comfortable having written to.
 [`prompts/codex-delegate.goal.md`](prompts/codex-delegate.goal.md) as the goal
 or as an ordinary message. The prompt holds only the success condition, so it
 fits a goal's 4000-character limit; the procedure lives in the skill.
+
+### `codex-lfg`
+
+Runs one unit of work through Codex with you in the loop:
+`/codex-lfg <plan-path | bead-id...> [merge]`. Given issue ids, Claude claims
+them and writes the plan with `ce-plan`; given a plan file, it uses the plan as
+written. Claude then starts `codex exec` in the background to implement the
+plan through `lfg` up to an open pull request, and the session stays free for
+other requests while Codex works. When Codex finishes, Claude checks the
+handoff (retrying once at `xhigh`, then implementing the plan itself), reviews
+the PR with `ce-code-review`, fixes every finding, and waits for checks. It
+stops there with the PR open unless you passed `merge`; rerunning the same
+command with `merge` added picks up the reviewed PR and merges it, then closes
+the issues.
+
+The branch name follows from the input (`codex-lfg/<plan name>` or
+`codex-lfg/<first issue id>`), and claimed issues record it as
+`codex_lfg_branch` metadata, so rerunning the same command after an interrupted
+session resumes the same branch and PR. Model and effort come from
+`~/.codex/config.toml`, as in `codex-delegate`. It runs on Claude Code only and
+is explicit-invocation only on both hosts.
 
 ### `audit-loop`
 
