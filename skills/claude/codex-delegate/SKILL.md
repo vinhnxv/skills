@@ -8,7 +8,7 @@ Clear every actionable non-epic issue from this repository's Beads tracker, one 
 This procedure runs on Claude Code. On any other host, stop before any tracker or git write and tell the user to run it from Claude Code. It needs the `compound-engineering` plugin installed for both Claude Code and Codex, `bd` and `gh` working, and `codex` on PATH.
 
 Parameters, overridable by the goal or the user:
-- `CODEX_MODEL`: `gpt-6.1-sol`
+- `CODEX_MODEL`: `gpt-6.2-sol`
 - `CODEX_EFFORT`: `high` by default; use `xhigh` when the plan has three or more implementation units, touches a contract, migration, or security boundary, or a previous Codex attempt on the same cycle failed.
 
 ## Preflight (once)
