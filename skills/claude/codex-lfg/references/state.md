@@ -25,7 +25,7 @@ The unit state records:
 - **gate:** the head it covers, the local result, the check watch and its task ID, its deadline, and any retrigger;
 - **answers:** each question, its answer, and how often it was asked;
 - **events:** Orca message IDs routed to this unit and not yet handled;
-- **parked:** when the outcome is `parked`, its cause: an intent, an agent, `ci-unknown`, a dirty workspace, or an adoption, with the evidence;
+- **parked:** when the outcome is `parked`, its cause: an intent, an agent, `ci-unknown`, `checks-infra`, a dirty workspace, or an adoption, with the evidence;
 - **cleanup:** each resource still to release or remove, and each one kept;
 - **intents:** see below;
 - **outcome:** `in-flight`, `awaiting-merge`, `merged`, `done`, `failed`, or `parked`, with the cause.

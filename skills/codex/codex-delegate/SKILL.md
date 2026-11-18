@@ -21,7 +21,8 @@ Each cycle's plan, delegation, review loop, checks, merge, sync, issue closure, 
 Confirm that the Skill tool lists `codex-lfg`; each cycle invokes it with its arguments, so do not invoke it here. If it is not listed, stop and tell the user to install `codex-lfg` at a version whose Claude copy omits `disable-model-invocation`. Never substitute reading its file for invoking it.
 
 Choose the backend before Recovery, Pick, any tracker write, or any checkout change. Preflight only reads. With `exec`, the backend is exec. Otherwise run these probes:
-- `orca status --json` succeeds, and its `result` has `caller.orcaSessionId`, `app.running` true, and `runtime.reachable` true.
+- `orca status --json` succeeds, and its `result` has `app.running` true and `runtime.reachable` true.
+- `orca orchestration run-current --json` returns `ok: true`. Outside a live Orca terminal it fails with `no_active_sender_terminal`.
 - `ORCA_TERMINAL_HANDLE` is set.
 - `orca agent hooks status` reports the Claude Code hooks enabled.
 
