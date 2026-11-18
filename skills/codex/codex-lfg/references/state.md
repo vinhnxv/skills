@@ -4,7 +4,7 @@ Read this with the backend reference. It defines the unit state file, the rule t
 
 ## Files
 
-All state lives under the state directory, `<git common dir>/codex-lfg/`, where the git common dir is `git rev-parse --path-format=absolute --git-common-dir`, so every worktree of the repository sees the same path. Only the coordinator writes it.
+All state lives under the state directory, `<git common dir>/codex-lfg/`, where the git common dir is `git rev-parse --path-format=absolute --git-common-dir`, so every worktree of the repository sees the same path. Only the coordinator writes the unit, planning, repository, and Run files; an agent writes only the result file its brief names inside its attempt directory or review checkout's result path.
 - `units/<branch with / replaced by ->.json`: one unit.
 - `units/text-<hash>.json`: the planning record of a task description or issue set, before it has a branch.
 - `repo.json`: decisions about the repository that outlive one unit, such as whether it has CI.
@@ -25,6 +25,7 @@ The unit state records:
 - **gate:** the head it covers, the local result, the check watch and its task ID, its deadline, and any retrigger;
 - **answers:** each question, its answer, and how often it was asked;
 - **events:** Orca message IDs routed to this unit and not yet handled;
+- **parked:** when the outcome is `parked`, its cause: an intent, an agent, `ci-unknown`, a dirty workspace, or an adoption, with the evidence;
 - **cleanup:** each resource still to release or remove, and each one kept;
 - **intents:** see below;
 - **outcome:** `in-flight`, `awaiting-merge`, `merged`, `done`, `failed`, or `parked`, with the cause.
@@ -50,7 +51,7 @@ A deliberate second attempt, such as handing the same fixes off again after the 
 
 | Operation | How to check it |
 |---|---|
-| Orca mutation (`run-create`, `run-use`, `task-create`, `worker-start`, `send`, `reply`, `deny`, `worker-release`, `worker-stop`) | Run the same command with the same `--retry-request` key; Orca replays the original result instead of acting twice. A replayed success is done. A replayed failure is the operation's failure, routed as that step routes it. A replayed start that has not been seen running yet is done, with the agent still starting. If the replay errors, read `orca orchestration request-show --request <key> --json`: a receipt there is classified the same way. `absent` is not proof that nothing happened: list the object the operation would have made or changed (`run-current`, `task-list`, `worker-list`, `worker-show`). Found means done. Not found, for an operation whose effect nothing else can observe yet, means not done. Otherwise unclear |
+| Orca mutation (`run-create`, `run-use`, `task-create`, `worker-start`, `send`, `reply`, `deny`, `worker-release`, `worker-stop`) | Read `orca orchestration request-show --request <key> --json` first. `completed`: rerun the same command with the same key to get its full result, which Orca replays instead of acting again, and classify that result as the step that issued it does. `pending`: the operation is still running; follow what `request-show` says, and park if it stays pending. `absent` is not proof that nothing happened: it is done only when the object the operation would have made or changed is found by its exact identity (for a start, a Dispatch on the recorded Task with the recorded name and role; for a send or reply, a message in the Run log that names the intent's message), and otherwise unclear |
 | Exec agent launch | See `references/exec.md`, which owns this check |
 | `bd update` of metadata, status, or assignee | `bd show <id> --json` shows the intended value: done. Otherwise not done |
 | `bd update --claim --set-metadata codex_lfg_branch=<branch>` | `bd show` reads `in_progress` with the branch set: done. Open and unassigned: not done. Assigned to anyone else: unclear |
@@ -65,7 +66,7 @@ A deliberate second attempt, such as handing the same fixes off again after the 
 
 ## The Run's message log
 
-With Orca, every message read from the Run goes into its message log, keyed by message ID, before it is acted on. Never drop a message ID from the log.
+With Orca, every message read from the Run goes into its message log, keyed by message ID, before it is acted on. The log records, for each message, the unit it was routed to and whether it is handled. Never drop a message ID from the log.
 
 Reading mail:
 1. When the log records a consuming check with no saved response, run it again with its recorded key: `orca orchestration check --run <run> --retry-request <key> --json` returns the same batch.
@@ -74,11 +75,13 @@ Reading mail:
 
 The consuming checks belong to the coordinator's mailbox, which `orca orchestration inbox --terminal run:<run> --full --limit 200 --json` lists. When a step waits on a message the log lacks, read that list and log what is missing. `inbox --run <run>` lists every mailbox in the Run, workers' included, and is not used for this.
 
-Route each logged message by the Dispatch id or Task id it carries: match it against the agents and Tasks the unit states record, and add its ID to that unit's `events` unless it is already there. Route unmatched messages again after every intent check, because a launch whose receipt was recovered can claim them. A message for an agent that is not its role's current attempt is logged and reported, never acted on. A message still unmatched is reported to the user. Remove an event from a unit's `events` only after its route has run.
+Route each logged message that is not handled by the Dispatch id or Task id it carries: match it against the agents and Tasks the unit states record, and add its ID to that unit's `events` unless it is already there. Route unmatched messages again after every intent check, because a launch whose receipt was recovered can claim them. A message for an agent that is not its role's current attempt is marked handled and reported, never acted on. A message still unmatched is reported to the user. Mark a message handled, and remove it from the unit's `events`, only once its route's phase change or action intent has landed.
+
+When a step waits on a report from an agent that has settled and neither the log nor the coordinator mailbox has it, read the Dispatch's `lastReport` with `orca orchestration worker-show --dispatch <id> --full --json`. Without one, park with the Dispatch id.
 
 ## Backend lock
 
-A unit keeps the backend it started with. When the unit state names a backend, read that backend's reference, use its recorded choices, and run the probes they need, such as `codex --version` for a recorded Codex worker. When it is Orca and Orca is no longer usable, or the arguments force the other backend, park and report the conflict instead of switching.
+A unit keeps the backend it started with. Preflight looks up the unit state read-only before its worker-dependent probes. When the unit state names a backend, read that backend's reference, use its recorded choices, and run the probes they need, such as `codex --version` for a recorded Codex worker. When it is Orca and Orca is no longer usable, or the arguments force the other backend, park and report the conflict instead of switching.
 
 ## Pull request binding
 
@@ -86,4 +89,4 @@ Bind the unit to its pull request once and record it. The PR body carries the li
 
 ## Without a unit state
 
-When the unit state file is missing but the branch or PR exists, rebuild identity and the PR binding only. Never take a review approval from the ledger: an adopted unit starts a fresh review round at the current head. The workers that built the branch are unknown, so the adopted unit needs a workspace for any hand-off: exec as step 2 describes; Orca only when an Orca worktree already holds the branch (`--worktree branch:<branch>`). Without one, park. Interactive, ask the user before adopting. Unattended, park.
+When the unit state file is missing but the branch or PR exists, the earlier run's workers, Tasks, and workspaces are unknown. Interactive, ask the user before adopting it; unattended, park. An adopted unit rebuilds identity and the PR binding only, never takes a review approval from the ledger, and starts a fresh review round at the current head. It needs a workspace it owns for any hand-off: on exec, the coordinator's checkout for a Codex worker, or a new worktree for a Sonnet worker when no worktree holds the branch; on Orca, nothing it can prove it owns, so park the adoption. Never remove a workspace the unit did not create.

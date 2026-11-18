@@ -18,32 +18,32 @@ Tell the user the log path. When the user asks for progress, read the log tail a
 
 ## Sonnet worker
 
-The Sonnet worker gets its own git worktree, and the coordinator's checkout stays on the default branch. Create it with `git worktree add "<state dir>/worktrees/<branch slug>" -b <branch> origin/<default>`, or, when the branch exists, attach it without `-b`. Record the path in the unit state. Only an interactive unit runs a Sonnet worker on exec; Preflight refuses an unattended one.
+The Sonnet worker gets its own git worktree, and the coordinator's checkout stays on the default branch. Create it with `git worktree add "<state dir>/worktrees/<branch slug>" -b <branch> origin/<default>`, or, when the branch exists, attach it without `-b`. Record the path in the unit state.
 
-Start the worker with the `Agent` tool as a fresh general-purpose agent, never a fork. Pass `model` and, when set, `effort`, and set `run_in_background` to true. Its prompt is the brief plus: "Work only in `<worktree path>`. When you finish, write your final message to `<attempt directory>/result.md`." The `Agent` tool takes only model aliases such as `sonnet` or `opus`. Given a full model id, the unit stops and says so. A retry or hand-off starts a new `Agent` in the same worktree.
+Start the worker with the `Agent` tool as a fresh general-purpose agent, never a fork. Pass `model` and, when set, `effort`, and set `run_in_background` to true. Its prompt is the brief plus: "Work only in `<worktree path>`, using absolute paths and setting the working directory in every shell command, since a `cd` does not carry over between commands. When you finish, write your final message to `<attempt directory>/result.md`." The `Agent` tool takes only model aliases such as `sonnet` or `opus`. Given a full model id, the unit stops and says so. A retry or hand-off starts a new `Agent` in the same worktree.
 
-A background agent that needs a permission it does not have either gets the tool call denied, which shows in its result and is handled as a question under the skill's Questions rule, or raises a prompt in this session, which the user answers.
+A background agent that needs a permission it does not have either gets the tool call denied, which shows in its result and is handled as a question under the skill's Questions rule, or raises a prompt in this session. Interactive, the user answers it. Unattended, nobody does: the agent runs into its deadline, and the hang rule parks the unit, naming the agent and the likely permission. Allowing the plan's verification commands in the project's permission settings before an unattended run avoids this.
 
 ## Reviewer
 
-The reviewer is a fresh general-purpose `Agent` with `model` set to `REVIEWER_MODEL`, under the same alias rule, run in the background. Its brief is step 5's review brief, which sends it to the round's review checkout and names `<attempt directory>/result.json` as its result path. An unattended reviewer stopped by a permission prompt nobody answers runs into its deadline and is handled by the hang rule below.
+The reviewer is a fresh general-purpose `Agent` with `model` set to `REVIEWER_MODEL`, under the same alias rule, run in the background. Its brief is step 5's review brief, which sends it to the round's review checkout and names `<attempt directory>/result.json` as its result path. An unattended reviewer stopped by a permission prompt nobody answers is handled the same way.
 
 ## Checking an exec launch
 
-This is the check `references/state.md` defers to, run on every entry for each attempt the unit state records as running:
-1. A result file in the attempt directory: the attempt finished. Read it.
-2. A Codex worker whose process is alive, found with `pgrep -f "<attempt directory>"` because its command line names that directory: it is running. Wait for it, guarded by its deadline.
-3. A Codex worker with no live process and a `started` marker: it died without a result. The attempt was interrupted.
-4. A Sonnet worker or reviewer whose `started` marker holds another session's token: it ended with that session. The attempt was interrupted.
-5. A Sonnet worker or reviewer whose marker holds this session's token and whose agent ID is recorded: it is running. Wait for its notification, guarded by its deadline.
-6. A Sonnet worker or reviewer whose marker holds this session's token but has no recorded agent ID: it may be running and cannot be watched or stopped. Park the unit.
+This is the check `references/state.md` defers to, run on every entry for each attempt the unit state records as running. The first rule that applies decides:
+1. This session holds the attempt's task or agent ID: its completion notification, or the task's status, decides. Finished with a result file: read it. Finished without one: a failed run for its role. Still running: wait, guarded by its deadline. A missing result file or a missing process never overrides this.
+2. A result file in the attempt directory: the attempt finished. Read it.
+3. A Codex worker whose process is alive, found with `pgrep -f "<attempt directory>"` because its command line names that directory, which no other process shares: it is running, but this session cannot stop it. Wait until its deadline; past it, park the unit and keep the `checkout_owner`.
+4. A Codex worker with no live process and a `started` marker from another session: it died without a result. The attempt was interrupted.
+5. A Sonnet worker or reviewer whose `started` marker holds another session's token: it ended with that session. The attempt was interrupted.
+6. A `started` marker that holds this session's token with no recorded ID: the launch may have happened and cannot be watched or stopped. Park the unit and keep any `checkout_owner`.
 7. No `started` marker: the attempt never began. Launch it.
 
-An interrupted attempt does not count as a failed one: start the same phase again as a new attempt, after reading what the branch already holds. A notification that reports an agent finished without writing its result file is a failed run for its role. A Codex attempt's `checkout_owner` is cleared in cases 1, 3, and 7, and once a stopped process is gone.
+An interrupted attempt does not count as a failed one: start the same phase again as a new attempt, after reading what the branch already holds. A second interrupted attempt in a row for the same phase parks the unit. A Codex attempt's `checkout_owner` is cleared only in cases 1 and 2 once the run has finished, and in cases 4 and 7.
 
 ## Hang
 
-Past the deadline, stop the attempt. For an agent or command this session started, use `TaskStop` with its recorded ID. For a Codex process from an earlier session, `kill` the process `pgrep -f "<attempt directory>"` names, and confirm it is gone. Then treat it as a failed run for its role: a worker retries once at `xhigh`, then the coordinator takes over as step 4 describes; a reviewer retries once, then the unit parks. When the process cannot be stopped, park the unit and keep the `checkout_owner`.
+Past the deadline, stop an agent or command this session started with `TaskStop` and its recorded ID, then confirm with its notification or status that it ended. Then treat it as a failed run for its role: a worker retries once at `xhigh`, then the coordinator takes over as step 4 describes; a reviewer retries once, then the unit parks. The exception is an unattended `Agent`, worker or reviewer, which past its deadline is most often waiting on a permission prompt nobody will answer: park the unit instead, naming the agent. Never stop a process this session did not start: park, keep the `checkout_owner`, and name the process for the operator.
 
 ## Merge and cleanup
 
