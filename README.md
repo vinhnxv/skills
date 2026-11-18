@@ -238,7 +238,7 @@ leave code and tracker changes to the user's next choice.
 
 Clears a Beads backlog with Claude Code as the primary agent and Codex CLI as
 the secondary one. For each ready issue, Claude writes a plan with `ce-plan`,
-hands it to `codex exec` (default model `gpt-6.1-sol`, effort `high` or
+hands it to `codex exec` (default model `gpt-6.2-sol`, effort `high` or
 `xhigh`) to implement through `lfg` up to an open pull request, then reviews
 the PR, fixes every finding, waits for checks, merges, pulls the default
 branch, and closes the issues before starting the next cycle. A failed Codex
