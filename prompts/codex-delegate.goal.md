@@ -1,6 +1,6 @@
 Clear every actionable non-epic issue from the Beads tracker by following the codex-delegate procedure explicitly loaded immediately before this goal.
 
-The loaded codex-delegate procedure is the sole execution authority for every cycle: Claude plans with ce-plan, Codex CLI implements through lfg up to an open pull request, and Claude reviews, fixes, merges, pulls, and closes the issues. This prompt adds no rule of its own. If it conflicts with that procedure, the procedure wins.
+The loaded codex-delegate procedure is the sole execution authority for every cycle, which it runs through the codex-lfg skill: Claude plans with ce-plan, Codex CLI implements through lfg up to an open pull request, and Claude reviews, fixes, merges, pulls, and closes the issues. This prompt adds no rule of its own. If it conflicts with that procedure, the procedure wins.
 
 Success means all three:
 1. `bd ready` offers no non-epic issue other than human gates (a `[HUMAN]` title, the `human-gate` label, or type `gate`).

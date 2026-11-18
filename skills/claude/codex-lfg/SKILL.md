@@ -1,34 +1,35 @@
 ---
 name: codex-lfg
-description: Hand one unit of work, a plan file or one or more Beads issues, to Codex CLI to implement through compound-engineering:lfg up to an open pull request, track the Codex run in the background, then review, fix, and gate the PR with Claude Code; merge only when asked. Claude Code only. Explicit invocation only.
-disable-model-invocation: true
+description: Hand one unit of work, a plan file or one or more Beads issues, to Codex CLI to implement through compound-engineering:lfg up to an open pull request, track the Codex run in the background, then review, fix, and gate the PR with Claude Code; merge only when asked. Claude Code only. Explicit invocation only, or loaded by codex-delegate for each cycle.
 ---
 
-Usage: `/codex-lfg <plan-path | bead-id...> [merge]`.
+Usage: `/codex-lfg <plan-path | bead-id...> [merge] [unattended] [CODEX_MODEL=<model>] [CODEX_EFFORT=<effort>]`.
 
 Run one unit of work through Codex and bring it back reviewed. Claude is the primary agent: it plans when needed, judges every result, and owns the merge. Codex CLI is the secondary agent: it only implements a plan and opens a pull request. The user stays in the loop: Codex runs in the background, so the session stays free for other requests while it works. Write English in code, commits, PRs, and tracker fields.
 
 This procedure runs on Claude Code. On any other host, stop before any tracker or git write and tell the user to run it from Claude Code. It needs the `compound-engineering` plugin installed for both Claude Code and Codex, `gh` working, and `codex` on PATH; it needs `bd` working only when the input names Beads issues.
 
-Parameters, overridable by the user:
+Parameters, overridable by the user or by `codex-delegate`:
 - `CODEX_MODEL`: empty by default, so `codex exec` uses the `model` from the Codex config (`~/.codex/config.toml`). Set it only when the user names a model.
 - `CODEX_EFFORT`: empty by default, so `codex exec` uses the `model_reasoning_effort` from the Codex config. Set it to `xhigh` when the plan has three or more implementation units, touches a contract, migration, or security boundary, or a previous Codex attempt on the same unit failed; otherwise set it only when the user names an effort.
 - `MERGE`: off unless the arguments include the word `merge`.
+- `UNATTENDED`: off unless the arguments include the word `unattended`, which `codex-delegate` passes. When on, never ask the user anything: take the recommended option, record it in the issue notes and the PR body, and treat every place below that would ask as the unattended rule it names.
 
 An empty parameter adds no flag to the `codex exec` command, so upgrading the Codex model is a Codex config change, not a skill change.
 
 ## Input
 
 Parse the arguments once:
-- The word `merge` turns `MERGE` on.
+- The word `merge` turns `MERGE` on, and the word `unattended` turns `UNATTENDED` on.
+- `CODEX_MODEL=<value>` and `CODEX_EFFORT=<value>` set those parameters.
 - An argument naming an existing file is the plan. Resolve it to an absolute path. At most one plan is allowed.
 - Every other argument must be a Beads issue id that `bd show <id> --json` returns.
 
-With no plan and no issue id, or with an argument that is neither, stop and print the usage line. Refuse an issue that is closed, an epic, or a human gate (`[HUMAN]` title, `human-gate` label, or type `gate`). Refuse an issue that is `in_progress` without `codex_lfg_branch` metadata; another agent owns it.
+With no plan and no issue id, or with an argument that is neither, stop and print the usage line. Refuse an issue that is closed, an epic, or a human gate (`[HUMAN]` title, `human-gate` label, or type `gate`). Refuse an issue that is `in_progress` without `codex_lfg_branch` or `codex_delegate_branch` metadata; another agent owns it.
 
 A plan with issue ids is allowed: the plan is used as written and the issues are claimed and closed with it.
 
-The branch name is fixed by the input so a rerun finds earlier work: `codex-lfg/<plan file name without extension>` when a plan is given, otherwise `codex-lfg/<first issue id>`, lowercased with every character outside `a-z0-9._-` replaced by `-`. When an input issue already carries `codex_lfg_branch`, use that branch instead.
+The branch name is fixed by the input so a rerun finds earlier work: `codex-lfg/<plan file name without extension>` when a plan is given, otherwise `codex-lfg/<first issue id>`, lowercased with every character outside `a-z0-9._-` replaced by `-`. When an input issue already carries `codex_lfg_branch`, use that branch instead; failing that, use the `codex_delegate_branch` an earlier version of `codex-delegate` left on it, and record it as `codex_lfg_branch` in step 1.
 
 ## Preflight
 
@@ -40,7 +41,7 @@ Look up the branch and its PR with `git ls-remote --heads origin <branch>`, `git
 - PR `MERGED`: step 7.
 - PR `OPEN`: step 5.
 - Branch with commits ahead of the default branch but no PR: step 4. Commit leftover changes on it first as `wip: recover interrupted codex-lfg run` and push.
-- PR `CLOSED` unmerged: stop and ask the user whether to start over on a fresh branch; a closed PR is a decision someone made.
+- PR `CLOSED` unmerged: a closed PR is a decision someone made. Ask the user whether to start over on a fresh branch. Unattended, start over without asking on `<branch>-r<k>`, the first such name with no branch and no PR, record it with `bd update <id> --set-metadata codex_lfg_branch=<branch>-r<k>` for each issue, and go to step 1.
 - Nothing yet: step 1.
 
 Report the step a run resumed at.
@@ -72,7 +73,7 @@ Report the step a run resumed at.
 
 ## Failure
 
-Take the recommended option on technical choices and record it in the PR body. Ask the user only for a choice that is theirs: a scope change, a change to a contract, permission, or security stance, or starting over after a closed PR. When the unit cannot finish, stop and report the cause, the branch, and the PR. For issues, append the cause and the PR to each with `bd update <id> --append-notes` and release the claim with `bd update <id> --status open --assignee ''`, keeping `codex_lfg_branch` so a rerun resumes the same branch.
+Take the recommended option on technical choices and record it in the PR body. Ask the user only for a choice that is theirs: a scope change, a change to a contract, permission, or security stance, or starting over after a closed PR. Unattended, take the recommended option for these too and record it in the issue notes and the PR body. When the unit cannot finish, stop and report the cause, the branch, and the PR. For issues, append the cause and the PR to each with `bd update <id> --append-notes` and release the claim with `bd update <id> --status open --assignee ''`, keeping `codex_lfg_branch` so a rerun resumes the same branch.
 
 ## Report
 

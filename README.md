@@ -71,7 +71,8 @@ step of filing its findings does.
 reviews the result in Claude Code. It needs `gh` authenticated, `codex` on
 PATH, and the `compound-engineering` plugin on both hosts; it needs Beads only
 when you pass issue ids. Install its Claude copy; the Codex copy exists only to
-keep the host trees in parity and stops at preflight.
+keep the host trees in parity and stops at preflight. `codex-delegate` runs
+each cycle through it, so install both when you use `codex-delegate`.
 
 **Also know what you are starting.** `backlog-loop` is autonomous. It claims
 issues, opens branches and pull requests, and **merges its own PRs** without
@@ -251,19 +252,23 @@ leave code and tracker changes to the user's next choice.
 ### `codex-delegate`
 
 Clears a Beads backlog with Claude Code as the primary agent and Codex CLI as
-the secondary one. For each ready issue, Claude writes a plan with `ce-plan`,
+the secondary one. Each cycle picks a set of ready issues and runs them through
+[`codex-lfg`](#codex-lfg) with `merge unattended`: Claude writes a plan with `ce-plan`,
 hands it to `codex exec` (model and effort from `~/.codex/config.toml`, with
 effort raised to `xhigh` for large or risky plans) to implement through `lfg`
 up to an open pull request, then reviews
 the PR, fixes every finding, waits for checks, merges, pulls the default
 branch, and closes the issues before starting the next cycle. A failed Codex
 run is retried once at `xhigh`; after that Claude implements the plan itself.
-Each claimed issue records its branch and attempt count in Beads metadata, so
-a restarted run resumes interrupted cycles instead of losing them.
+Each issue it hands over carries `codex_delegate_branch` and an attempt count
+in Beads metadata, so a restarted run resumes interrupted cycles through
+`codex-lfg` instead of losing them, and leaves alone the issues an interactive
+`codex-lfg` run owns.
 
 It runs on Claude Code only. The Codex copy exists so both host trees stay in
-parity, and it stops at preflight. It needs Beads, `gh`, the `codex` CLI, and
-the `compound-engineering` plugin on both hosts. It runs Codex with
+parity, and it stops at preflight. It needs `codex-lfg` installed beside it,
+Beads, `gh`, the `codex` CLI, and the `compound-engineering` plugin on both
+hosts. It runs Codex with
 `-s danger-full-access` so Codex can push and open the PR, and it merges
 without asking, so point it only at a repository whose default branch you are
 comfortable having written to.
@@ -276,7 +281,8 @@ fits a goal's 4000-character limit; the procedure lives in the skill.
 ### `codex-lfg`
 
 Runs one unit of work through Codex with you in the loop:
-`/codex-lfg <plan-path | bead-id...> [merge]`. Given issue ids, Claude claims
+`/codex-lfg <plan-path | bead-id...> [merge] [unattended] [CODEX_MODEL=<model>] [CODEX_EFFORT=<effort>]`.
+Given issue ids, Claude claims
 them and writes the plan with `ce-plan`; given a plan file, it uses the plan as
 written. Claude then starts `codex exec` in the background to implement the
 plan through `lfg` up to an open pull request, and the session stays free for
@@ -291,8 +297,12 @@ The branch name follows from the input (`codex-lfg/<plan name>` or
 `codex-lfg/<first issue id>`), and claimed issues record it as
 `codex_lfg_branch` metadata, so rerunning the same command after an interrupted
 session resumes the same branch and PR. Model and effort come from
-`~/.codex/config.toml`, as in `codex-delegate`. It runs on Claude Code only and
-is explicit-invocation only on both hosts.
+`~/.codex/config.toml` unless you pass `CODEX_MODEL=` or `CODEX_EFFORT=`. With
+`unattended` it never asks you anything: it takes the recommended option,
+records it, and starts over on a fresh branch after a closed PR. That is how
+`codex-delegate` runs it. It runs on Claude Code only. Its Claude copy is
+model-invocable so `codex-delegate` can load it, and its description still says
+explicit invocation only.
 
 ### `audit-loop`
 
@@ -399,9 +409,10 @@ explicit-only invocation differently: Claude Code uses
 rejects, and Codex uses `policy.allow_implicit_invocation: false` in
 `agents/openai.yaml`. Apart from that one marker the two copies of a skill are
 identical, and `scripts/check-parity.sh` fails CI if they ever stop being.
-The exceptions are `backlog-loop`, `codex-delegate`, `audit-loop`, and
-`repo-audit`: their Claude copies omit the marker so a goal prompt, or
-`audit-loop` for `repo-audit`, can load them through the Skill tool, while
+The exceptions are `backlog-loop`, `codex-delegate`, `audit-loop`,
+`repo-audit`, and `codex-lfg`: their Claude copies omit the marker so a goal
+prompt, `audit-loop` for `repo-audit`, or `codex-delegate` for `codex-lfg`, can
+load them through the Skill tool, while
 their Codex copies stay explicit-only.
 
 ## License
