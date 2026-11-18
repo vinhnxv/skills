@@ -67,12 +67,20 @@ step of filing its findings does.
 
 ### `codex-lfg` runs on Claude Code only
 
-`codex-lfg` hands one plan file or a few Beads issues to the `codex` CLI and
-reviews the result in Claude Code. It needs `gh` authenticated, `codex` on
-PATH, and the `compound-engineering` plugin on both hosts; it needs Beads only
-when you pass issue ids. Install its Claude copy; the Codex copy exists only to
-keep the host trees in parity and stops at preflight. `codex-delegate` runs
-each cycle through it, so install both when you use `codex-delegate`.
+`codex-lfg` hands one plan file, a few Beads issues, or a quoted task to a
+worker agent and reviews the result in Claude Code. It needs `gh`
+authenticated and the `compound-engineering` plugin on both hosts. It needs
+`codex` on PATH only for a Codex worker, and Beads only when you pass issue
+ids. Install its Claude copy; the Codex copy exists only to keep the host
+trees in parity and stops at preflight. `codex-delegate` runs each cycle
+through it, so install both when you use `codex-delegate`.
+
+Orca is optional. Without it, workers run
+in the background of the Claude Code session. With it, they run as Orca
+agents in their own tabs and worktrees, and `codex-delegate` can run several
+cycles at once. That needs Claude Code running inside an Orca terminal with
+Orca's Claude Code hooks enabled; anywhere else, both skills fall back to the
+background mode.
 
 **Also know what you are starting.** `backlog-loop` is autonomous. It claims
 issues, opens branches and pull requests, and **merges its own PRs** without
@@ -251,24 +259,28 @@ leave code and tracker changes to the user's next choice.
 
 ### `codex-delegate`
 
-Clears a Beads backlog with Claude Code as the primary agent and Codex CLI as
-the secondary one. Each cycle picks a set of ready issues and runs them through
-[`codex-lfg`](#codex-lfg) with `merge unattended`: Claude writes a plan with `ce-plan`,
-hands it to `codex exec` (model and effort from `~/.codex/config.toml`, with
-effort raised to `xhigh` for large or risky plans) to implement through `lfg`
-up to an open pull request, then reviews
-the PR, fixes every finding, waits for checks, merges, pulls the default
-branch, and closes the issues before starting the next cycle. A failed Codex
-run is retried once at `xhigh`; after that Claude implements the plan itself.
-Each issue it hands over carries `codex_delegate_branch` and an attempt count
-in Beads metadata, so a restarted run resumes interrupted cycles through
-`codex-lfg` instead of losing them, and leaves alone the issues an interactive
-`codex-lfg` run owns.
+Clears a Beads backlog with Claude Code as the coordinator. Each cycle picks a
+set of ready issues and runs them through [`codex-lfg`](#codex-lfg) with
+`merge unattended`: Claude writes a plan with `ce-plan`, a worker agent
+implements it through `lfg` up to an open pull request, a separate reviewer
+agent reviews it, and Claude triages the findings, sends the fixes back to the
+same worker, waits for checks, merges, pulls the default branch, and closes the
+issues. Inside an Orca terminal it runs up to two cycles at once on unrelated
+issues (`PARALLEL`); otherwise cycles run one at a time. A failed worker run is
+retried once at `xhigh`; after that Claude implements the plan itself.
+
+The worker, its model and effort, and the reviewer model come from the goal's
+defaults, can change mid-run when you tell the session (it applies from the
+next cycle), and can be pinned per issue with the `codex_lfg_*` metadata keys
+`codex-lfg` documents. Each issue it hands over carries
+`codex_delegate_branch` and an attempt count in Beads metadata, so a restarted
+run resumes interrupted cycles through `codex-lfg` instead of losing them, and
+leaves alone the issues an interactive `codex-lfg` run owns.
 
 It runs on Claude Code only. The Codex copy exists so both host trees stay in
 parity, and it stops at preflight. It needs `codex-lfg` installed beside it,
-Beads, `gh`, the `codex` CLI, and the `compound-engineering` plugin on both
-hosts. It runs Codex with
+Beads, `gh`, the `compound-engineering` plugin on both hosts, and the `codex`
+CLI when a cycle runs a Codex worker. Without Orca it runs Codex with
 `-s danger-full-access` so Codex can push and open the PR, and it merges
 without asking, so point it only at a repository whose default branch you are
 comfortable having written to.
@@ -280,24 +292,43 @@ fits a goal's 4000-character limit; the procedure lives in the skill.
 
 ### `codex-lfg`
 
-Runs one unit of work through Codex with you in the loop:
-`/codex-lfg <plan-path | bead-id...> [merge] [unattended] [CODEX_MODEL=<model>] [CODEX_EFFORT=<effort>]`.
-Given issue ids, Claude claims
-them and writes the plan with `ce-plan`; given a plan file, it uses the plan as
-written. Claude then starts `codex exec` in the background to implement the
-plan through `lfg` up to an open pull request, and the session stays free for
-other requests while Codex works. When Codex finishes, Claude checks the
-handoff (retrying once at `xhigh`, then implementing the plan itself), reviews
-the PR with `ce-code-review`, fixes every finding, and waits for checks. It
-stops there with the PR open unless you passed `merge`; rerunning the same
-command with `merge` added picks up the reviewed PR and merges it, then closes
-the issues.
+Runs one unit of work through a worker agent with you in the loop:
+
+```text
+/codex-lfg <plan-path | bead-id... | "task description"> [merge] [unattended]
+  [via=auto|orca|exec] [worker=codex|sonnet] [WORKER_MODEL=<model>]
+  [WORKER_EFFORT=<effort>] [REVIEWER_MODEL=<model>] [ROUNDS=<n>]
+```
+
+Given issue ids or a quoted task, Claude writes the plan with `ce-plan` (and
+claims the issues); given a plan file, it uses the plan as written. Claude then
+starts the worker, Codex CLI by default or a Claude Sonnet agent with
+`worker=sonnet`, to implement the plan through `lfg` up to an open pull
+request. The session stays free while it works. When the worker finishes,
+Claude checks the handoff (retrying once at `xhigh`, then implementing the plan
+itself) and starts a separate reviewer agent (`REVIEWER_MODEL`, Sonnet by
+default) that runs `ce-code-review` and only reports. Claude triages each
+finding, posts a `codex-lfg review round <n>` ledger comment on the PR, and
+sends the accepted findings back to the same worker. Rounds repeat until one
+is clean, up to `ROUNDS` (5). It then waits for checks and stops with the PR
+open unless you passed `merge`; rerunning the same command with `merge` added
+merges the PR at the approved head and closes the issues.
+
+Inside an Orca terminal with Orca's Claude Code hooks enabled, the worker and
+reviewer run as Orca agents: the worker in its own worktree and tab, and Orca
+wakes the session when either reports. Elsewhere they run in the background:
+Codex through `codex exec` in your checkout, Sonnet as a Claude Code subagent
+in a worktree under `.git/codex-lfg/worktrees/`. `via=orca` or `via=exec`
+forces one backend.
 
 The branch name follows from the input (`codex-lfg/<plan name>` or
 `codex-lfg/<first issue id>`), and claimed issues record it as
 `codex_lfg_branch` metadata, so rerunning the same command after an interrupted
-session resumes the same branch and PR. Model and effort come from
-`~/.codex/config.toml` unless you pass `CODEX_MODEL=` or `CODEX_EFFORT=`. With
+session resumes the same branch and PR. A Codex worker's model and effort come
+from `~/.codex/config.toml` unless you pass `WORKER_MODEL=` or `WORKER_EFFORT=`
+(`CODEX_MODEL=` and `CODEX_EFFORT=` still work). An issue can pin its own
+choices with `codex_lfg_worker`, `codex_lfg_worker_model`,
+`codex_lfg_worker_effort`, and `codex_lfg_reviewer_model` metadata. With
 `unattended` it never asks you anything: it takes the recommended option,
 records it, and starts over on a fresh branch after a closed PR. That is how
 `codex-delegate` runs it. It runs on Claude Code only. Its Claude copy is
